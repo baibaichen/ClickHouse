@@ -424,10 +424,11 @@ Aws::S3::Model::GetObjectResult ReadBufferFromS3::sendRequest(size_t attempt, si
     }
     else if (range_begin)
     {
+        assert(file_size.has_value());
         req.SetRange(fmt::format("bytes={}-", range_begin));
         LOG_TEST(
-            log, "Read S3 object. Bucket: {}, Key: {}, Version: {}, Offset: {}",
-            bucket, key, version_id.empty() ? "Latest" : version_id, range_begin);
+            log, "Read S3 object. Bucket: {}, Key: {}, Version: {}, Range: {}-{}",
+            bucket, key, version_id.empty() ? "Latest" : version_id, range_begin, *file_size - 1);
     }
 
     ProfileEvents::increment(ProfileEvents::S3GetObject);
