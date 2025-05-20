@@ -73,10 +73,13 @@ MergeTreeReadersChain::ReadResult MergeTreeReadersChain::read(size_t max_rows, M
         return ReadResult{log};
 
     auto & first_reader = range_readers.front();
+
+    Stopwatch watch;
     auto read_result = first_reader.startReadingChain(max_rows, ranges);
     read_result.addNumBytesRead(getTotalBytesInColumns(read_result.columns));
+    LOG_TEST(log, "First reader returned: {}, time cost(ns): {}", read_result.num_rows, watch.elapsed());
 
-    LOG_TEST(log, "First reader returned: {}, requested columns: {}", read_result.dumpInfo(), first_reader.getSampleBlock().dumpNames());
+    // LOG_TEST(log, "First reader returned: {}, requested columns: {}", read_result.dumpInfo(), first_reader.getSampleBlock().dumpNames());
 
     if (read_result.num_rows != 0)
     {
