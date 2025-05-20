@@ -345,6 +345,10 @@ bool InterpreterInsertQuery::shouldAddSquashingForStorage(const StoragePtr & tab
 {
     const Settings & settings = context_->getSettingsRef();
 
+    bool isNullStorage = table->getName() == "Null";
+    if (isNullStorage)
+      return false;
+
     /// Do not squash blocks if it is a sync INSERT into Distributed, since it lead to double bufferization on client and server side.
     /// Client-side bufferization might cause excessive timeouts (especially in case of big blocks).
     return !(settings[Setting::distributed_foreground_insert] && table->isRemote());
