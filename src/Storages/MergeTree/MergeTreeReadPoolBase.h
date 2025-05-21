@@ -20,7 +20,7 @@ public:
         size_t preferred_block_size_bytes = 0;
 
         bool use_uncompressed_cache = false;
-        bool do_not_steal_tasks = false;
+        bool do_not_steal_tasks = true;
         bool use_const_size_tasks_for_remote_reading = false;
 
         // Not the same as the similar field in `ParallelReadingExtension`. Accounts for `max_parallel_replicas`.

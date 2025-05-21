@@ -44,7 +44,8 @@ public:
     /// See 01104_distributed_numbers_test.sql
     /// This constant tells us that we should skip the optimization
     /// if it was applied more than `max_scheduled_local_tasks` in a row.
-    constexpr static size_t max_scheduled_local_tasks = 128;
+    constexpr static size_t max_scheduled_local_tasks = std::numeric_limits<size_t>::max();
+    // constexpr static size_t max_scheduled_local_tasks = 128;
     size_t num_scheduled_local_tasks = 0;
 
     void wait(std::atomic_bool & finished);
