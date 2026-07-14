@@ -149,14 +149,18 @@ std::shared_ptr<TableJoin> makeTableJoin(const SuiteSpec & s)
     return tj;
 }
 
-std::shared_ptr<HashJoin> buildJoin(const SuiteSpec & s)
+std::shared_ptr<HashJoin> buildJoinFromBlock(const SuiteSpec & s, const Block & build_block)
 {
     Block right_sample = makeBlock(0, 0, s, true);
     auto hj = std::make_shared<HashJoin>(makeTableJoin(s), std::make_shared<const Block>(right_sample));
-    Block build_block = makeBlock(0, BUILD_N, s, true);
     hj->addBlockToJoin(build_block, /*check_limits*/ true);
     hj->onBuildPhaseFinish();
     return hj;
+}
+
+std::shared_ptr<HashJoin> buildJoin(const SuiteSpec & s)
+{
+    return buildJoinFromBlock(s, makeBlock(0, BUILD_N, s, true));
 }
 
 size_t probeOnce(HashJoin & hj, Block probe_block)
@@ -181,9 +185,17 @@ bool layer1Env()
 
 void runBuild(benchmark::State & state, SuiteSpec s)
 {
+    /// Generate build data once, outside the timing loop, so the ~512MB string
+    /// materialization (4M x stringKeyAt+insertData for the long-varchar suites) plus
+    /// the payload column are not counted as build time. addBlockToJoin takes a
+    /// const Block &, so passing the pre-built block by reference is safe and cheap
+    /// (no re-materialization). Each iteration still constructs a fresh HashJoin and
+    /// re-runs addBlockToJoin + onBuildPhaseFinish, which is what the build benchmark
+    /// measures. This mirrors the velox-side layer-1 benchmark, which builds data once.
+    const Block build_block = makeBlock(0, BUILD_N, s, true);
     for (auto _ : state)
     {
-        auto hj = buildJoin(s);
+        auto hj = buildJoinFromBlock(s, build_block);
         benchmark::DoNotOptimize(hj.get());
         benchmark::ClobberMemory();
     }
