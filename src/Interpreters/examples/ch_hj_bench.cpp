@@ -159,9 +159,8 @@ std::shared_ptr<HashJoin> buildJoin(const SuiteSpec & s)
     return hj;
 }
 
-size_t probeOnce(HashJoin & hj, const SuiteSpec & s)
+size_t probeOnce(HashJoin & hj, Block probe_block)
 {
-    Block probe_block = makeBlock(0, PROBE_N, s, false);
     JoinResultPtr result = hj.joinBlock(std::move(probe_block));
     size_t out_rows = 0;
     while (true)
@@ -194,10 +193,17 @@ void runBuild(benchmark::State & state, SuiteSpec s)
 void runProbe(benchmark::State & state, SuiteSpec s)
 {
     auto hj = buildJoin(s);
+    /// Generate probe data once, outside the timing loop, so the ~512MB string
+    /// materialization (4M x stringKeyAt+insertData for the long-varchar suites) is
+    /// not counted as probe time. joinBlock consumes its Block by value, so each
+    /// iteration hands it a cheap COW shallow copy of the pre-built probe block
+    /// (ColumnPtr shared_ptrs are copied, not the underlying data). This mirrors the
+    /// velox-side layer-1 benchmark, which builds probe data once and reuses it.
+    const Block probe_block = makeBlock(0, PROBE_N, s, false);
     size_t out_rows = 0;
     for (auto _ : state)
     {
-        out_rows = probeOnce(*hj, s);
+        out_rows = probeOnce(*hj, probe_block);
         benchmark::DoNotOptimize(out_rows);
     }
     state.counters["out_rows"] = static_cast<double>(out_rows);
