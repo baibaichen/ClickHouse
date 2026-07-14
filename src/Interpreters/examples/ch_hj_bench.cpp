@@ -1,19 +1,27 @@
-/// task30: CH native HashJoin build+probe driver, timed with Google Benchmark.
-/// Layer-1 vs full-join arm is chosen by env CH_HJ_LAYER1_ONLY (read inside the probe
-/// hot loop via chHjLayer1Only() in HashJoinMethodsImpl.h). Both arms exist in one dbms
-/// build; no separate -DLAYER1_ONLY compile is needed for the debug run-through.
+/// task30/task32: CH native HashJoin build+probe driver, timed with Google Benchmark.
+/// Layer-1 vs full-join arm chosen by env CH_HJ_LAYER1_ONLY (read inside probe hot loop
+/// via chHjLayer1Only() in HashJoinMethodsImpl.h). Both arms in one dbms build.
 /// gbenchmark_all supplies main(); do NOT define main() here.
+///
+/// task32 extends the single fixed-BIGINT case into a suite sweep aligned to the
+/// velox-side layer-1 benchmark (ChHashTableLayerBenchmark.cpp): fixed key64
+/// sequential+uniform, multi-column (2xBIGINT, BIGINT+2xINT32), and strings
+/// (short/long x low/high cardinality). Data gen mirrors the velox splitMix64 uniform
+/// / row sequential distributions so the three-way boundary is aligned.
 #include <cstdlib>
-#include <iostream>
-#include <memory>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 #include <benchmark/benchmark.h>
 
 #include <Columns/ColumnsNumber.h>
+#include <Columns/ColumnString.h>
 #include <Core/Block.h>
 #include <Core/ColumnWithTypeAndName.h>
 #include <Core/Names.h>
 #include <DataTypes/DataTypesNumber.h>
+#include <DataTypes/DataTypeString.h>
 #include <Interpreters/HashJoin/HashJoin.h>
 #include <Interpreters/IJoin.h>
 #include <Interpreters/TableJoin.h>
@@ -23,51 +31,136 @@ using namespace DB;
 namespace
 {
 
-Block makeBlock(UInt64 begin, UInt64 end, const String & key_name, bool with_payload)
-{
-    auto key = ColumnUInt64::create();
-    for (UInt64 i = begin; i < end; ++i)
-        key->insert(i);
+const UInt64 BUILD_N = []{ const char* e=std::getenv("CH_HJ_N"); return e?std::strtoull(e,nullptr,10):100000ULL; }();
+const UInt64 PROBE_N = BUILD_N;
 
+enum class Layout
+{
+    Bigint,
+    TwoBigint,
+    BigintTwoInt,
+    Varchar,
+};
+
+struct SuiteSpec
+{
+    Layout layout;
+    bool sequential;
+    bool stringLong;
+    bool stringLowCard;
+};
+
+UInt64 splitMix64(UInt64 value)
+{
+    value += 0x9e3779b97f4a7c15ULL;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    return value ^ (value >> 31);
+}
+
+Int64 keyAt(UInt64 row, bool sequential)
+{
+    if (sequential)
+        return static_cast<Int64>(row);
+    return static_cast<Int64>(splitMix64(row));
+}
+
+std::string stringKeyAt(UInt64 row, bool longStr, bool lowCard)
+{
+    const UInt64 value = lowCard ? (row % 1024) : static_cast<UInt64>(keyAt(row, false));
+    std::string key = std::to_string(value);
+    if (longStr && key.size() < 128)
+        key.append(128 - key.size(), static_cast<char>('a' + value % 26));
+    return key;
+}
+
+Names keyNames(const SuiteSpec & s)
+{
+    switch (s.layout)
+    {
+        case Layout::Bigint:
+        case Layout::Varchar: return Names{"k0"};
+        case Layout::TwoBigint: return Names{"k0", "k1"};
+        case Layout::BigintTwoInt: return Names{"k0", "k1", "k2"};
+    }
+    return Names{"k0"};
+}
+
+Block makeBlock(UInt64 begin, UInt64 end, const SuiteSpec & s, bool with_payload)
+{
+    const UInt64 n = end - begin;
     Block block;
-    block.insert(ColumnWithTypeAndName{std::move(key), std::make_shared<DataTypeUInt64>(), key_name});
+
+    if (s.layout == Layout::Varchar)
+    {
+        auto k0 = ColumnString::create();
+        for (UInt64 i = begin; i < end; ++i)
+        {
+            std::string v = stringKeyAt(i, s.stringLong, s.stringLowCard);
+            k0->insertData(v.data(), v.size());
+        }
+        block.insert(ColumnWithTypeAndName{std::move(k0), std::make_shared<DataTypeString>(), "k0"});
+    }
+    else
+    {
+        auto k0 = ColumnInt64::create();
+        for (UInt64 i = begin; i < end; ++i)
+            k0->insert(keyAt(i, s.sequential));
+        block.insert(ColumnWithTypeAndName{std::move(k0), std::make_shared<DataTypeInt64>(), "k0"});
+
+        if (s.layout == Layout::TwoBigint)
+        {
+            auto k1 = ColumnInt64::create();
+            for (UInt64 i = begin; i < end; ++i)
+                k1->insert(keyAt(i, s.sequential) ^ 0x5a5a5a5a5a5a5a5aLL);
+            block.insert(ColumnWithTypeAndName{std::move(k1), std::make_shared<DataTypeInt64>(), "k1"});
+        }
+        else if (s.layout == Layout::BigintTwoInt)
+        {
+            auto k1 = ColumnInt32::create();
+            auto k2 = ColumnInt32::create();
+            for (UInt64 i = begin; i < end; ++i)
+            {
+                k1->insert(static_cast<Int32>(i));
+                k2->insert(static_cast<Int32>(i * 17));
+            }
+            block.insert(ColumnWithTypeAndName{std::move(k1), std::make_shared<DataTypeInt32>(), "k1"});
+            block.insert(ColumnWithTypeAndName{std::move(k2), std::make_shared<DataTypeInt32>(), "k2"});
+        }
+    }
 
     if (with_payload)
     {
         auto payload = ColumnUInt64::create();
-        for (UInt64 i = begin; i < end; ++i)
+        for (UInt64 i = 0; i < n; ++i)
             payload->insert(i * 10);
         block.insert(ColumnWithTypeAndName{std::move(payload), std::make_shared<DataTypeUInt64>(), "v"});
     }
     return block;
 }
 
-constexpr UInt64 BUILD_N = 100000;   /// right keys 0..99999
-constexpr UInt64 PROBE_N = 50000;    /// left keys  0..49999 (fanout 1 -> 50000 matches)
-
-std::shared_ptr<TableJoin> makeTableJoin()
+std::shared_ptr<TableJoin> makeTableJoin(const SuiteSpec & s)
 {
+    Names ks = keyNames(s);
     auto tj = std::make_shared<TableJoin>(
-        SizeLimits{}, /*use_nulls*/ false, JoinKind::Inner, JoinStrictness::All, Names{"k"});
-    tj->setLeftKeys(Names{"k"});
+        SizeLimits{}, /*use_nulls*/ false, JoinKind::Inner, JoinStrictness::All, ks);
+    tj->setLeftKeys(ks);
     return tj;
 }
 
-/// Build a fully-populated HashJoin (build phase finished) ready to probe.
-std::shared_ptr<HashJoin> buildJoin()
+std::shared_ptr<HashJoin> buildJoin(const SuiteSpec & s)
 {
-    Block right_sample = makeBlock(0, 0, "k", true);
-    auto hj = std::make_shared<HashJoin>(makeTableJoin(), std::make_shared<const Block>(right_sample));
-    Block build_block = makeBlock(0, BUILD_N, "k", true);
+    Block right_sample = makeBlock(0, 0, s, true);
+    auto hj = std::make_shared<HashJoin>(makeTableJoin(s), std::make_shared<const Block>(right_sample));
+    Block build_block = makeBlock(0, BUILD_N, s, true);
     hj->addBlockToJoin(build_block, /*check_limits*/ true);
     hj->onBuildPhaseFinish();
     return hj;
 }
 
-/// Run one probe pass; return output-row count (materialized rows emitted).
-size_t probeOnce(HashJoin & hj)
+size_t probeOnce(HashJoin & hj, const SuiteSpec & s)
 {
-    Block probe_block = makeBlock(0, PROBE_N, "k", false);
+    Block probe_block = makeBlock(0, PROBE_N, s, false);
     JoinResultPtr result = hj.joinBlock(std::move(probe_block));
     size_t out_rows = 0;
     while (true)
@@ -83,38 +176,61 @@ size_t probeOnce(HashJoin & hj)
 bool layer1Env()
 {
     const char * e = std::getenv("CH_HJ_LAYER1_ONLY");
-    return e != nullptr && e[0] == 1;
+    return e != nullptr && e[0] == '1';
 }
 
-/// BUILD timing: fresh HashJoin build+finish each iteration.
-void BM_ChHashJoinBuild(benchmark::State & state)
+void runBuild(benchmark::State & state, SuiteSpec s)
 {
     for (auto _ : state)
     {
-        auto hj = buildJoin();
+        auto hj = buildJoin(s);
         benchmark::DoNotOptimize(hj.get());
         benchmark::ClobberMemory();
     }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(BUILD_N));
 }
-BENCHMARK(BM_ChHashJoinBuild);
 
-/// PROBE timing: reuse one prebuilt table, time probe only. Arm chosen by env.
-void BM_ChHashJoinProbe(benchmark::State & state)
+void runProbe(benchmark::State & state, SuiteSpec s)
 {
-    auto hj = buildJoin();
+    auto hj = buildJoin(s);
     size_t out_rows = 0;
     for (auto _ : state)
     {
-        out_rows = probeOnce(*hj);
+        out_rows = probeOnce(*hj, s);
         benchmark::DoNotOptimize(out_rows);
     }
-    /// Correctness: full arm materializes PROBE_N rows; layer-1 arm materializes 0
-    /// (matches confirmed but not expanded). Reported as a counter for the run-through.
     state.counters["out_rows"] = static_cast<double>(out_rows);
     state.counters["layer1_only"] = layer1Env() ? 1.0 : 0.0;
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(PROBE_N));
 }
-BENCHMARK(BM_ChHashJoinProbe);
+
+struct Suite { const char * name; SuiteSpec spec; };
+
+const std::vector<Suite> & suites()
+{
+    static const std::vector<Suite> v = {
+        {"bigint_seq",         {Layout::Bigint,       true,  false, false}},
+        {"bigint_uniform",     {Layout::Bigint,       false, false, false}},
+        {"2xbigint",           {Layout::TwoBigint,    false, false, false}},
+        {"bigint_2xint",       {Layout::BigintTwoInt, false, false, false}},
+        {"varchar_short_low",  {Layout::Varchar,      false, false, true}},
+        {"varchar_short_high", {Layout::Varchar,      false, false, false}},
+        {"varchar_long_low",   {Layout::Varchar,      false, true,  true}},
+        {"varchar_long_high",  {Layout::Varchar,      false, true,  false}},
+    };
+    return v;
+}
+
+const int register_all = []
+{
+    for (const auto & su : suites())
+    {
+        benchmark::RegisterBenchmark((std::string("BM_Build/") + su.name).c_str(),
+            [spec = su.spec](benchmark::State & st) { runBuild(st, spec); });
+        benchmark::RegisterBenchmark((std::string("BM_ProbeL1/") + su.name).c_str(),
+            [spec = su.spec](benchmark::State & st) { runProbe(st, spec); });
+    }
+    return 0;
+}();
 
 }
