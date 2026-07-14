@@ -35,6 +35,17 @@ inline bool chHjLayer1Only()
     return v;
 #endif
 }
+
+/// LAYER-1 OBSERVABILITY SINK (task T-chbench-deadcode-fix -- benchmark scaffolding only).
+/// The layer-1 arm truncates at match-confirmed and emits zero materialized rows, so nothing
+/// downstream consumes find_result. Without an observable use, clang treats the whole bucket
+/// walk (hash + address + keyEquals) as dead code and deletes it, making ns/probe flat.
+/// We XOR the found mapped pointer/offset into a volatile sink -- the compiler cannot prove it
+/// unused, so the real (cache-miss bearing) probe is forced to run. CH-side analogue of the
+/// Velox hits buffer + folly::doNotOptimizeAway. Does NOT change hash/addressing/keyEquals/
+/// materialization -- only makes the *existing* lookup result observable.
+inline volatile std::uintptr_t g_ch_hj_layer1_sink = 0;
+
 namespace ErrorCodes
 {
 extern const int UNSUPPORTED_JOIN_KEYS;
@@ -661,7 +672,17 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumns(
                 /// LAYER1 cut (task30): when on, only mark the match; skip layer-2 processMatch.
                 /// Loop bookkeeping stays consistent: right_row_found=true suppresses addNotFoundRow;
                 /// current_offset left unchanged -> row emits zero materialized output.
-                if constexpr (!layer1_only)
+                if constexpr (layer1_only)
+                {
+                    /// Make the confirmed match observable so the bucket walk is not dead-code
+                    /// eliminated (task T-chbench-deadcode-fix). Touches the found cell -> forces
+                    /// the real (cache-miss bearing) load. Algorithm unchanged.
+                    if constexpr (FindResult::has_offset)
+                        g_ch_hj_layer1_sink ^= static_cast<std::uintptr_t>(find_result.getOffset());
+                    else
+                        g_ch_hj_layer1_sink ^= reinterpret_cast<std::uintptr_t>(&find_result.getMapped());
+                }
+                else
                     processMatch<KIND, STRICTNESS, need_filter, flag_per_row, MapsTemplate, Map, KeyGetter>(
                         find_result, added_columns, used_flags, i, ind, current_offset, dummy_known_rows);
             }

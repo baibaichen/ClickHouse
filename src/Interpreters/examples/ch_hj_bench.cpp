@@ -23,6 +23,7 @@
 #include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/DataTypeString.h>
 #include <Interpreters/HashJoin/HashJoin.h>
+#include <Interpreters/HashJoin/HashJoinMethodsImpl.h>
 #include <Interpreters/IJoin.h>
 #include <Interpreters/TableJoin.h>
 
@@ -201,6 +202,12 @@ void runProbe(benchmark::State & state, SuiteSpec s)
     }
     state.counters["out_rows"] = static_cast<double>(out_rows);
     state.counters["layer1_only"] = layer1Env() ? 1.0 : 0.0;
+    /// Consume the layer-1 observability sink (task T-chbench-deadcode-fix): pull the volatile
+    /// value the probe hot loop XORed the found cells into, and hand it to the benchmark so the
+    /// whole bucket-walk chain stays observable end-to-end (belt-and-suspenders vs the volatile).
+    std::uintptr_t sink = DB::g_ch_hj_layer1_sink;
+    benchmark::DoNotOptimize(sink);
+    state.counters["l1_sink"] = static_cast<double>(sink & 0xffffu);
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(PROBE_N));
 }
 
