@@ -188,6 +188,9 @@ void runBuild(benchmark::State & state, SuiteSpec s)
         benchmark::ClobberMemory();
     }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(BUILD_N));
+    /// Emit the row count so the three-way analysis script can attach each CH suite
+    /// to the matching (distribution, rows, key_layout) cell without inference.
+    state.counters["build_n"] = static_cast<double>(BUILD_N);
 }
 
 void runProbe(benchmark::State & state, SuiteSpec s)
@@ -215,6 +218,9 @@ void runProbe(benchmark::State & state, SuiteSpec s)
     benchmark::DoNotOptimize(sink);
     state.counters["l1_sink"] = static_cast<double>(sink & 0xffffu);
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(PROBE_N));
+    /// Emit the row count so the three-way analysis script can attach each CH suite
+    /// to the matching (distribution, rows, key_layout) cell without inference.
+    state.counters["build_n"] = static_cast<double>(BUILD_N);
 }
 
 struct Suite { const char * name; SuiteSpec spec; };
