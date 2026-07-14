@@ -10,9 +10,31 @@
 
 #include <algorithm>
 #include <type_traits>
+#include <cstdlib>
 
 namespace DB
 {
+
+/// LAYER-1 INSTRUMENTATION (local measurement scaffolding, task30 -- NOT for upstream).
+/// Cut approach A: truncate probe at match-confirmed (layer 1 = serialize+hash+lookup),
+/// skipping processMatch (layer 2 = expand+materialize).
+/// Controlled two ways so a single dbms build serves both benchmark arms:
+///   - compile-time: -DLAYER1_ONLY forces the cut on for the whole TU;
+///   - runtime: env CH_HJ_LAYER1_ONLY=1 flips it on at run time.
+/// When neither is set, chHjLayer1Only() is one load of a false static bool -> original path.
+inline bool chHjLayer1Only()
+{
+#ifdef LAYER1_ONLY
+    return true;
+#else
+    static const bool v = []
+    {
+        const char * e = std::getenv("CH_HJ_LAYER1_ONLY");
+        return e != nullptr && e[0] == '1';
+    }();
+    return v;
+#endif
+}
 namespace ErrorCodes
 {
 extern const int UNSUPPORTED_JOIN_KEYS;
@@ -329,6 +351,10 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::switchJoinRightColumns(
     HashJoin::RightTableData::KeyRange key_range)
 {
     constexpr bool is_asof_join = STRICTNESS == JoinStrictness::Asof;
+    /// LAYER1 cut (task31): read the runtime env toggle ONCE per block (outside the hot loop),
+    /// then dispatch to the compile-time layer1_only=true/false instantiation. The per-row
+    /// branch vanishes via if constexpr in joinRightColumns -> zero hot-path cost.
+    const bool l1 = chHjLayer1Only();
     switch (type)
     {
         case HashJoin::Type::EMPTY: {
@@ -341,8 +367,12 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::switchJoinRightColumns(
                 using MapTypeVal = typename KeyGetter::MappedType;
                 std::vector<const MapTypeVal *> a_map_type_vector;
                 a_map_type_vector.emplace_back();
-                return joinRightColumnsSwitchNullability<KeyGetter>(
-                    std::move(key_getter_vector), a_map_type_vector, added_columns, selector, used_flags);
+                if (l1)
+                    return joinRightColumnsSwitchNullability<KeyGetter, /*layer1_only=*/true>(
+                        std::move(key_getter_vector), a_map_type_vector, added_columns, selector, used_flags);
+                else
+                    return joinRightColumnsSwitchNullability<KeyGetter, /*layer1_only=*/false>(
+                        std::move(key_getter_vector), a_map_type_vector, added_columns, selector, used_flags);
             }
             throw Exception(ErrorCodes::UNSUPPORTED_JOIN_KEYS, "Unsupported JOIN keys. Type: {}", type);
         }
@@ -359,7 +389,7 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::switchJoinRightColumns(
             key_getter_vector.push_back( \
                 std::move(createKeyGetter<KeyGetter, is_asof_join>(join_on_key.key_columns, join_on_key.key_sizes, key_range))); \
         } \
-        return joinRightColumnsSwitchNullability<KeyGetter>(std::move(key_getter_vector), a_map_type_vector, added_columns, selector, used_flags); \
+        if (l1)             return joinRightColumnsSwitchNullability<KeyGetter, /*layer1_only=*/true>(std::move(key_getter_vector), a_map_type_vector, added_columns, selector, used_flags);         else             return joinRightColumnsSwitchNullability<KeyGetter, /*layer1_only=*/false>(std::move(key_getter_vector), a_map_type_vector, added_columns, selector, used_flags); \
     }
             APPLY_FOR_JOIN_VARIANTS(M)
 #undef M
@@ -370,7 +400,7 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::switchJoinRightColumns(
 }
 
 template <JoinKind KIND, JoinStrictness STRICTNESS, typename MapsTemplate>
-template <typename KeyGetter, typename Map, typename AddedColumns>
+template <typename KeyGetter, bool layer1_only, typename Map, typename AddedColumns>
 size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchNullability(
     std::vector<KeyGetter> && key_getter_vector,
     const std::vector<const Map *> & mapv,
@@ -379,15 +409,15 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchNu
     JoinStuff::JoinUsedFlags & used_flags)
 {
     if (added_columns.need_filter)
-        return joinRightColumnsSwitchMultipleDisjuncts<KeyGetter, Map, true>(
+        return joinRightColumnsSwitchMultipleDisjuncts<KeyGetter, Map, true, layer1_only>(
             std::forward<std::vector<KeyGetter>>(key_getter_vector), mapv, added_columns, selector, used_flags);
     else
-        return joinRightColumnsSwitchMultipleDisjuncts<KeyGetter, Map, false>(
+        return joinRightColumnsSwitchMultipleDisjuncts<KeyGetter, Map, false, layer1_only>(
             std::forward<std::vector<KeyGetter>>(key_getter_vector), mapv, added_columns, selector, used_flags);
 }
 
 template <JoinKind KIND, JoinStrictness STRICTNESS, typename MapsTemplate>
-template <typename KeyGetter, typename Map, bool need_filter, typename AddedColumns>
+template <typename KeyGetter, typename Map, bool need_filter, bool layer1_only, typename AddedColumns>
 size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchMultipleDisjuncts(
     std::vector<KeyGetter> && key_getter_vector,
     const std::vector<const Map *> & mapv,
@@ -420,20 +450,20 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchMu
         if (mapv.size() > 1 || added_columns.join_on_keys.empty())
         {
             if (std::ranges::any_of(added_columns.join_on_keys, [](const auto & elem) { return elem.null_map; }))
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true, layer1_only>(
                     std::move(key_getter_vector), mapv, added_columns, used_flags, selector.getRange());
             else
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false, layer1_only>(
                     std::move(key_getter_vector), mapv, added_columns, used_flags, selector.getRange());
         }
         else
         {
             chassert(key_getter_vector.size() == 1);
             if (added_columns.join_on_keys.at(0).null_map)
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true, layer1_only>(
                     key_getter_vector.at(0), mapv.at(0), added_columns, used_flags, selector.getRange());
             else
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false, layer1_only>(
                     key_getter_vector.at(0), mapv.at(0), added_columns, used_flags, selector.getRange());
         }
     }
@@ -442,20 +472,20 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchMu
         if (mapv.size() > 1 || added_columns.join_on_keys.empty())
         {
             if (std::ranges::any_of(added_columns.join_on_keys, [](const auto & elem) { return elem.null_map; }))
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true, layer1_only>(
                     std::move(key_getter_vector), mapv, added_columns, used_flags, selector.getIndexes());
             else
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false, layer1_only>(
                     std::move(key_getter_vector), mapv, added_columns, used_flags, selector.getIndexes());
         }
         else
         {
             chassert(key_getter_vector.size() == 1);
             if (added_columns.join_on_keys.at(0).null_map)
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/true, layer1_only>(
                     key_getter_vector.at(0), mapv.at(0), added_columns, used_flags, selector.getIndexes());
             else
-                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false>(
+                return joinRightColumnsSwitchJoinMaskKind<KeyGetter, Map, need_filter, /*check_null_map=*/false, layer1_only>(
                     key_getter_vector.at(0), mapv.at(0), added_columns, used_flags, selector.getIndexes());
         }
     }
@@ -558,6 +588,7 @@ template <
     bool need_filter,
     bool check_null_map,
     JoinCommon::JoinMask::Kind join_mask_kind,
+    bool layer1_only,
     typename AddedColumns,
     typename Selector>
 size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumns(
@@ -627,8 +658,12 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumns(
             if (find_result.isFound())
             {
                 right_row_found = true;
-                processMatch<KIND, STRICTNESS, need_filter, flag_per_row, MapsTemplate, Map, KeyGetter>(
-                    find_result, added_columns, used_flags, i, ind, current_offset, dummy_known_rows);
+                /// LAYER1 cut (task30): when on, only mark the match; skip layer-2 processMatch.
+                /// Loop bookkeeping stays consistent: right_row_found=true suppresses addNotFoundRow;
+                /// current_offset left unchanged -> row emits zero materialized output.
+                if constexpr (!layer1_only)
+                    processMatch<KIND, STRICTNESS, need_filter, flag_per_row, MapsTemplate, Map, KeyGetter>(
+                        find_result, added_columns, used_flags, i, ind, current_offset, dummy_known_rows);
             }
         }
 
@@ -650,20 +685,20 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumns(
 }
 
 template <JoinKind KIND, JoinStrictness STRICTNESS, typename MapsTemplate>
-template <typename KeyGetter, typename Map, bool need_filter, bool check_null_map, typename AddedColumns, typename Selector>
+template <typename KeyGetter, typename Map, bool need_filter, bool check_null_map, bool layer1_only, typename AddedColumns, typename Selector>
 size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchJoinMaskKind(
     KeyGetter & key_getter, const Map * map, AddedColumns & added_columns, JoinStuff::JoinUsedFlags & used_flags, const Selector & selector)
 {
     switch (added_columns.join_on_keys.at(0).join_mask_column.getKind())
     {
         case JoinCommon::JoinMask::Kind::Unknown:
-            return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, JoinCommon::JoinMask::Kind::Unknown>(
+            return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, JoinCommon::JoinMask::Kind::Unknown, layer1_only>(
                 key_getter, map, added_columns, used_flags, selector);
         case JoinCommon::JoinMask::Kind::AllFalse:
-            return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, JoinCommon::JoinMask::Kind::AllFalse>(
+            return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, JoinCommon::JoinMask::Kind::AllFalse, layer1_only>(
                 key_getter, map, added_columns, used_flags, selector);
         case JoinCommon::JoinMask::Kind::AllTrue:
-            return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, JoinCommon::JoinMask::Kind::AllTrue>(
+            return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, JoinCommon::JoinMask::Kind::AllTrue, layer1_only>(
                 key_getter, map, added_columns, used_flags, selector);
     }
 }
@@ -677,6 +712,7 @@ template <
     bool need_filter,
     bool check_null_map,
     JoinCommon::JoinMask::Kind join_mask_kind,
+    bool layer1_only,
     typename AddedColumns,
     typename Selector>
 size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumns(
@@ -758,8 +794,10 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumns(
                 if (find_result.isFound())
                 {
                     right_row_found = true;
-                    processMatch<KIND, STRICTNESS, need_filter, flag_per_row, MapsTemplate, Map, KeyGetter>(
-                        find_result, added_columns, used_flags, i, ind, current_offset, known_rows);
+                    /// LAYER1 cut (task31): compile-time skip of layer-2 processMatch when layer1_only.
+                    if constexpr (!layer1_only)
+                        processMatch<KIND, STRICTNESS, need_filter, flag_per_row, MapsTemplate, Map, KeyGetter>(
+                            find_result, added_columns, used_flags, i, ind, current_offset, known_rows);
 
                     if constexpr (join_features.is_any_or_semi_join && !(join_features.is_any_join && (join_features.right || join_features.full)))
                         break;
@@ -788,6 +826,7 @@ template <
     typename Map,
     bool need_filter,
     bool check_null_map,
+    bool layer1_only,
     typename AddedColumns,
     typename Selector>
 size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchJoinMaskKind(
@@ -800,17 +839,17 @@ size_t HashJoinMethods<KIND, STRICTNESS, MapsTemplate>::joinRightColumnsSwitchJo
     using Kind = JoinCommon::JoinMask::Kind;
     if (std::ranges::all_of(added_columns.join_on_keys, [](const auto & elem) { return elem.join_mask_column.getKind() == Kind::AllTrue; }))
     {
-        return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, Kind::AllTrue>(
+        return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, Kind::AllTrue, layer1_only>(
             std::move(key_getter_vector), mapv, added_columns, used_flags, selector);
     }
     else if (std::ranges::all_of(added_columns.join_on_keys, [](const auto & elem) { return elem.join_mask_column.getKind() == Kind::AllFalse; }))
     {
-        return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, Kind::AllFalse>(
+        return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, Kind::AllFalse, layer1_only>(
             std::move(key_getter_vector), mapv, added_columns, used_flags, selector);
     }
     else
     {
-        return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, Kind::Unknown>(
+        return joinRightColumns<KeyGetter, Map, need_filter, check_null_map, Kind::Unknown, layer1_only>(
             std::move(key_getter_vector), mapv, added_columns, used_flags, selector);
     }
 }

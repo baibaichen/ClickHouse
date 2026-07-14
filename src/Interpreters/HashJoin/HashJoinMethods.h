@@ -129,7 +129,7 @@ private:
         JoinStuff::JoinUsedFlags & used_flags,
         HashJoin::RightTableData::KeyRange key_range);
 
-    template <typename KeyGetter, typename Map, typename AddedColumns>
+    template <typename KeyGetter, bool layer1_only, typename Map, typename AddedColumns>
     static size_t joinRightColumnsSwitchNullability(
         std::vector<KeyGetter> && key_getter_vector,
         const std::vector<const Map *> & mapv,
@@ -137,7 +137,7 @@ private:
         const ScatteredBlock::Selector & selector,
         JoinStuff::JoinUsedFlags & used_flags);
 
-    template <typename KeyGetter, typename Map, bool need_filter, typename AddedColumns>
+    template <typename KeyGetter, typename Map, bool need_filter, bool layer1_only, typename AddedColumns>
     static size_t joinRightColumnsSwitchMultipleDisjuncts(
         std::vector<KeyGetter> && key_getter_vector,
         const std::vector<const Map *> & mapv,
@@ -153,6 +153,7 @@ private:
         bool need_filter,
         bool check_null_map,
         JoinCommon::JoinMask::Kind join_mask_kind,
+        bool layer1_only,
         typename AddedColumns,
         typename Selector>
     static size_t joinRightColumns(
@@ -167,6 +168,7 @@ private:
         typename Map,
         bool need_filter,
         bool check_null_map,
+        bool layer1_only,
         typename AddedColumns,
         typename Selector>
     static size_t joinRightColumnsSwitchJoinMaskKind(
@@ -182,6 +184,7 @@ private:
         bool need_filter,
         bool check_null_map,
         JoinCommon::JoinMask::Kind join_mask_kind,
+        bool layer1_only,
         typename AddedColumns,
         typename Selector>
     static size_t joinRightColumns(
@@ -191,7 +194,7 @@ private:
         JoinStuff::JoinUsedFlags & used_flags,
         const Selector & selector);
 
-    template <typename KeyGetter, typename Map, bool need_filter, bool check_null_map, typename AddedColumns, typename Selector>
+    template <typename KeyGetter, typename Map, bool need_filter, bool check_null_map, bool layer1_only, typename AddedColumns, typename Selector>
     static size_t joinRightColumnsSwitchJoinMaskKind(
         KeyGetter & key_getter,
         const Map * map,
