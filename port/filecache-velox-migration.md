@@ -16,8 +16,11 @@
 - 按 user/origin 统计，以及 idle client 驱逐
 - 后台下载、后台维持空闲空间、invalidated entry 清理
 - 动态 resize 和可 reload 的设置
-- write-through cache
 - 指标和缓存状态检查
+
+当前阶段明确不支持 `cache_on_write_operations` / write-through cache。读路径 miss
+填充 `FileSegment` 所需的本地 cache 写入仍然需要迁移，但对象写入同时填充 cache 的
+外层 write-through 逻辑不在当前范围。
 
 迁移时不应该用 Velox `AsyncDataCache` 或 `SsdCache` 重新实现这些算法。
 这两个 Velox 类的语义不同：它们是以内存页缓存和可选 SSD 缓存为核心，
@@ -114,7 +117,8 @@ FileCacheSettings.h / FileCacheSettings.cpp
 FileCacheFactory.h / FileCacheFactory.cpp
 FileCacheBufferedInput.h / FileCacheBufferedInput.cpp
 FileCacheInputStream.h / FileCacheInputStream.cpp
-CachedWriteFile.h / CachedWriteFile.cpp
+ReadBufferFromVeloxReadFile.h / ReadBufferFromVeloxReadFile.cpp
+WriteBufferToFileSegment.h / WriteBufferToFileSegment.cpp
 FileCacheScheduler.h / FileCacheScheduler.cpp
 ```
 
@@ -125,9 +129,9 @@ FileCacheScheduler.h / FileCacheScheduler.cpp
 | ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
 | `ReadBufferFromFileBase` | 一个接受 Velox `ReadFile` 的 `ReadBufferFromVeloxReadFile`，内部自带缓冲区 | 是 |
-| `WriteBufferFromFile` | `velox::WriteFile` | 否 |
-| `WriteBufferToFileSegment` | 新的 `FileSegmentWriter` 或 `CachedWriteFile` adapter | 否 |
-| `CachedOnDiskWriteBufferFromFile` | 基于 `WriteFile` 的本地缓存 writer | 否 |
+| `WriteBufferFromFile` | 读路径 miss 填充 cache segment 时，用 Velox `WriteFile` 或本地文件 writer 写 cache 文件 | 否 |
+| `WriteBufferToFileSegment` | 保留为临时数据 / cache segment 写入 adapter；不承载 `cache_on_write_operations` | 否 |
+| `CachedOnDiskWriteBufferFromFile` | 当前不支持；`cache_on_write_operations` / write-through cache 暂不迁移 | 否 |
 | `OpenedFileCache` | 用 `using OpenedFileCache = FileHandleFactory` 一类 alias 保留 CH 名字；为 `FileCache` 本地 segment 单独持有实例，删除 segment 时 invalidate 对应 handle | 是 |
 
 #### `OpenedFileCache` 对应关系
@@ -180,13 +184,8 @@ FileCacheInputStream::Next
   -> 缓存未命中：读取 inner ReadFile，写入 FileSegment，并返回字节
 ```
 
-写路径：
-
-```text
-CachedWriteFile::append / write
-  -> 写入 inner WriteFile
-  -> 如果启用了 cache_on_write_operations，同时填充 FileCache segment
-```
+当前范围没有对象写入的 write-through 路径；只迁移读 miss 后填充本地 cache
+segment 所需的 `FileSegment::write` 底层能力。
 
 ### 配置
 
@@ -386,7 +385,7 @@ FileCacheFactory
 CacheFileSystem
 FileCacheBufferedInput
 FileCacheInputStream
-CachedWriteFile
+ReadBufferFromVeloxReadFile
 ```
 
 ### 中心 SCC 功能切片
@@ -435,7 +434,6 @@ CachedWriteFile
 
 - 添加 `FileCacheBufferedInput`
 - 添加 `FileCacheInputStream`
-- 添加 `CachedWriteFile`
 - 接入 DWIO/scan 创建 `BufferedInput` 的位置
 - 确保不和 `CachedBufferedInput` / `AsyncDataCache` 双重缓存
 
@@ -461,11 +459,9 @@ CachedWriteFile
    一份。
 2. `queryId`、`userId`、`weight` 如何从 Prestissimo/connector context 流入
    `FileIoContext`。
-3. `cache_on_write_operations` 是否支持所有 `WriteFile` 后端，还是只支持
-   local/append-compatible 后端。
-4. 第一阶段是否只接 DWIO/scan 的 `FileCacheBufferedInput`，还是同时添加
+3. 第一阶段是否只接 DWIO/scan 的 `FileCacheBufferedInput`，还是同时添加
    `CacheFileSystem` / `CachedReadFile` 兜底。
-5. ClickHouse system-table 输出里有多少应该变成 Velox runtime stats，有多少
+4. ClickHouse system-table 输出里有多少应该变成 Velox runtime stats，有多少
    应该变成 debug API。
 
 ## 建议
