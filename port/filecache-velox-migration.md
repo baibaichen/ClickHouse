@@ -1,327 +1,103 @@
-# ClickHouse `FileCache` to Velox migration design
+# ClickHouse `FileCache` 到 Velox 的迁移设计
 
-## Goal
+## 目标
 
-Migrate the full ClickHouse `FileCache` functionality and algorithms into
-`/home/chang/OpenSource/velox`, while replacing ClickHouse infrastructure with
-Velox infrastructure.
+把完整的 ClickHouse `FileCache` 功能和算法迁移到
+`/home/chang/OpenSource/velox`，同时把 ClickHouse 的基础设施替换成 Velox
+基础设施。
 
-The migration should preserve the ClickHouse cache semantics:
+迁移后需要保留 ClickHouse 的缓存语义：
 
-- file segment lifecycle and partial download state machine
-- metadata loading and recovery from local cache directory
-- capacity reservation and eviction
-- `LRU`, `SLRU`, split cache, and overcommit eviction policies
-- per-query cache write limits
-- per-user/origin accounting and idle client eviction
-- background download, background free-space keeping, invalidated-entry cleanup
-- dynamic resize/reloadable settings
-- write-through cache support
-- metrics and cache inspection
+- 文件段生命周期和部分下载状态机
+- 从本地缓存目录加载和恢复元数据
+- 容量预留和驱逐
+- `LRU`、`SLRU`、split cache、overcommit 驱逐策略
+- 单 query 缓存写入限额
+- 按 user/origin 统计，以及 idle client 驱逐
+- 后台下载、后台维持空闲空间、invalidated entry 清理
+- 动态 resize 和可 reload 的设置
+- write-through cache
+- 指标和缓存状态检查
 
-The migration should not reimplement these algorithms using Velox
-`AsyncDataCache` or `SsdCache`. Those Velox classes have different semantics:
-they are memory page cache / optional SSD cache built around `CachePin`,
-exclusive/shared entries, and score-based eviction. They should not replace the
-ClickHouse `FileCache` algorithm classes.
+迁移时不应该用 Velox `AsyncDataCache` 或 `SsdCache` 重新实现这些算法。
+这两个 Velox 类的语义不同：它们是以内存页缓存和可选 SSD 缓存为核心，
+围绕 `CachePin`、exclusive/shared entry、score-based eviction 构建。
+它们不应该替代 ClickHouse `FileCache` 的算法类。
 
-## Recommended integration
+## 推荐接入方式
 
-Use `CacheFileSystem` as the main Velox integration point.
+使用 `CacheFileSystem` 作为 Velox 的主接入口。
 
-`CacheFileSystem` should be a filesystem decorator around an already-resolved
-real `FileSystem`, not a normal scheme matcher that competes with `s3`, `hdfs`,
-`gcs`, or `file`.
+`CacheFileSystem` 应该是已经解析出的真实 `FileSystem` 外面的一层
+decorator，而不是一个普通的 scheme matcher。它不应该和 `s3`、`hdfs`、
+`gcs`、`file` 这些已有 scheme 抢匹配。
 
-Recommended lookup flow:
+推荐查找流程：
 
 ```text
 filesystems::getFileSystem(path, config)
-  -> resolve real filesystem by existing scheme registry
-     e.g. S3FileSystem / HdfsFileSystem / GcsFileSystem / LocalFileSystem
-  -> if filesystem cache is enabled:
+  -> 通过现有 scheme registry 解析真实文件系统
+     例如 S3FileSystem / HdfsFileSystem / GcsFileSystem / LocalFileSystem
+  -> 如果启用了 filesystem cache:
          return CacheFileSystem(real_fs, file_cache_manager, config)
-     else:
+     否则:
          return real_fs
 ```
 
-This avoids:
+这样可以避免：
 
-- stealing existing schemes
-- recursively resolving `CacheFileSystem` through `getFileSystem`
-- forcing callers to rewrite paths to `cache://...`
+- 抢占已有 scheme
+- 通过 `getFileSystem` 递归解析 `CacheFileSystem`
+- 要求调用方把路径改写成 `cache://...`
 
-`BufferedInput` integration should be secondary. It can be used to avoid
-double-caching and to preserve Velox coalescing/prefetch behavior, but it should
-not own the cache algorithm.
+`BufferedInput` 接入应该作为 Velox scan / DWIO 读路径的主方案，因为它比
+`ReadFile` 更接近 ClickHouse `CachedOnDiskReadBufferFromFile` 的 streaming
+reader 语义。
 
-## `CachedReadFile` interface and implementation
+## `FileCacheBufferedInput`
 
-`CachedReadFile` is the Velox-side equivalent of ClickHouse
-`CachedOnDiskReadBufferFromFile`: it sits between Velox readers and the real
-remote/local `ReadFile`, asks `FileCache` for file segments, and fills missing
-segments from the wrapped file.
+详细的 `FileCacheBufferedInput` 集成设计已经拆到
+[`filecache-buffered-input-design.md`](filecache-buffered-input-design.md)。
 
-### Public interface
+## 与 Velox cache 共存
 
-`CachedReadFile` should implement the standard Velox `ReadFile` interface and
-hide all cache details from callers:
+Velox 已经有 `AsyncDataCache`、`SsdCache`、`CachedBufferedInput` 和
+`CacheInputStream`。
 
-```cpp
-class CachedReadFile final : public ReadFile
-{
-public:
-    CachedReadFile(
-        std::shared_ptr<ReadFile> inner,
-        FileCachePtr cache,
-        FileCacheKey key,
-        std::string path,
-        FileCacheReadOptions options);
-
-    std::string_view pread(
-        uint64_t offset,
-        uint64_t length,
-        void * buf,
-        const FileIoContext & context = {}) const override;
-
-    std::string pread(
-        uint64_t offset,
-        uint64_t length,
-        const FileIoContext & context = {}) const override;
-
-    uint64_t preadv(
-        uint64_t offset,
-        const std::vector<folly::Range<char *>> & buffers,
-        const FileIoContext & context = {}) const override;
-
-    uint64_t preadv(
-        folly::Range<const common::Region *> regions,
-        folly::Range<folly::IOBuf *> iobufs,
-        const FileIoContext & context = {}) const override;
-
-    uint64_t preadv(
-        folly::Range<const common::Region *> regions,
-        folly::Range<const folly::Range<char *> *> buffers,
-        const FileIoContext & context = {}) const override;
-
-    bool hasPreadvAsync() const override;
-
-    folly::SemiFuture<uint64_t> preadvAsync(
-        uint64_t offset,
-        const std::vector<folly::Range<char *>> & buffers,
-        const FileIoContext & context = {}) const override;
-
-    bool directIo(uint64_t & alignment) const override;
-    bool shouldCoalesce() const override;
-    uint64_t size() const override;
-    uint64_t memoryUsage() const override;
-    std::string getName() const override;
-    uint64_t getNaturalReadSize() const override;
-
-private:
-    uint64_t readWithCache(
-        folly::Range<const common::Region *> regions,
-        folly::Range<const folly::Range<char *> *> buffers,
-        const FileIoContext & context) const;
-
-    uint64_t readOneRange(
-        uint64_t offset,
-        uint64_t length,
-        folly::Range<char *> output,
-        const FileIoContext & context) const;
-
-    FileCacheRequestContext makeCacheContext(const FileIoContext & context) const;
-
-    std::shared_ptr<ReadFile> inner_;
-    FileCachePtr cache_;
-    FileCacheKey key_;
-    std::string path_;
-    FileCacheReadOptions options_;
-};
-```
-
-Initial `preadvAsync` should not pretend to be natively asynchronous unless the
-cache path is explicitly made async. A safe first version can return
-`hasPreadvAsync == false` and rely on the base synchronous behavior, or submit
-`readWithCache` to an owned executor in a later phase.
-
-`directIo` should delegate to `inner_` unless `CachedReadFile` always reads the
-remote file through its own correctly aligned scratch buffers. Delegation is the
-safer first design because cache misses still call the wrapped `ReadFile`.
-
-`shouldCoalesce` and `getNaturalReadSize` should delegate to `inner_`; Velox
-readers can keep their existing coalescing decisions while the cache handles
-segments internally.
-
-### Internal remote reader adapter
-
-`FileSegment` should not store `ReadFile` directly. `ReadFile` is a positioned
-read API; it does not represent "a downloader that has already read up to this
-offset and still owns an internal buffer".
-
-Use a small adapter to replace ClickHouse `ReadBufferFromFileBase`:
-
-```cpp
-class FileSegmentRemoteReader
-{
-public:
-    FileSegmentRemoteReader(
-        std::shared_ptr<ReadFile> inner,
-        FileIoContext context,
-        uint64_t bufferSize);
-
-    void seek(uint64_t offset);
-    bool eof() const;
-    uint64_t position() const;
-    uint64_t bufferEndOffset() const;
-    size_t available() const;
-    char * data();
-
-    bool next();
-
-private:
-    std::shared_ptr<ReadFile> inner_;
-    FileIoContext context_;
-    std::vector<char> buffer_;
-    uint64_t fileOffset_ = 0;
-    size_t positionInBuffer_ = 0;
-    size_t validBytes_ = 0;
-    bool eof_ = false;
-};
-```
-
-`next` does a positioned read from `inner_` into `buffer_`, updates
-`fileOffset_`, `positionInBuffer_`, and `validBytes_`, and exposes the bytes to
-the downloader. This preserves the ClickHouse idea that the remote reader can be
-attached to a `FileSegment` and later reused by foreground or background
-download.
-
-### Read flow
-
-For every requested range:
+新的 `FileCache` 应该按下面方式共存：
 
 ```text
-CachedReadFile::readOneRange
-  -> build FileCacheRequestContext from FileIoContext/path/options
-  -> if context says non-cacheable:
-         inner_->pread directly
-  -> holder = FileCache::getOrSet(key, offset, length, fileSize, settings, ...)
-  -> for each FileSegment in holder:
-         if segment is downloaded:
-             read local cache segment into caller buffer
-         else:
-             use downloader protocol to fill/read the segment
-```
-
-Downloader path:
-
-```text
-segment.getOrSetDownloader
-  -> if this caller becomes downloader:
-         get or create FileSegmentRemoteReader
-         while caller still needs bytes:
-             reader.next / reader.available
-             segment.reserve(bytes)
-             segment.write(reader.data, bytes, offset)
-             copy bytes to caller output
-         segment.completePartAndResetDownloader or complete
-  -> if another caller is downloader:
-         wait/read available cached bytes according to FileSegment state
-```
-
-The `FileSegmentRemoteReader` is stored in `FileSegment::DownloadState`, not in
-`CachedReadFile`, because the reader belongs to the segment download state. This
-is what allows background download to continue a partially downloaded segment
-after the foreground read stops.
-
-### Vector read handling
-
-All public `preadv` variants should normalize into:
-
-```text
-vector of (Region, output buffer)
-```
-
-Then call `readWithCache`. `readWithCache` should preserve Velox's result
-contract: return total bytes read and fill outputs in the same order as input
-regions.
-
-`pread(offset, length, buf)` is just a single-region wrapper around
-`readWithCache`.
-
-`pread(offset, length)` allocates an owned string, calls the buffer version, and
-returns the string.
-
-### Error handling
-
-If remote read or cache write fails while this caller is downloader:
-
-```text
-segment.setDownloadFailed
-propagate the Velox exception
-```
-
-Only bypass cache on cache-disk errors when the migrated setting equivalent of
-`skip_cache_on_disk_failure` explicitly allows it. Otherwise errors should
-surface; do not silently fall back to remote reads because that hides cache
-invariant bugs.
-
-### Thread safety
-
-`CachedReadFile` methods must be thread-safe, matching Velox `ReadFile`.
-
-`CachedReadFile` itself should hold only shared immutable state:
-
-```text
-inner_
-cache_
-key_
-path_
-options_
-```
-
-Mutable download state lives in `FileSegment`, guarded by the migrated segment
-locks. Mutable cache state lives in `FileCache` and priority/metadata guards.
-
-## Coexistence with Velox cache
-
-Velox already has `AsyncDataCache`, `SsdCache`, `CachedBufferedInput`, and
-`CacheInputStream`.
-
-The new `FileCache` should coexist as follows:
-
-```text
-CacheFileSystem / CachedReadFile
-  owns ClickHouse FileCache semantics
+FileCacheBufferedInput / FileCacheInputStream
+  承载 ClickHouse FileCache 读路径语义
 
 CachedBufferedInput / CacheInputStream
-  may still do format-reader coalescing/prefetch
-  must avoid retaining the same bytes again in AsyncDataCache
+  继续承载 Velox AsyncDataCache 语义
+  不应该和 FileCacheBufferedInput 同时缓存同一份 raw bytes
 ```
 
-When a `ReadFile` is produced by `CacheFileSystem`, `CachedBufferedInput` should
-either:
+当某条 scan 路径选择 `FileCacheBufferedInput` 时，`CachedBufferedInput` 应该
+二选一：
 
-- mark the stream as non-cacheable for `AsyncDataCache`, or
-- detect a cached `ReadFile` marker and skip `AsyncDataCache` retention.
+- 不参与这条路径；
+- 或者通过 `cacheable=false` / marker 跳过 `AsyncDataCache` retention。
 
-This prevents:
+这样可以避免：
 
 ```text
 remote bytes -> FileCache local segment -> AsyncDataCache memory entry
 ```
 
-from becoming an accidental double cache.
+变成意外的双重缓存。
 
-## New Velox-side modules
+## 新增 Velox 侧模块
 
-Proposed location:
+建议位置：
 
 ```text
 velox/common/file/cache/
 ```
 
-Main files:
+主要文件：
 
 ```text
 FileCache.h / FileCache.cpp
@@ -336,51 +112,50 @@ EvictionCandidates.h / EvictionCandidates.cpp
 CacheUsage.h
 FileCacheSettings.h / FileCacheSettings.cpp
 FileCacheFactory.h / FileCacheFactory.cpp
-CacheFileSystem.h / CacheFileSystem.cpp
-CachedReadFile.h / CachedReadFile.cpp
+FileCacheBufferedInput.h / FileCacheBufferedInput.cpp
+FileCacheInputStream.h / FileCacheInputStream.cpp
 CachedWriteFile.h / CachedWriteFile.cpp
 FileCacheScheduler.h / FileCacheScheduler.cpp
 ```
 
-## Replacement map
+## 替换映射
 
 ### IO
 
-| ClickHouse dependency | Velox replacement | 是否人工 review 过 |
+| ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
-| `ReadBufferFromFileBase` | `velox::ReadFile` / `ReadFileInputStream` | 否 |
+| `ReadBufferFromFileBase` | 一个接受 Velox `ReadFile` 的 `ReadBufferFromVeloxReadFile`，内部自带缓冲区 | 是 |
 | `WriteBufferFromFile` | `velox::WriteFile` | 否 |
-| `WriteBufferToFileSegment` | new `FileSegmentWriter` or `CachedWriteFile` adapter | 否 |
-| `CachedOnDiskWriteBufferFromFile` | `WriteFile`-based local cache writer | 否 |
-| `OpenedFileCache` | no direct replacement; use `ReadFile` / `WriteFile` handles or a small local handle cache if needed | 否 |
+| `WriteBufferToFileSegment` | 新的 `FileSegmentWriter` 或 `CachedWriteFile` adapter | 否 |
+| `CachedOnDiskWriteBufferFromFile` | 基于 `WriteFile` 的本地缓存 writer | 否 |
+| `OpenedFileCache` | 没有直接替代；使用 `ReadFile` / `WriteFile` handle，必要时做一个小型本地 handle cache | 否 |
 
-Read path:
+读路径：
 
 ```text
-CachedReadFile::pread / preadv
+FileCacheInputStream::Next
   -> FileCache::getOrSet
-  -> cache hit: read local cache segment
-  -> cache miss: read inner ReadFile, write FileSegment, return bytes
+  -> 缓存命中：读取本地 cache segment
+  -> 缓存未命中：读取 inner ReadFile，写入 FileSegment，并返回字节
 ```
 
-Write path:
+写路径：
 
 ```text
 CachedWriteFile::append / write
-  -> write through to inner WriteFile
-  -> if cache_on_write_operations is enabled, also populate FileCache segment
+  -> 写入 inner WriteFile
+  -> 如果启用了 cache_on_write_operations，同时填充 FileCache segment
 ```
 
-### Configuration
+### 配置
 
-| ClickHouse dependency | Velox replacement | 是否人工 review 过 |
+| ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
 | `Poco::Util::AbstractConfiguration` | `velox::config::ConfigBase` | 否 |
 | `NamedCollection` | connector properties / `ConfigBase` prefix | 否 |
-| `Settings`, `ReadSettings`, `FilesystemCacheSettings` | new Velox `FileCacheSettings`, plus `ReaderOptions` / `FileOptions` for per-read flags | 否 |
+| `Settings`, `ReadSettings`, `FilesystemCacheSettings` | 新的 Velox `FileCacheSettings`，再结合 `ReaderOptions` / `FileOptions` 承载单次读取标志 | 否 |
 
-The ClickHouse setting names should be preserved where possible, translated into
-Velox config keys with a prefix such as:
+ClickHouse 设置名应该尽量保留，并翻译成带前缀的 Velox config key，例如：
 
 ```text
 file-cache.path
@@ -390,16 +165,16 @@ file-cache.cache-policy
 file-cache.background-download-threads
 ```
 
-### Threading and scheduling
+### 线程和调度
 
-| ClickHouse dependency | Velox replacement | 是否人工 review 过 |
+| ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
-| `ThreadPool` | `folly::CPUThreadPoolExecutor` or `folly::IOThreadPoolExecutor` | 否 |
-| `ThreadFromGlobalPool` | executor task submitted to owned executor | 否 |
-| `BackgroundSchedulePoolTaskHolder` | new `FileCacheScheduler` wrapper | 否 |
-| `callOnce`, `OnceFlag` | `folly::once_flag` / `folly::call_once` or `std::once_flag` | 否 |
+| `ThreadPool` | `folly::CPUThreadPoolExecutor` 或 `folly::IOThreadPoolExecutor` | 否 |
+| `ThreadFromGlobalPool` | 提交到自有 executor 的 task | 否 |
+| `BackgroundSchedulePoolTaskHolder` | 新的 `FileCacheScheduler` wrapper | 否 |
+| `callOnce`, `OnceFlag` | `folly::once_flag` / `folly::call_once` 或 `std::once_flag` | 否 |
 
-`FileCacheScheduler` should expose only the operations needed by `FileCache`:
+`FileCacheScheduler` 只需要暴露 `FileCache` 需要的操作：
 
 ```text
 scheduleAfter(delay)
@@ -407,19 +182,18 @@ cancel()
 shutdown()
 ```
 
-This keeps ClickHouse scheduling assumptions isolated from Velox.
+这样可以把 ClickHouse 的调度假设隔离在 Velox 适配层里。
 
-### Query and user context
+### Query 和 user 上下文
 
-| ClickHouse dependency | Velox replacement | 是否人工 review 过 |
+| ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
-| `CurrentThread::getQueryId` | explicit query id from Velox connector/query context | 否 |
-| `ThreadStatus` | no direct dependency; pass required fields explicitly | 否 |
-| `FileCacheOriginInfo::user_id` | user/client id from connector/session context | 否 |
-| `FileIoContext::cacheable` | per-read cacheability hint | 否 |
+| `CurrentThread::getQueryId` | 从 Velox connector/query context 显式传入 query id | 否 |
+| `ThreadStatus` | 不做直接依赖；显式传入需要的字段 | 否 |
+| `FileCacheOriginInfo::user_id` | 从 connector/session context 获取 user/client id | 否 |
+| `FileIoContext::cacheable` | 单次读取的 cacheable hint | 否 |
 
-Do not rely on global thread state. The Velox integration should pass a compact
-cache context explicitly:
+不要依赖全局线程状态。Velox 集成层应该显式传递一个紧凑的 cache context：
 
 ```text
 struct FileCacheRequestContext {
@@ -431,52 +205,51 @@ struct FileCacheRequestContext {
 };
 ```
 
-`CachedReadFile` can derive this from `FileIoContext`, `FileOptions`,
-`ReaderOptions`, or connector-specific properties.
+`FileCacheBufferedInput` 可以从 `FileIoContext`、`FileOptions`、`ReaderOptions` 或
+connector-specific properties 推导这个 context。
 
-### Metrics and observability
+### 指标和可观测性
 
-| ClickHouse dependency | Velox replacement | 是否人工 review 过 |
+| ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
-| `CurrentMetrics` | internal atomics + stats snapshot, optionally `StatsReporter` | 否 |
+| `CurrentMetrics` | 内部 atomics + stats snapshot，之后可接 `StatsReporter` | 否 |
 | `ProfileEvents` | `IoStatistics`, `IoStats`, `RuntimeMetric`, `RuntimeCounter` | 否 |
-| `DimensionalMetrics`, `HistogramMetrics` | Velox stats/reporting wrappers | 否 |
-| system table dump via `ColumnsDescription` | Velox stats/config dump API | 否 |
+| `DimensionalMetrics`, `HistogramMetrics` | Velox stats/reporting wrapper | 否 |
+| 通过 `ColumnsDescription` 输出 system table | Velox stats/config dump API | 否 |
 
-The first migration should keep a local `FileCacheStats` struct. Later this can
-be wired into Velox runtime stats and exported metrics.
+第一版迁移应该保留一个本地 `FileCacheStats` 结构。之后再接入 Velox runtime
+stats 和导出指标。
 
-### Exceptions and logging
+### 异常和日志
 
-| ClickHouse dependency | Velox replacement | 是否人工 review 过 |
+| ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
 | `Exception`, `ErrorCodes::LOGICAL_ERROR` | `VELOX_FAIL` / `VELOX_CHECK` / `VeloxRuntimeError` | 否 |
-| user-facing bad input errors | `VELOX_USER_FAIL` / `VeloxUserError` | 否 |
+| 用户输入错误 | `VELOX_USER_FAIL` / `VeloxUserError` | 否 |
 | `logger_useful` | `LOG`, `VLOG`, `FB_LOG_EVERY_MS` | 否 |
 
-Use Velox exceptions at boundaries, but keep messages close to ClickHouse
-messages where they document cache invariants.
+边界上使用 Velox 异常；但当错误消息描述 cache invariant 时，尽量保留接近
+ClickHouse 的表达。
 
-### Basic types and helpers
+### 基础类型和 helper
 
-| ClickHouse dependency | Velox replacement | 是否人工 review 过 |
+| ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
 | `String` | `std::string` | 否 |
-| `UInt64`, `UInt128` | `uint64_t`, custom `FileCacheKeyHash` / 128-bit helper | 否 |
-| `UUID`, `ServerUUID` | explicit config or local UUID helper only if still needed | 否 |
-| `SipHash`, `hex`, `randomSeed` | Velox/folly helpers or small migrated helper | 否 |
-| `base/unit.h` | constants in Velox style | 否 |
-| `SharedMutex`, `SharedLockGuard` | `folly::SharedMutex`, `std::shared_mutex`, or thin local wrappers | 否 |
+| `UInt64`, `UInt128` | `uint64_t`，自定义 `FileCacheKeyHash` / 128-bit helper | 否 |
+| `UUID`, `ServerUUID` | 仅在仍需要时用显式配置或本地 UUID helper | 否 |
+| `SipHash`, `hex`, `randomSeed` | Velox/folly helper 或迁移小型 helper | 否 |
+| `base/unit.h` | Velox 风格常量 | 否 |
+| `SharedMutex`, `SharedLockGuard` | `folly::SharedMutex`、`std::shared_mutex`，或薄封装 | 否 |
 | `scope_guard` | `folly::ScopeGuard` | 否 |
 
-Do not map ClickHouse `FileCacheKey` to Velox `cache::FileCacheKey`.
-Velox `cache::FileCacheKey` is `fileNum + offset`, while ClickHouse
-`FileCacheKey` identifies an origin object and is used in metadata paths.
+不要把 ClickHouse `FileCacheKey` 映射成 Velox `cache::FileCacheKey`。
+Velox `cache::FileCacheKey` 是 `fileNum + offset`，而 ClickHouse
+`FileCacheKey` 标识 origin object，并用于 metadata path。
 
-## Classes to preserve
+## 需要保留的类
 
-These classes should be migrated as algorithm classes, not replaced by Velox
-cache classes:
+下面这些类应该作为算法类迁移，而不是被 Velox cache 类替换：
 
 ```text
 FileCache
@@ -499,17 +272,17 @@ FileCacheQueryLimit
 FileCacheSettings
 ```
 
-Velox infrastructure should appear around them, not inside their algorithms
-unless required for IO, scheduling, logging, metrics, or errors.
+Velox 基础设施应该围绕这些类出现，而不是进入它们的算法内部；只有 IO、
+调度、日志、指标、异常和上下文传递需要替换。
 
-## Landing strategy
+## 落地策略
 
-Use file-level DAG ordering until reaching the central SCC. At the central SCC,
-land by functional SCC slices instead of forcing one file at a time.
+在到达中心 SCC 之前，按文件级 DAG 顺序迁移。到达中心 SCC 后，按功能 SCC
+切片落地，而不是强行逐文件拆。
 
-### File-level layers
+### 文件级分层
 
-Layer 0:
+第 0 层：
 
 ```text
 FileCacheKey
@@ -521,20 +294,20 @@ Guards
 ShardedMap
 ```
 
-Layer 1:
+第 1 层：
 
 ```text
 FileCacheOriginInfo
 FileCacheSettings
 ```
 
-Layer 2:
+第 2 层：
 
 ```text
 IFileCachePriority
 ```
 
-Layer 3:
+第 3 层：
 
 ```text
 CacheUsage
@@ -542,7 +315,7 @@ FileSegmentInfo
 SplitFileCachePriority
 ```
 
-Layer 4:
+第 4 层：
 
 ```text
 EvictionCandidates
@@ -550,7 +323,7 @@ FileSegment
 LRUFileCachePriority
 ```
 
-Layer 5:
+第 5 层：
 
 ```text
 Metadata
@@ -559,107 +332,106 @@ SLRUFileCachePriority
 WriteBufferToFileSegment replacement
 ```
 
-Layer 6:
+第 6 层：
 
 ```text
 FileCache
 ```
 
-Layer 7:
+第 7 层：
 
 ```text
 FileCacheFactory
 CacheFileSystem
-CachedReadFile
+FileCacheBufferedInput
+FileCacheInputStream
 CachedWriteFile
 ```
 
-### Central SCC functional slices
+### 中心 SCC 功能切片
 
-When reaching the central SCC, land these as coherent units:
+到达中心 SCC 时，按下面这些完整单元落地：
 
 1. `Metadata`, `KeyMetadata`, `LockedKey`, `FileSegmentMetadata`
-2. `FileSegment` state machine and `FileSegmentsHolder`
-3. `FileCache::get`, `FileCache::getOrSet`, `FileCache::set`, segment creation
-4. reserve and eviction: `tryReserve`, `doTryReserve`, `doEviction`, `EvictionCandidates`
-5. completion and background download
-6. query limit, dynamic resize, cleanup, idle client eviction
+2. `FileSegment` 状态机和 `FileSegmentsHolder`
+3. `FileCache::get`, `FileCache::getOrSet`, `FileCache::set`，以及 segment 创建
+4. reserve 和 eviction：`tryReserve`, `doTryReserve`, `doEviction`, `EvictionCandidates`
+5. completion 和 background download
+6. query limit、dynamic resize、cleanup、idle client eviction
 
-This avoids creating fake interfaces or partial implementations just to satisfy
-temporary compilation.
+这样可以避免为了临时编译而创造假接口或半成品实现。
 
-## Implementation phases
+## 实施阶段
 
-### Phase 1: Core compile skeleton
+### 阶段 1：核心编译骨架
 
-- create `velox/common/file/cache`
-- migrate basic types, guards, settings, key/origin types
-- replace ClickHouse types with Velox/basic C++ equivalents
-- add CMake targets and minimal tests
+- 创建 `velox/common/file/cache`
+- 迁移基础类型、guard、settings、key/origin 类型
+- 用 Velox/基础 C++ 类型替换 ClickHouse 类型
+- 添加 CMake target 和最小测试
 
-### Phase 2: Priority algorithms
+### 阶段 2：Priority 算法
 
-- migrate `IFileCachePriority`
-- migrate `LRU`, `SLRU`, split, overcommit policy
-- migrate `EvictionInfo`, `EvictionCandidates`, `CacheUsage`
-- replace metrics/logging/errors only
+- 迁移 `IFileCachePriority`
+- 迁移 `LRU`、`SLRU`、split、overcommit policy
+- 迁移 `EvictionInfo`、`EvictionCandidates`、`CacheUsage`
+- 只替换 metrics/logging/errors 基础设施
 
-### Phase 3: Metadata and segment lifecycle
+### 阶段 3：Metadata 和 segment 生命周期
 
-- migrate `Metadata`
-- migrate `FileSegment`
-- replace ClickHouse buffers with Velox `ReadFile` / `WriteFile` adapters
-- keep segment state machine semantics unchanged
+- 迁移 `Metadata`
+- 迁移 `FileSegment`
+- 用 Velox `ReadFile` / `WriteFile` adapter 替换 ClickHouse buffer
+- 保持 segment 状态机语义不变
 
-### Phase 4: `FileCache` orchestration
+### 阶段 4：`FileCache` 编排
 
-- migrate `FileCache`
-- wire reserve, eviction, completion, metadata load, background tasks
-- implement Velox scheduler and settings reload bridge
+- 迁移 `FileCache`
+- 接通 reserve、eviction、completion、metadata load、background task
+- 实现 Velox scheduler 和 settings reload bridge
 
-### Phase 5: Velox filesystem integration
+### 阶段 5：Velox scan 读路径接入
 
-- add `CacheFileSystem`
-- add `CachedReadFile`
-- add `CachedWriteFile`
-- add filesystem decorator registration
-- ensure no scheme conflict with S3/HDFS/GCS/local
+- 添加 `FileCacheBufferedInput`
+- 添加 `FileCacheInputStream`
+- 添加 `CachedWriteFile`
+- 接入 DWIO/scan 创建 `BufferedInput` 的位置
+- 确保不和 `CachedBufferedInput` / `AsyncDataCache` 双重缓存
 
-### Phase 6: `BufferedInput` coexistence
+### 阶段 6：通用 `FileSystem` 兜底
 
-- detect cached `ReadFile` or pass cacheable=false
-- avoid duplicate retention in `AsyncDataCache`
-- preserve coalescing/prefetch behavior where useful
+- 如确实需要覆盖非 scan 的 `ReadFile` 调用，再添加 `CacheFileSystem` /
+  `CachedReadFile` 兜底
+- 兜底路径不能替代 `FileCacheBufferedInput` 的主读路径状态机
+- 确保不和 S3/HDFS/GCS/local scheme 冲突
 
-### Phase 7: tests and validation
+### 阶段 7：测试和验证
 
-- port ClickHouse `FileCache` unit tests where possible
-- add Velox `ReadFile` / `FileSystem` wrapper tests
-- add S3/HDFS/local fake filesystem tests
-- add concurrency tests for downloader, reserve, eviction, and cleanup
-- add restart/metadata-load tests
-- add dynamic resize and idle-client eviction tests
+- 尽量迁移 ClickHouse `FileCache` 单元测试
+- 添加 Velox `ReadFile` / `FileSystem` wrapper 测试
+- 添加 S3/HDFS/local fake filesystem 测试
+- 添加 downloader、reserve、eviction、cleanup 并发测试
+- 添加 restart/metadata-load 测试
+- 添加 dynamic resize 和 idle-client eviction 测试
 
-## Open design points
+## 未决设计点
 
-1. Exact config prefix and whether settings are global or per filesystem/cache
-   instance.
-2. How `queryId`, `userId`, and `weight` flow from Prestissimo/connector context
-   into `FileIoContext`.
-3. Whether `cache_on_write_operations` should be supported for all `WriteFile`
-   backends or only local/append-compatible backends.
-4. Whether the first landing uses a temporary explicit `cache+scheme` path before
-   adding filesystem decorators.
-5. How much of ClickHouse system-table output should become Velox runtime stats
-   versus debug APIs.
+1. 确切 config prefix，以及 settings 是全局还是每个 filesystem/cache instance
+   一份。
+2. `queryId`、`userId`、`weight` 如何从 Prestissimo/connector context 流入
+   `FileIoContext`。
+3. `cache_on_write_operations` 是否支持所有 `WriteFile` 后端，还是只支持
+   local/append-compatible 后端。
+4. 第一阶段是否只接 DWIO/scan 的 `FileCacheBufferedInput`，还是同时添加
+   `CacheFileSystem` / `CachedReadFile` 兜底。
+5. ClickHouse system-table 输出里有多少应该变成 Velox runtime stats，有多少
+   应该变成 debug API。
 
-## Recommendation
+## 建议
 
-Proceed with `CacheFileSystem` as the primary integration and keep the
-ClickHouse `FileCache` algorithms intact. Replace only infrastructure:
-configuration, IO handles, scheduling, metrics, logging, exceptions, and context
-propagation.
+以 `FileCacheBufferedInput` 作为 scan 读路径主接入口，并保持 ClickHouse
+`FileCache` 算法完整。只替换基础设施：配置、IO handle、调度、指标、日志、
+异常和上下文传递。
 
-Land the migration by file DAG until the central SCC, then land the SCC by
-functional slices. This keeps early patches reviewable while preserving the
-semantic cycles that make `FileCache` correct.
+迁移落地时，在中心 SCC 之前按文件 DAG 推进；到中心 SCC 后按功能切片推进。
+这样既能让早期 patch 易于 review，又能保留 `FileCache` 正确性依赖的语义环。
