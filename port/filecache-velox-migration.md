@@ -97,29 +97,29 @@ remote bytes -> FileCache local segment -> AsyncDataCache memory entry
 建议位置：
 
 ```text
-velox/common/file/cache/
+velox/ch/
 ```
 
-主要文件：
+按 ClickHouse `src` 下路径对齐的主要文件：
 
 ```text
-FileCache.h / FileCache.cpp
-FileSegment.h / FileSegment.cpp
-Metadata.h / Metadata.cpp
-IFileCachePriority.h / IFileCachePriority.cpp
-LRUFileCachePriority.h / LRUFileCachePriority.cpp
-SLRUFileCachePriority.h / SLRUFileCachePriority.cpp
-SplitFileCachePriority.h / SplitFileCachePriority.cpp
-OvercommitFileCachePriority.h
-EvictionCandidates.h / EvictionCandidates.cpp
-CacheUsage.h
-FileCacheSettings.h / FileCacheSettings.cpp
-FileCacheFactory.h / FileCacheFactory.cpp
-FileCacheBufferedInput.h / FileCacheBufferedInput.cpp
-FileCacheInputStream.h / FileCacheInputStream.cpp
-ReadBufferFromVeloxReadFile.h / ReadBufferFromVeloxReadFile.cpp
-WriteBufferToFileSegment.h / WriteBufferToFileSegment.cpp
-FileCacheScheduler.h / FileCacheScheduler.cpp
+velox/ch/Interpreters/FileCache/FileCache.h / .cpp
+velox/ch/Interpreters/FileCache/FileSegment.h / .cpp
+velox/ch/Interpreters/FileCache/Metadata.h / .cpp
+velox/ch/Interpreters/FileCache/IFileCachePriority.h / .cpp
+velox/ch/Interpreters/FileCache/LRUFileCachePriority.h / .cpp
+velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h / .cpp
+velox/ch/Interpreters/FileCache/SplitFileCachePriority.h / .cpp
+velox/ch/Interpreters/FileCache/OvercommitFileCachePriority.h
+velox/ch/Interpreters/FileCache/EvictionCandidates.h / .cpp
+velox/ch/Interpreters/FileCache/CacheUsage.h
+velox/ch/Interpreters/FileCache/FileCacheSettings.h / .cpp
+velox/ch/Interpreters/FileCache/FileCacheFactory.h / .cpp
+velox/ch/Disks/IO/FileCacheBufferedInput.h / .cpp
+velox/ch/Disks/IO/FileCacheInputStream.h / .cpp
+velox/ch/IO/ReadBufferFromVeloxReadFile.h / .cpp
+velox/ch/Interpreters/FileCache/WriteBufferToFileSegment.h / .cpp
+velox/ch/Common/FileCacheScheduler.h / .cpp
 ```
 
 ## 替换映射
@@ -140,7 +140,7 @@ ClickHouse `OpenedFileCache` 的作用是缓存本地只读文件的打开句柄
 segment 时反复 open/close。Velox 已有 `FileHandleFactory` / `FileHandleCache`
 机制，可以复用这个机制，但保留 ClickHouse 名字，方便迁移代码对齐。
 
-建议在 `velox/common/file/cache` 内部做 alias：
+建议在 `velox/ch/Interpreters/FileCache` 内部做 alias：
 
 ```cpp
 using OpenedFile = FileHandle;
@@ -407,7 +407,7 @@ ReadBufferFromVeloxReadFile
 
 ### 阶段 1：核心编译骨架
 
-- 创建 `velox/common/file/cache`
+- 创建 `velox/ch/...`，目录结构按 ClickHouse `src` 下路径对齐
 - 迁移基础类型、guard、settings、key/origin 类型
 - 用 Velox/基础 C++ 类型替换 ClickHouse 类型
 - 添加 CMake target 和最小测试
