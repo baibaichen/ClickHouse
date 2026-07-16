@@ -425,6 +425,7 @@ write-through cache
 基础 shim
 FileCacheKey / FileSegmentKeyType / OriginInfo
 SipHash128 helper
+FileCacheScheduler
 FileCacheSettings parse/validate skeleton
 ReadBufferFromVeloxReadFile
 WriteBufferFromVeloxWriteFile

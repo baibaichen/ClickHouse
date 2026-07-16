@@ -16,7 +16,7 @@
 
 | CH | Velox | 处理方式 | review 状态 |
 |---|---|---|---|
-| `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 `addFunction` 定时，通过 `resetFunctionTimer` 提前触发 | wrapper：封成 `FileCacheScheduler` | 已确认可行 |
+| `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 one-shot `addFunctionOnce` + `cancelFunctionAndWait` 封装 `schedule` / `scheduleAfter` / `deactivate`，详见 `07-filecache-scheduler-design.md` | wrapper：封成 `FileCacheScheduler` | 已 review |
 | `ThreadFromGlobalPool` / 线程池 | `folly::Executor` / `CPUThreadPoolExecutor` / `IOThreadPoolExecutor` | 直接替换，构造时注入 executor | 需要 review |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | wrapper：`WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` | 已 review |
 | `fs::` 文件系统操作 | `std::filesystem` 处理目录和 exists/remove；本地 IO 通过 `LocalReadFile` / `LocalWriteFile` | 直接替换 + wrapper | 需要 review |
@@ -233,9 +233,12 @@ cancel()
 shutdown()
 ```
 
-已确认 `folly::FunctionScheduler` 提供 `addFunction`、`cancelFunction`、
-`cancelFunctionAndWait`、`resetFunctionTimer`，可以覆盖“定时 + 提前触发 + 取消”
-这组需求。
+已确认 `folly::FunctionScheduler` 提供 `addFunction`、`addFunctionOnce`、
+`cancelFunction`、`cancelFunctionAndWait`、`resetFunctionTimer`。当前设计选择 one-shot
+模式：由 `FileCache` task 函数自己决定下一次 `schedule` / `scheduleAfter`，更贴近
+ClickHouse 当前逻辑。
+
+详细设计见 [`07-filecache-scheduler-design.md`](07-filecache-scheduler-design.md)。
 
 这样后续如果 Velox 侧调度设施变化，不影响 `FileCache` 算法代码。
 

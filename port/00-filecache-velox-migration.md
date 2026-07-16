@@ -37,6 +37,7 @@ write-through cache
 | 04 | [`04-filecache-infra-mapping.md`](04-filecache-infra-mapping.md) | CH 底层设施到 Velox 的替换矩阵 |
 | 05 | [`05-filecache-port-order-design.md`](05-filecache-port-order-design.md) | 文件落地顺序、SCC 切片、阶段计划 |
 | 06 | [`06-filecache-key-hash-design.md`](06-filecache-key-hash-design.md) | `FileCacheKey` 和 `sipHash128` 兼容设计 |
+| 07 | [`07-filecache-scheduler-design.md`](07-filecache-scheduler-design.md) | `FileCacheScheduler` 调度封装设计 |
 
 ## 核心决策
 
@@ -137,7 +138,7 @@ cache，不是内存页 cache。
 | 配置 | `Poco::Util::AbstractConfiguration` | `ConfigBase` | 已 review |
 | 配置 | `NamedCollection` | connector properties / `ConfigBase` prefix | 已 review |
 | 配置 | `Settings` / `ReadSettings` / `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext` | 已 review |
-| 调度 | `BackgroundSchedulePool` | `FileCacheScheduler` wrapper over `folly::FunctionScheduler` | 待 review |
+| 调度 | `BackgroundSchedulePool` | `FileCacheScheduler` wrapper over `folly::FunctionScheduler`，详见 `07` | 已 review |
 | 线程 | `ThreadFromGlobalPool` / `ThreadPool` | 注入 `folly::Executor` | 待 review |
 | Hash | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
 | 锁 | CH locks / `std::shared_mutex` | `folly::SharedMutex` / `std::mutex` / thin typedef | 待 review |
