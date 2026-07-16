@@ -128,7 +128,48 @@ FileCacheScheduler.h / FileCacheScheduler.cpp
 | `WriteBufferFromFile` | `velox::WriteFile` | 否 |
 | `WriteBufferToFileSegment` | 新的 `FileSegmentWriter` 或 `CachedWriteFile` adapter | 否 |
 | `CachedOnDiskWriteBufferFromFile` | 基于 `WriteFile` 的本地缓存 writer | 否 |
-| `OpenedFileCache` | 没有直接替代；使用 `ReadFile` / `WriteFile` handle，必要时做一个小型本地 handle cache | 否 |
+| `OpenedFileCache` | 用 `using OpenedFileCache = FileHandleFactory` 一类 alias 保留 CH 名字；为 `FileCache` 本地 segment 单独持有实例，删除 segment 时 invalidate 对应 handle | 是 |
+
+#### `OpenedFileCache` 对应关系
+
+ClickHouse `OpenedFileCache` 的作用是缓存本地只读文件的打开句柄，避免读本地 cache
+segment 时反复 open/close。Velox 已有 `FileHandleFactory` / `FileHandleCache`
+机制，可以复用这个机制，但保留 ClickHouse 名字，方便迁移代码对齐。
+
+建议在 `velox/common/file/cache` 内部做 alias：
+
+```cpp
+using OpenedFile = FileHandle;
+using OpenedFileCache = FileHandleFactory;
+using OpenedFileCachePtr = std::shared_ptr<OpenedFileCache>;
+using OpenedFilePtr = FileHandleCachedPtr;
+```
+
+`FileCache` 或 `FileCacheManager` 单独持有一个 `OpenedFileCache` 实例：
+
+```cpp
+class FileCacheManager
+{
+private:
+    OpenedFileCache openedFileCache_;
+};
+```
+
+不要复用 Hive connector 里的 `fileHandleFactory_` 实例。Hive connector 的
+`FileHandleCache` 是 connector 级共享，用于 source 文件；`FileCache` 本地 segment
+有自己的生命周期，删除 segment 时必须 invalidate 对应本地 handle。
+
+迁移 CH 逻辑时可以保持类似调用形态：
+
+```text
+openedFileCache.get(path)
+openedFileCache.remove(path)
+```
+
+底层实现可以委托 `FileHandleFactory::generate` 和 `FileHandleFactory::clearCache`。
+如果需要按单个 path 删除，而现有 `CachedFactory` 没有单 key remove，就在
+`OpenedFileCache` 外面包一个很薄的 wrapper，仍然把核心类型 alias 到
+`FileHandleFactory`。
 
 读路径：
 
