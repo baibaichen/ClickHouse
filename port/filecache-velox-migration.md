@@ -191,9 +191,9 @@ segment 所需的 `FileSegment::write` 底层能力。
 
 | ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
-| `Poco::Util::AbstractConfiguration` | `velox::config::ConfigBase` | 否 |
-| `NamedCollection` | connector properties / `ConfigBase` prefix | 否 |
-| `Settings`, `ReadSettings`, `FilesystemCacheSettings` | 新的 Velox `FileCacheSettings`，再结合 `ReaderOptions` / `FileOptions` 承载单次读取标志 | 否 |
+| `Poco::Util::AbstractConfiguration` | `velox::config::ConfigBase` | 是 |
+| `NamedCollection` | connector properties / `ConfigBase` prefix | 是 |
+| `Settings`, `ReadSettings`, `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext` | 是 |
 
 ClickHouse 设置名应该尽量保留，并翻译成带前缀的 Velox config key，例如：
 
@@ -204,6 +204,8 @@ file-cache.max-elements
 file-cache.cache-policy
 file-cache.background-download-threads
 ```
+
+详细配置分层设计见 [`filecache-settings-design.md`](filecache-settings-design.md)。
 
 ### 线程和调度
 
