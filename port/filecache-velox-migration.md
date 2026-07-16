@@ -129,7 +129,7 @@ FileCacheScheduler.h / FileCacheScheduler.cpp
 | ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
 |---|---|---|
 | `ReadBufferFromFileBase` | 一个接受 Velox `ReadFile` 的 `ReadBufferFromVeloxReadFile`，内部自带缓冲区 | 是 |
-| `WriteBufferFromFile` | 读路径 miss 填充 cache segment 时，用 Velox `WriteFile` 或本地文件 writer 写 cache 文件 | 否 |
+| `WriteBufferFromFile` | 一个接受 Velox `WriteFile` 的 `WriteBufferFromVeloxWriteFile`，内部自带 `BufferPtr` 缓冲区 | 是 |
 | `WriteBufferToFileSegment` | 保留为临时数据 / cache segment 写入 adapter；不承载 `cache_on_write_operations` | 否 |
 | `CachedOnDiskWriteBufferFromFile` | 当前不支持；`cache_on_write_operations` / write-through cache 暂不迁移 | 否 |
 | `OpenedFileCache` | 用 `using OpenedFileCache = FileHandleFactory` 一类 alias 保留 CH 名字；为 `FileCache` 本地 segment 单独持有实例，删除 segment 时 invalidate 对应 handle | 是 |

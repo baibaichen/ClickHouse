@@ -216,7 +216,7 @@ private:
         std::shared_ptr<ReadBufferFromVeloxReadFile> reader;
         ReadType readType = ReadType::NONE;
         uint64_t bytesToPredownload = 0;
-        std::vector<char> predownloadBuffer;
+        BufferPtr predownloadBuffer;
     };
 
     void initializeIfNeeded();
@@ -254,7 +254,7 @@ private:
     LogType logType_;
 
     uint64_t position_ = 0;
-    std::vector<char> outputBuffer_;
+    BufferPtr outputBuffer_;
     size_t offsetInOutputBuffer_ = 0;
     size_t outputBufferSize_ = 0;
 
@@ -686,7 +686,7 @@ public:
 private:
     std::shared_ptr<ReadFile> file_;
     FileIoContext context_;
-    std::vector<char> buffer_;
+    BufferPtr buffer_;
     char * externalBuffer_ = nullptr;
     size_t externalBufferSize_ = 0;
     size_t available_ = 0;
@@ -711,10 +711,17 @@ tryGetFileSize
 getRemoteFileMetadata
 ```
 
+固定 IO buffer 按 Velox 习惯使用 `BufferPtr` / `AlignedBuffer`，而不是
+`std::vector<char>`：
+
+```cpp
+buffer_ = AlignedBuffer::allocate<char>(bufferSize, pool);
+```
+
 `next` 的核心逻辑：
 
 ```text
-buffer = externalBuffer ? externalBuffer : buffer_
+buffer = externalBuffer ? externalBuffer : buffer_->asMutable<char>()
 size = min(buffer.size, readUntil - currentOffset)
 file->pread(currentOffset, size, buffer)
 available = size
@@ -742,6 +749,94 @@ REMOTE_FS_READ_BYPASS_CACHE:
 
 这样比引入一组新基类更简单，也足够支撑 `createReadFromFileSegmentState`、
 `predownloadForFileSegment`、`readFromFileSegment` 这几段逻辑。
+
+## `WriteBufferFromVeloxWriteFile`
+
+`WriteBufferFromVeloxWriteFile` 是 `ReadBufferFromVeloxReadFile` 的对称类：接受
+Velox `WriteFile`，内部自带 Velox `BufferPtr` 缓冲区，对 `FileSegment::write`
+提供 ClickHouse 风格的 write buffer 接口。
+
+```cpp
+class WriteBufferFromVeloxWriteFile
+{
+public:
+    WriteBufferFromVeloxWriteFile(
+        std::unique_ptr<WriteFile> file,
+        memory::MemoryPool & pool,
+        size_t bufferSize);
+
+    void set(char * data, size_t size, size_t offset);
+    void next();
+
+    void finalize();
+    void sync();
+    void cancel();
+
+    uint64_t writtenBytes() const { return writtenBytes_; }
+
+private:
+    std::unique_ptr<WriteFile> file_;
+    BufferPtr buffer_;
+
+    char * externalBuffer_ = nullptr;
+    size_t externalBufferSize_ = 0;
+    size_t externalOffset_ = 0;
+
+    uint64_t writtenBytes_ = 0;
+    bool finalized_ = false;
+    bool canceled_ = false;
+};
+```
+
+固定写 buffer 同样按 Velox 习惯用 `BufferPtr` / `AlignedBuffer`：
+
+```cpp
+buffer_ = AlignedBuffer::allocate<char>(bufferSize, &pool);
+```
+
+`set` 的语义对应 ClickHouse `WriteBuffer::set`：调用方可以把一段外部 memory
+临时挂给 writer，`next` 负责把它写入 `WriteFile`。
+
+```text
+set(data, size, offset)
+  -> externalBuffer = data
+  -> externalBufferSize = size
+  -> externalOffset = offset
+
+next()
+  -> buffer = externalBuffer ? externalBuffer : buffer_->asMutable<char>()
+  -> file_->append({buffer, externalBufferSize})
+  -> writtenBytes += externalBufferSize
+```
+
+在 `FileSegment::DownloadState` 中：
+
+```cpp
+struct DownloadState
+{
+    std::shared_ptr<ReadBufferFromVeloxReadFile> remoteReader;
+    std::unique_ptr<WriteBufferFromVeloxWriteFile> cacheWriter;
+};
+```
+
+`FileSegment::write` 中的调用保持和 CH 现有逻辑一致：
+
+```text
+if (!download.cacheWriter)
+    download.cacheWriter = open local cache segment WriteFile
+
+download.cacheWriter->set(from, size, size)
+download.cacheWriter->next()
+downloadedSize += size
+```
+
+`finalize` 调 `WriteFile::flush` / `close`。`sync` 至少应 flush；如果 Velox
+`WriteFile` 实现没有显式 fsync 语义，第一版只映射到 `flush`。`cancel` 用于写失败：
+标记 canceled，释放 writer，后续由 `FileSegment::setDownloadFailed` 处理 segment
+状态和残留文件。
+
+这个类只覆盖读路径 miss 后填充本地 cache segment，以及临时数据写入
+`WriteBufferToFileSegment` 所需能力；不实现 `cache_on_write_operations`。
 
 ## `BackUp` / `SkipInt64` / `seekToPosition`
 
