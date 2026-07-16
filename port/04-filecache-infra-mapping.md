@@ -23,7 +23,7 @@
 | `sipHash128` | 不直接换成 `SpookyHashV2`；需要保留 CH cache key hash 语义，详见 `06-filecache-key-hash-design.md` | 保留小 helper | 已 review |
 | `std::shared_mutex` / CH 锁 | `folly::SharedMutex` 用于读写锁；`std::mutex` 用于普通状态锁 | 直接替换或薄 typedef | 需要 review |
 | `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 直接替换 | 需要 review |
-| `getThreadId` / `getCallerId` | `FileCacheRequestContext` + 必要时 `thread_local` caller token | wrapper：不要依赖 Velox 全局线程状态 | 需要 review |
+| `getThreadId` / `getCallerId` | `FileCacheCallerToken`，由 `ConnectorQueryCtx::queryId`、`scanId` / `driverId` 和 `FileCacheInputStream` 本地 token 组成，详见 `08-filecache-caller-token-design.md` | wrapper：显式传递 downloader ownership | 已 review |
 | `ProfileEvents` / `CurrentMetrics` | `FileCacheMetrics` 本地 counters；后续接 `RuntimeMetric` / `IoStats` / `StatsReporter` | wrapper；第一版可 no-op/atomic | 需要 review |
 | `OpenTelemetry` | 暂不接；后续如需要再接 Velox tracing/`TraceContext` | 剥离 / 后置 | 需要 review |
 | `QueryStatus::throwIfKilled` | 暂不接；如需要取消语义，从 Velox query/task context 显式传入 cancellation hook | 剥离 / 后置 | 需要 review |
@@ -244,15 +244,37 @@ ClickHouse 当前逻辑。
 
 ### `getCallerId`
 
-ClickHouse 用 caller id 判定 downloader 所有权。Velox 里不要依赖不明确的全局线程
-状态。建议：
+ClickHouse 用 caller id 判定 downloader ownership。它不是用户身份，也不是永久绑定
+某个 file segment 的线程，而是当前下载 lease 的 owner：
 
 ```text
-FileCacheRequestContext.queryId
-thread_local monotonically increasing token
+getOrSetDownloader
+  -> 如果 segment 没有 downloader，把当前 caller id 写入 downloader_id
+
+reserve / write / completePartAndResetDownloader
+  -> 只有当前 caller id == downloader_id 才能执行
 ```
 
-组合成 caller token，用于 `FileSegment::getOrSetDownloader` / `isDownloader`。
+ClickHouse 当前实现把 caller id 写成 `queryId:threadId`。这说明同一个 query
+内的并发读线程需要区分，但不代表 segment 永久只能由某个线程处理。downloader
+reset/complete 后，另一个线程或 background downloader 可以重新抢到 lease。
+
+Velox 可以取得 `ConnectorQueryCtx::queryId`，也可以在调用点读取当前 OS thread id。
+但是 Velox `driverId` 与 OS `threadId` 不是等价物：同一 `driverId` 同一时刻只会
+on-thread 在一个线程上执行，但下一次 resume 可能换到另一个 executor thread。
+
+因此迁移设计不声称 `driverId == threadId`。建议引入显式的 `FileCacheCallerToken`：
+
+```text
+queryId
+scanId / driverId
+file path + split range
+FileCacheInputStream-local sequence
+```
+
+它表达的是“当前读流 / 下载 continuation 拥有这个 segment 的填充权”，用于
+`FileSegment::getOrSetDownloader` / `isDownloader` / `write` / `complete`。详细设计见
+[`08-filecache-caller-token-design.md`](08-filecache-caller-token-design.md)。
 
 ### A 类剥离项
 

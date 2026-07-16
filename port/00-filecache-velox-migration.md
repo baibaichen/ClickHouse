@@ -38,6 +38,7 @@ write-through cache
 | 05 | [`05-filecache-port-order-design.md`](05-filecache-port-order-design.md) | 文件落地顺序、SCC 切片、阶段计划 |
 | 06 | [`06-filecache-key-hash-design.md`](06-filecache-key-hash-design.md) | `FileCacheKey` 和 `sipHash128` 兼容设计 |
 | 07 | [`07-filecache-scheduler-design.md`](07-filecache-scheduler-design.md) | `FileCacheScheduler` 调度封装设计 |
+| 08 | [`08-filecache-caller-token-design.md`](08-filecache-caller-token-design.md) | `getCallerId` / downloader ownership token 设计 |
 
 ## 核心决策
 
@@ -141,6 +142,7 @@ cache，不是内存页 cache。
 | 调度 | `BackgroundSchedulePool` | `FileCacheScheduler` wrapper over `folly::FunctionScheduler`，详见 `07` | 已 review |
 | 线程 | `ThreadFromGlobalPool` / `ThreadPool` | 注入 `folly::Executor` | 待 review |
 | Hash | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
+| 身份 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，显式表达 downloader ownership；详见 `08` | 已 review |
 | 锁 | CH locks / `std::shared_mutex` | `folly::SharedMutex` / `std::mutex` / thin typedef | 待 review |
 | 日志 | `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 待 review |
 | 指标 | `ProfileEvents` / `CurrentMetrics` | `FileCacheMetrics`，后续接 `RuntimeMetric` / `IoStats` / `StatsReporter` | 待 review |
@@ -165,7 +167,7 @@ WriteBufferFromVeloxWriteFile
 
 ## 未决问题
 
-1. `queryId`、`userId`、`weight` 如何从 Prestissimo/connector context 流入
+1. `userId`、`weight` 如何从 Prestissimo/connector context 流入
    `FileCacheRequestContext`。
 2. `FileIoContext::cacheable` 是否要映射到 `FileCacheRequestContext::cacheable`。
 3. 第一阶段是否只接 DWIO/scan 的 `FileCacheBufferedInput`，还是同时添加
