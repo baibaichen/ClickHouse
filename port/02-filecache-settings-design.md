@@ -332,15 +332,3 @@ FileCacheInputStream::initializeIfNeeded
 FileCacheInputStream::createReadFromFileSegmentState
   -> uses FileCacheRequestContext origin information
 ```
-
-## 人工 review 状态建议
-
-当前已经可以把下面映射列为待 review，而不是已 review：
-
-| CH | Velox | 状态 |
-|---|---|---|
-| `Poco::Util::AbstractConfiguration` | `ConfigBase` | 需要 review |
-| `NamedCollection` | connector properties / `ConfigBase` prefix | 需要 review |
-| `Settings` / `ReadSettings` / `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext` | 需要 review |
-
-等这个文档被确认后，再把总表中的对应行标成“是”。
