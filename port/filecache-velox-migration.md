@@ -207,6 +207,11 @@ file-cache.background-download-threads
 
 详细配置分层设计见 [`filecache-settings-design.md`](filecache-settings-design.md)。
 
+### 生命周期管理
+
+`FileCache` 实例创建、全局入口、shutdown、stats 和 `OpenedFileCache` 持有方式见
+[`filecache-manager-lifecycle-design.md`](filecache-manager-lifecycle-design.md)。
+
 ### 线程和调度
 
 | ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
