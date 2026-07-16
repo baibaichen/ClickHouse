@@ -58,6 +58,7 @@ velox/ch/Interpreters/FileCache/
 velox/ch/Common/FileCacheAliases.h
 velox/ch/Common/FileCacheException.h
 velox/ch/Common/FileCacheMetrics.h
+velox/ch/Common/SipHash128.h / .cpp
 velox/ch/Common/FileCacheScheduler.h / .cpp
 velox/ch/IO/ReadBufferFromVeloxReadFile.h / .cpp
 velox/ch/IO/WriteBufferFromVeloxWriteFile.h / .cpp
@@ -423,6 +424,7 @@ write-through cache
 目录 + CMake target
 基础 shim
 FileCacheKey / FileSegmentKeyType / OriginInfo
+SipHash128 helper
 FileCacheSettings parse/validate skeleton
 ReadBufferFromVeloxReadFile
 WriteBufferFromVeloxWriteFile

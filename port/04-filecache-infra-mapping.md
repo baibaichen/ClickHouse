@@ -16,11 +16,11 @@
 
 | CH | Velox | 处理方式 | review 状态 |
 |---|---|---|---|
-| `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 `addFunction` 定时，通过 `resetFunctionTimer` 提前触发 | wrapper：封成 `FileCacheScheduler` | 需要 review |
+| `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 `addFunction` 定时，通过 `resetFunctionTimer` 提前触发 | wrapper：封成 `FileCacheScheduler` | 已确认可行 |
 | `ThreadFromGlobalPool` / 线程池 | `folly::Executor` / `CPUThreadPoolExecutor` / `IOThreadPoolExecutor` | 直接替换，构造时注入 executor | 需要 review |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | wrapper：`WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` | 已 review |
 | `fs::` 文件系统操作 | `std::filesystem` 处理目录和 exists/remove；本地 IO 通过 `LocalReadFile` / `LocalWriteFile` | 直接替换 + wrapper | 需要 review |
-| `sipHash128` | 不直接换成 `SpookyHashV2`；需要保留 CH cache key hash 语义 | 保留小 helper | 需要 review |
+| `sipHash128` | 不直接换成 `SpookyHashV2`；需要保留 CH cache key hash 语义，详见 `06-filecache-key-hash-design.md` | 保留小 helper | 已 review |
 | `std::shared_mutex` / CH 锁 | `folly::SharedMutex` 用于读写锁；`std::mutex` 用于普通状态锁 | 直接替换或薄 typedef | 需要 review |
 | `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 直接替换 | 需要 review |
 | `getThreadId` / `getCallerId` | `FileCacheRequestContext` + 必要时 `thread_local` caller token | wrapper：不要依赖 Velox 全局线程状态 | 需要 review |
@@ -194,8 +194,10 @@ downloadedSize += size
 ### `sipHash128`
 
 `FileCacheKey::fromPath` 会影响 cache 路径和 metadata 兼容性。不能因为 Velox 有
-`folly::hash::SpookyHashV2` 就直接替换 hash 算法。若目标是兼容 ClickHouse cache
-layout，应迁移 SipHash128 小 helper；如果明确接受 cache key 不兼容，才可以换 hash。
+`folly::hash::SpookyHashV2` 就直接替换 hash 算法。当前决策是迁移 ClickHouse
+SipHash128 小 helper，保持 cache key/path 兼容。
+
+详细设计见 [`06-filecache-key-hash-design.md`](06-filecache-key-hash-design.md)。
 
 ### `ProfileEvents` / `CurrentMetrics`
 
@@ -230,6 +232,10 @@ triggerNow()
 cancel()
 shutdown()
 ```
+
+已确认 `folly::FunctionScheduler` 提供 `addFunction`、`cancelFunction`、
+`cancelFunctionAndWait`、`resetFunctionTimer`，可以覆盖“定时 + 提前触发 + 取消”
+这组需求。
 
 这样后续如果 Velox 侧调度设施变化，不影响 `FileCache` 算法代码。
 
