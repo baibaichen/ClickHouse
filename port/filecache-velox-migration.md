@@ -212,6 +212,16 @@ file-cache.background-download-threads
 `FileCache` 实例创建、全局入口、shutdown、stats 和 `OpenedFileCache` 持有方式见
 [`filecache-manager-lifecycle-design.md`](filecache-manager-lifecycle-design.md)。
 
+### 底层设施替换
+
+ClickHouse `FileCache` 依赖的底层设施到 Velox 的替换矩阵见
+[`filecache-infra-mapping.md`](filecache-infra-mapping.md)。
+
+### 落地顺序
+
+按文件 DAG 和中心 SCC 功能切片的具体迁移顺序见
+[`filecache-port-order-design.md`](filecache-port-order-design.md)。
+
 ### 线程和调度
 
 | ClickHouse 依赖 | Velox 替换项 | 是否人工审查过 |
