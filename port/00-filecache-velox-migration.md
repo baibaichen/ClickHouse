@@ -43,6 +43,7 @@ write-through cache
 | 10 | [`10-filecache-metrics-debug-design.md`](10-filecache-metrics-debug-design.md) | metrics / tracing / debug no-op shim 设计 |
 | 11 | [`11-filecache-basic-shims-design.md`](11-filecache-basic-shims-design.md) | locks / logging / filesystem basic shims 设计 |
 | 12 | [`12-filecache-origin-segment-type-design.md`](12-filecache-origin-segment-type-design.md) | `FileSegmentKeyType` / `FileCacheOriginInfo` 设计 |
+| 13 | [`13-filecache-priority-eviction-design.md`](13-filecache-priority-eviction-design.md) | priority / eviction 文件迁移设计 |
 
 ## 核心决策
 
@@ -164,6 +165,7 @@ cache，不是内存页 cache。
 | 依赖方 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`，用 `using` 保留 CH 名字；详见 `09` | 待 review |
 | 依赖方 | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
 | `FileCache` 本体 | `FileSegmentKeyType` / `FileCacheOriginInfo` | 直接迁移 CH 语义；详见 `12` | 已 review |
+| `FileCache` 本体 | priority / eviction 文件 | LRU / SLRU / Split / eviction 直接迁移；overcommit 后置；详见 `13` | 待 review |
 | 依赖方 | CH locks / `std::shared_mutex` | CH-compatible guard classes + `folly::SharedMutex` / `std::mutex`；详见 `11` | 待 review |
 | 依赖方 | `LOG_*` / `logger_useful` / `fs::` | logging and filesystem compat shims；详见 `11` | 待 review |
 | 依赖方 | `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；详见 `10` | 待 review |

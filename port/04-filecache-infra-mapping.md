@@ -16,11 +16,13 @@
 
 | CH | Velox | 处理方式 | review 状态 |
 |---|---|---|---|
+| `String` / `UInt64` / `Int64` 等 CH 基础别名 | `velox/ch/Common/ClickHouseAliases.h` 中提供 `using String = std::string` 等；`UInt8` 用 `uint8_t`，不照搬 CH 的 `char8_t` | compat alias | 已 review |
 | `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 one-shot `addFunctionOnce` + `cancelFunctionAndWait` 封装 `schedule` / `scheduleAfter` / `deactivate`，详见 `07-filecache-scheduler-design.md` | wrapper：封成 `FileCacheScheduler` | 已 review |
 | `ThreadFromGlobalPool` / 线程池 | `FileCacheWorker` / `FileCacheThreadPool`，通过 `using ThreadFromGlobalPool = FileCacheWorker` 和 `using ThreadPool = FileCacheThreadPool` 保留 CH 名字，详见 `09-filecache-thread-pool-design.md` | wrapper：保留 CH-style join/resize/shutdown 语义 | 需要 review |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | wrapper：`WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` | 已 review |
 | `fs::` 文件系统操作 | `std::filesystem` + 必要时 Velox `FileSystem` local API；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
 | `sipHash128` | 不直接换成 `SpookyHashV2`；需要保留 CH cache key hash 语义，详见 `06-filecache-key-hash-design.md` | 保留小 helper | 已 review |
+| `absl::flat_hash_map` / `absl::flat_hash_set` | 默认用 `folly::F14FastMap` / `folly::F14FastSet`；需要 value 地址稳定时再用 `F14NodeMap` / `F14NodeSet` | 直接替换，详见 `06` 和 `13` | 已 review |
 | `std::shared_mutex` / CH 锁 | CH-compatible guard classes，内部用 `folly::SharedMutex` / `std::mutex`；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
 | `LOG_*` / `logger_useful` | CH-compatible logging macros，内部用 `LOG` / `VLOG`；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，由 `ConnectorQueryCtx::queryId`、`scanId` / `driverId` 和 `FileCacheInputStream` 本地 token 组成，详见 `08-filecache-caller-token-design.md` | wrapper：显式传递 downloader ownership | 已 review |

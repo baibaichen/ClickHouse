@@ -70,7 +70,7 @@ velox/ch/Interpreters/FileCache/
 ### 先落地的基础 shim
 
 ```text
-velox/ch/Common/FileCacheAliases.h
+velox/ch/Common/ClickHouseAliases.h
 velox/ch/Common/FileCacheException.h
 velox/ch/Common/FileCacheMetrics.h
 velox/ch/Common/SipHash128.h / .cpp
@@ -161,7 +161,6 @@ velox/ch/Interpreters/FileCache/IFileCachePriority.h / .cpp
 velox/ch/Interpreters/FileCache/LRUFileCachePriority.h / .cpp
 velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h / .cpp
 velox/ch/Interpreters/FileCache/SplitFileCachePriority.h / .cpp
-velox/ch/Interpreters/FileCache/OvercommitFileCachePriority.h
 ```
 
 ### 迁移策略
@@ -190,6 +189,10 @@ LRU add/remove/evict
 SLRU promote/downgrade
 Split routes by FileSegmentKeyType
 ```
+
+Priority / eviction 语义详见
+[`13-filecache-priority-eviction-design.md`](13-filecache-priority-eviction-design.md)。
+`OvercommitFileCachePriority` 属于 Cloud / distributed-cache 条件路径，第一阶段后置。
 
 ## 阶段 3：中心 SCC 第一组：metadata
 
