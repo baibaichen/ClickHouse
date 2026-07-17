@@ -47,6 +47,7 @@ write-through cache
 | 14 | [`14-filecache-metadata-files-design.md`](14-filecache-metadata-files-design.md) | `FileSegmentInfo.h` / `Metadata.h` / `Metadata.cpp` 文件迁移设计 |
 | 15 | [`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md) | `FileSegment.h` / `FileSegment.cpp` 文件迁移设计 |
 | 16 | [`16-filecache-core-files-design.md`](16-filecache-core-files-design.md) | `FileCache.h` / `FileCache.cpp` 文件迁移设计 |
+| 17 | [`17-filecache-query-limit-design.md`](17-filecache-query-limit-design.md) | `QueryLimit.h` / `QueryLimit.cpp` 文件迁移设计 |
 
 ## 核心决策
 
@@ -172,6 +173,7 @@ cache，不是内存页 cache。
 | `FileCache` 本体 | `FileSegmentInfo.h` / `Metadata.h` / `Metadata.cpp` | 按文件精确迁移；与 `FileSegment` / `FileCache` 同属中心 SCC；详见 `14` | 待 review |
 | `FileCache` 本体 | `FileSegment.h` / `FileSegment.cpp` | 按文件精确迁移；保留 state/downloader/write/complete/holder 语义；详见 `15` | 待 review |
 | `FileCache` 本体 | `FileCache.h` / `FileCache.cpp` | 按文件精确迁移；保留 lookup/reserve/eviction/load/resize/shutdown；详见 `16` | 待 review |
+| `FileCache` 本体 | `QueryLimit.h` / `QueryLimit.cpp` | 按文件精确迁移；保留 query-local LRU 和 holder release；详见 `17` | 待 review |
 | 依赖方 | CH locks / `std::shared_mutex` | CH-compatible guard classes + `folly::SharedMutex` / `std::mutex`；详见 `11` | 待 review |
 | 依赖方 | `LOG_*` / `logger_useful` / `fs::` | logging and filesystem compat shims；详见 `11` | 待 review |
 | 依赖方 | `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；详见 `10` | 待 review |

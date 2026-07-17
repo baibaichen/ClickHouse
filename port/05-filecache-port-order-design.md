@@ -357,6 +357,9 @@ velox/ch/Interpreters/FileCache/QueryLimit.cpp
 
 setting 启用时不能 stub query context holder 或 query priority。
 
+逐文件设计详见
+[`17-filecache-query-limit-design.md`](17-filecache-query-limit-design.md)。
+
 ## 阶段 5.2：factory / manager
 
 严格按文件 review CH factory，并单独 review Velox manager：
