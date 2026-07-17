@@ -1,4 +1,4 @@
-# 09. `ThreadFromGlobalPool` / `ThreadPool` 迁移设计
+# 04. `ThreadFromGlobalPool` / `ThreadPool` 迁移设计
 
 ## 结论
 
@@ -145,55 +145,31 @@ per-cache max concurrency、exception collection 和 `wait`。
 
 `BackgroundSchedulePoolTaskHolder` 已由 `FileCacheScheduler` 设计覆盖，不属于本文。
 
-## shared dynamic pool 容量公式
+## shared dynamic pool容量 contract
 
-对每个 cache：
+`FileCacheWorkerPool` 只实现 dynamic executor和 resize contract；按 cache配置计算
+`workerPoolMax` 是 Manager职责，唯一公式见
+[`FileCacheManager` worker max计算](../3-consumers/02-filecache-manager-design.md#worker-max计算)。
 
-```text
-cacheWorkerMax =
-  loadMetadataThreads
-  + (loadMetadataAsynchronously ? 1 : 0) async main worker
-  + backgroundDownloadThreads
-  + 1 metadata cleanup worker
-  + 1 background cleanup callback
-  + (freeSpaceKeepingEnabled
-      ? 1 free-space collector callback + keepFreeSpaceEvictionThreads
-      : 0)
-```
-
-所有 cache 共享 pool：
-
-```text
-workerPoolMax = sum(cacheWorkerMax for unique FileCache instances)
-workerPoolMin = 1
-```
-
-使用 `folly::CPUThreadPoolExecutor({workerPoolMax, workerPoolMin}, ...)`。Folly dynamic
-mode 默认启用：
+Folly dynamic mode：
 
 ```text
 pending tasks -> create workers on demand, up to max
 idle timeout (default 60s) -> retire idle workers, down to min
 ```
 
-因此 max 使用 conservative sum 不会立即创建所有 threads。CH 默认单 cache：
-
-```text
-16 metadata + 0 async main + 5 background + 1 metadata cleanup
-+ 1 scheduled cleanup + 0 free-space = 23 max
-```
-
-steady state 只有 background/cleanup long-running workers 保持 active。
-同 path/config 的 name aliases 共享一个 cache，不重复计 budget。
+因此 conservative max不会在启动时创建全部 threads。steady state只有
+background/cleanup long-running workers保持 active；同 path/config的 name aliases
+共享一个 cache，不重复计 budget。
 
 每个 cache 的 free-space `eviction_pool` 是独立的 **logical**
 `FileCacheThreadPool`，大小为 `keepFreeSpaceEvictionThreads`；它的 physical workers
-仍来自 shared `FileCacheWorkerPool`，所以这些 slots 必须计入 `cacheWorkerMax`。
+仍来自 shared `FileCacheWorkerPool`，所以 Manager预算必须计入这些 slots。
 
 新增 cache 或动态增加 background download threads：
 
 ```text
-recompute manager workerPoolMax
+recompute manager worker pool max
 FileCacheWorkerPool::setNumThreads(newMax)
 create/start new workers
 publish applied settings
@@ -624,7 +600,7 @@ eviction_pool schedule 多个短任务后 wait 全部完成
 
 ## Review 状态
 
-本文档待 review。当前设计的关键决策是：
+本文档已完成 review。关键决策：
 
 ```text
 GlobalThreadPool 不迁移为单独类

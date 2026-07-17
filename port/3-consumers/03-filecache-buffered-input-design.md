@@ -1,4 +1,4 @@
-# `FileCacheBufferedInput` 集成设计
+# 03. `FileCacheBufferedInput` 集成设计
 
 `FileCacheBufferedInput` 是把 ClickHouse `FileCache` 接入 Velox scan / DWIO
 读路径的主方案。它不是 `AsyncDataCache` 的替代实现，也不应该继承
@@ -660,7 +660,7 @@ WriteBufferFromVeloxWriteFile
 ```
 
 它们的接口和 Velox `BufferPtr` 使用约定见
-[`04-filecache-infra-mapping.md`](04-filecache-infra-mapping.md)。
+[`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)。
 
 ## `BackUp` / `SkipInt64` / `seekToPosition`
 

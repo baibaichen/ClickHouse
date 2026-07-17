@@ -1,4 +1,4 @@
-# 12. `FileSegmentKeyType` / `FileCacheOriginInfo` 文件迁移设计
+# 02. `FileSegmentKeyType` / `FileCacheOriginInfo` 文件迁移设计
 
 ## 结论
 

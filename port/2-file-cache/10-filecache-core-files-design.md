@@ -1,4 +1,4 @@
-# 16. `FileCache` 核心文件迁移设计
+# 10. `FileCache` 核心文件迁移设计
 
 ## 结论
 
@@ -46,7 +46,8 @@ CH metrics/logging/failpoints/correctness checks -> reviewed shims
 boost::noncopyable -> explicitly deleted copy operations
 ```
 
-`LRU_OVERCOMMIT` / `SLRU_OVERCOMMIT` 仍按 `13` 排除：当前 OSS checkout 不包含实现，
+`LRU_OVERCOMMIT` / `SLRU_OVERCOMMIT` 仍按
+[priority / eviction设计](07-filecache-priority-eviction-design.md)排除：当前 OSS checkout不包含实现，
 Velox 第一阶段必须显式拒绝这些 policy，不创建假实现。
 
 ## 文件依赖结论
@@ -252,7 +253,8 @@ std::call_once
 
 `std::call_once` 在 callback 抛异常时允许后续 retry，和 CH `callOnce` 一致。
 
-`StatusFile` 是 correctness dependency，不是普通日志文件。详细映射见 `11`：
+`StatusFile` 是 correctness dependency，不是普通日志文件。详细映射见
+[基础 shims](../1-dependencies/02-filecache-basic-shims-design.md)：
 
 ```text
 open <base>/status
@@ -297,41 +299,16 @@ callback 保留 CH 的 self-reschedule control flow。
 
 ### shared worker pool sizing
 
-多个 cache 共享 manager-owned dynamic worker pool。详细公式见 `09`。对每个 cache：
-
-```text
-cacheWorkerMax =
-  loadMetadataThreads
-  + (loadMetadataAsynchronously ? 1 : 0) async main worker
-  + backgroundDownloadThreads
-  + 1 metadata cleanup worker
-  + 1 background cleanup callback
-  + (freeSpaceKeepingEnabled
-      ? 1 free-space collector callback + keepFreeSpaceEvictionThreads
-      : 0)
-```
-
-manager pool：
-
-```text
-workerPoolMax = sum(cacheWorkerMax for every unique FileCache instance)
-workerPoolMin = 1
-```
-
-`folly::CPUThreadPoolExecutor` 按 pending tasks 动态增长到 max，idle timeout 后回落到
-min。conservative max 不会在启动时预创建所有 workers。
+多个 cache共享 manager-owned dynamic worker pool。`FileCache` 只持有 logical
+free-space eviction pool；具体预算公式和 aggregate规则由
+[`FileCacheManager`](../3-consumers/02-filecache-manager-design.md#worker-max计算)
+统一定义。
 
 dynamic background-thread increase 必须先调用 `setNumThreads` 扩大 max，再创建新的
 workers。
 
-每个 cache 的 free-space `eviction_pool` 是独立 logical local pool：
-
-```text
-size = keepFreeSpaceEvictionThreads
-```
-
-它不拥有 executor；tasks 仍提交到 manager shared `FileCacheWorkerPool`，所以这些 slots
-已经计入 `cacheWorkerMax`。
+每个 cache的 free-space `eviction_pool` 是独立 logical local pool，但不拥有
+executor；tasks仍提交到 manager shared `FileCacheWorkerPool`。
 
 ### `getImpl`
 
@@ -552,7 +529,8 @@ collector:
   recompute target with in-flight discount
 ```
 
-两条 queue 使用 `folly::MPMCQueue<std::optional<EvictionBatchPtr>>`。详细映射见 `04`：
+两条 queue使用 `folly::MPMCQueue<std::optional<EvictionBatchPtr>>`。详细映射见
+[`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)：
 
 ```text
 std::nullopt is finish sentinel
@@ -589,7 +567,8 @@ API 是 no-op。不能把该路径宣称为已支持的 per-client eviction。
 
 ### metadata load
 
-保留 parallel listing/loading 算法。CH bounded queue 映射详见 `04`：
+保留 parallel listing/loading 算法。CH bounded queue映射详见
+[`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)：
 
 ```text
 loadMetadataThreads == 1 / no loading workers:
@@ -771,15 +750,15 @@ snapshot API。
 详细映射的 single source of truth：
 
 ```text
-scheduler                   -> 07
-query/TID caller scope       -> 08
-worker/local thread pools    -> 09
-metrics/debug no-op shims    -> 10
-locks/filesystem/StatusFile  -> 11
-priority/eviction            -> 13
-metadata                     -> 14
-FileSegment                  -> 15
-MPMC bounded queues          -> 04
+scheduler                   -> ../1-dependencies/05
+query/TID caller scope      -> ../1-dependencies/06
+worker/local thread pools   -> ../1-dependencies/04
+metrics/debug no-op shims   -> ../1-dependencies/03
+locks/filesystem/StatusFile -> ../1-dependencies/02
+priority/eviction           -> 07
+metadata                    -> 08
+FileSegment                 -> 09
+MPMC bounded queues         -> ../1-dependencies/01
 ```
 
 本文件不重复定义这些 helper 的实现。

@@ -1,4 +1,4 @@
-# 11. Locks / logging / filesystem basic shims 设计
+# 02. Locks / logging / filesystem basic shims设计
 
 ## 结论
 
@@ -119,7 +119,9 @@ private:
 };
 ```
 
-`ProfileEventTimeIncrement` 在 `10` 中变成 no-op shim，所以 `readLock` / `writeLock`
+`ProfileEventTimeIncrement` 在
+[metrics/debug设计](03-filecache-metrics-debug-design.md)中变成 no-op shim，所以
+`readLock` / `writeLock`
 可以保留计时 guard 调用点而不引入真实 metrics。
 
 ### `SharedMutex` 选择
@@ -265,7 +267,8 @@ ReadBufferFromVeloxReadFile
 WriteBufferFromVeloxWriteFile
 ```
 
-These wrappers sit over Velox `ReadFile` / `WriteFile`, as designed in `04`.
+These wrappers sit over Velox `ReadFile` / `WriteFile`, as defined in the
+[`FileCache` infrastructure mapping](01-filecache-infra-mapping.md).
 
 ### Velox `FileSystem` usage
 
@@ -417,7 +420,7 @@ throwFileCacheExceptionFromFilesystemError throws a Velox exception with context
 
 ## Review 状态
 
-本文档待 review。当前决策：
+本文档已完成 review。关键决策：
 
 ```text
 lock guard class names are preserved

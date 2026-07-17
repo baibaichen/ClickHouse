@@ -1,4 +1,4 @@
-# 21. `FileCacheSettings` 文件迁移设计
+# 06. `FileCacheSettings` 文件迁移设计
 
 ## 结论
 
@@ -165,7 +165,9 @@ struct FileCacheConfig
 };
 ```
 
-默认值引用 `18` 的 constants；不在此文件重复 numeric literals，除 CH 未抽取 constant 的
+默认值引用
+[`FileCache` forward文件](01-filecache-fwd-files-design.md)的 constants；不在此文件重复
+numeric literals，除 CH 未抽取 constant 的
 设置。
 
 ### 字段分类
@@ -230,7 +232,7 @@ CH integration，不是 Velox FileCache algorithm。
 
 ### config key layout
 
-canonical keys按 `02`：
+canonical keys：
 
 ```text
 file-cache.<name>.path
@@ -345,7 +347,7 @@ effective maxSize = floor(ratio * totalSpace)
 effective maxSize must be > 0
 ```
 
-`maxElements` 不是 `maxSize` 的替代来源；`02` 之前的“maxSize/maxElements至少一个”修正为
+`maxElements` 不是 `maxSize` 的替代来源；此前草案中的“maxSize/maxElements至少一个”修正为
 CH 的真实规则。
 
 ### validation
@@ -421,7 +423,8 @@ FileCache receives concrete maxSize
 `FileCacheConfig` 是 requested/effective settings snapshot。manager保存每个 unique cache的
 actual config。
 
-`FileCache::applySettingsIfPossible` 按 `16` 只应用：
+`FileCache::applySettingsIfPossible` 按
+[`FileCache` 核心文件设计](10-filecache-core-files-design.md)只应用：
 
 ```text
 backgroundDownloadQueueSizeLimit
@@ -449,7 +452,8 @@ publish actual backgroundDownloadThreads
 
 decrease在 workers停止/join后再降低 shared max。
 
-`03` 中原“config reload第一阶段只留接口”修正为：core `FileCache` 需要的上述 reload
+早期 Manager草案中“config reload第一阶段只留接口”的结论修正为：core `FileCache`
+需要的上述 reload
 行为必须迁移；watcher/config-source刷新机制可以由宿主决定。
 
 ### system table / stats
@@ -479,6 +483,8 @@ remote/local buffer sizes
 ```
 
 它们继续位于 `FileCacheReadOptions`。不要把 instance config和 request config重新合并。
+使用方结构和来源见
+[`FileCache` read options和 request context设计](../3-consumers/01-filecache-read-context-design.md)。
 
 ## 测试要求
 

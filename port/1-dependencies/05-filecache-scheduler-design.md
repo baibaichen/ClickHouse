@@ -1,4 +1,4 @@
-# 07. `FileCacheScheduler` 设计
+# 05. `FileCacheScheduler` 设计
 
 ## 结论
 
@@ -126,7 +126,8 @@ background download workers
 metadata cleanup worker
 ```
 
-它们继续通过 `FileCacheWorkerPool` / `FileCacheWorker` 运行，详见 `09`。
+它们继续通过 `FileCacheWorkerPool` / `FileCacheWorker` 运行，详见
+[`04-filecache-thread-pool-design.md`](04-filecache-thread-pool-design.md)。
 
 ## aliases 和接口
 
@@ -414,7 +415,8 @@ scheduled callback 在 shared physical pool 执行，所以每个 cache 的 cons
      : 0)
 ```
 
-完整公式见 `09`。
+完整公式见
+[`FileCacheManager` worker max计算](../3-consumers/02-filecache-manager-design.md#worker-max计算)。
 
 ## tests
 

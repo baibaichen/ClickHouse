@@ -1,4 +1,4 @@
-# 14. Metadata 文件迁移设计
+# 08. Metadata文件迁移设计
 
 ## 结论
 
@@ -237,7 +237,7 @@ F14 提供跨 rehash 的 iterator 稳定性。
 
 ### `DownloadThread`
 
-按 `09` 的已 review 设计：
+按[线程池设计](../1-dependencies/04-filecache-thread-pool-design.md)：
 
 ```cpp
 using DownloadThread = ThreadFromGlobalPool;
@@ -418,7 +418,8 @@ key directory removed recursively
 empty prefix/user directories removed under key_prefix_directory_mutex
 ```
 
-`fs::` 直接使用 `std::filesystem`，错误上下文使用 `11` 的薄 wrapper。
+`fs::` 直接使用 `std::filesystem`，错误上下文使用
+[基础 shims](../1-dependencies/02-filecache-basic-shims-design.md)的薄 wrapper。
 
 ### 6. cleanup queue
 
@@ -467,7 +468,7 @@ weak pointer 不能删。只用 key/offset 重新查 metadata 会把“旧 segme
 
 ### 8. worker shutdown and resize
 
-按 `09` 的顺序完整迁移：
+按[线程池设计](../1-dependencies/04-filecache-thread-pool-design.md)的顺序完整迁移：
 
 ```text
 cancel download/cleanup queues
@@ -510,7 +511,7 @@ OpenedFileCache::instance().remove(...)
 
 ## 容器映射
 
-按 `04` 总映射：
+按[`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)：
 
 ```text
 MetadataBucket std::unordered_map
@@ -603,7 +604,7 @@ sync removes missing/wrong-size local segments
 
 ## Review 状态
 
-本文档待 review。当前决策：
+本文档已完成 review。关键决策：
 
 ```text
 review exactly three files

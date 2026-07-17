@@ -1,4 +1,4 @@
-# 06. `FileCacheKey` / `sipHash128` 设计
+# 03. `FileCacheKey` / `sipHash128` 设计
 
 ## 结论
 

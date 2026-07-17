@@ -1,4 +1,4 @@
-# 17. `QueryLimit` 文件迁移设计
+# 11. `QueryLimit` 文件迁移设计
 
 ## 结论
 

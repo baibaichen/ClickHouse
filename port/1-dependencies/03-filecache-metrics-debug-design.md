@@ -1,4 +1,4 @@
-# 10. Metrics / tracing / debug no-op shim 设计
+# 03. Metrics / tracing / debug no-op shim设计
 
 ## 结论
 
@@ -272,7 +272,7 @@ assertCacheCorrectness shim compiles and is no-op
 
 ## Review 状态
 
-本文档待 review。当前决策：
+本文档已完成 review。关键决策：
 
 ```text
 metrics/debug/tracing/event-log/correctness 第一阶段全部 no-op

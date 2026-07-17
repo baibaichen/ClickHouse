@@ -1,4 +1,4 @@
-# 15. `FileSegment` 文件迁移设计
+# 09. `FileSegment` 文件迁移设计
 
 ## 结论
 
@@ -206,7 +206,8 @@ the wrapper exclusively owns the underlying Velox WriteFile
 
 ### downloader caller identity
 
-保留无参静态 `FileSegment::getCallerId`。按 `08`：
+保留无参静态 `FileSegment::getCallerId`。按
+[caller identity设计](../1-dependencies/06-filecache-caller-token-design.md)：
 
 ```text
 query path:
@@ -478,7 +479,7 @@ bounded writes stay inside range
 ### short write / disk-full 失败路径
 
 `WriteBufferFromVeloxWriteFile` 的 short-write 场景、retry 和正常路径性能 contract
-统一定义在 [`04-filecache-infra-mapping.md`](04-filecache-infra-mapping.md)。
+统一定义在 [`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)。
 
 `FileSegment::write` 只依赖 wrapper 的结果：
 

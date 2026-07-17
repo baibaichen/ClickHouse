@@ -1,4 +1,4 @@
-# 18. `FileCache` forward 文件迁移设计
+# 01. `FileCache` forward文件迁移设计
 
 ## 结论
 
@@ -111,7 +111,8 @@ FILECACHE_DEFAULT_CONFIG_PATH = "filesystem_caches";
 ```
 
 它只服务 CH `FileCacheFactory` 的 Poco configuration layout，不是 cache algorithm
-default。Velox 已在 `02` 选择 `file-cache.<name>.*` config prefix。
+default。Velox config key layout见
+[`FileCacheSettings`](06-filecache-settings-files-design.md#config-key-layout)。
 
 因此 target `FileCache_fwd.h` 不保留这个 CH-specific constant；Velox config prefix 放在
 `FileCacheConfig` parser/manager 中。该差异属于已 review 的 config infrastructure

@@ -1,4 +1,4 @@
-# 20. `ShardedMap.h` 迁移设计
+# 05. `ShardedMap.h` 迁移设计
 
 ## 结论
 
@@ -82,7 +82,9 @@ template <
 class ShardedMap;
 ```
 
-增加 `Hash` 只是为了复用 `12` 已 review 的显式 `OriginPoolKeyHash`，不改变 sharding
+增加 `Hash` 只是为了复用
+[`FileCacheOriginInfo` 设计](02-filecache-origin-segment-type-design.md)中已 review 的显式
+`OriginPoolKeyHash`，不改变 sharding
 算法。
 
 必须：
@@ -144,7 +146,9 @@ ShardedMap<
     OriginPoolKeyHash>
 ```
 
-`OriginPoolKeyHash` 按 `12` 保持 CH 行为：只 hash `user_id`，equality仍比较
+`OriginPoolKeyHash` 按
+[`FileCacheOriginInfo` 设计](02-filecache-origin-segment-type-design.md)保持 CH 行为：只 hash
+`user_id`，equality仍比较
 `user_id` / `weight` / `segment_type` 全字段。因此同一 user的不同 weight/type会落到同一
 shard；不能擅自改成 hash 全字段。
 

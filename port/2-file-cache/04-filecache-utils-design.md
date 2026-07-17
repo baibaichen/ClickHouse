@@ -1,4 +1,4 @@
-# 19. `FileCacheUtils.h` 迁移设计
+# 04. `FileCacheUtils.h` 迁移设计
 
 ## 结论
 
@@ -200,7 +200,8 @@ offset + size
 range.right + 1
 ```
 
-`FileCache.h/.cpp` 的 range contract由 `16` 负责；不能假设本 helper能修复在参数传入前
+`FileCache.h/.cpp` 的 range contract由
+[`FileCache` 核心文件设计](10-filecache-core-files-design.md)负责；不能假设本 helper能修复在参数传入前
 已经发生的 wraparound。
 
 ## include surface

@@ -28,32 +28,48 @@ write-through cache
 
 ## 文档目录
 
+根目录保留跨分类文档：
+
 | 序号 | 文档 | 内容 |
 |---|---|---|
-| 00 | `00-filecache-velox-migration.md` | 总览、范围、核心决策、review 状态 |
-| 01 | [`01-filecache-buffered-input-design.md`](01-filecache-buffered-input-design.md) | `FileCacheBufferedInput` / `FileCacheInputStream` 读路径设计 |
-| 02 | [`02-filecache-settings-design.md`](02-filecache-settings-design.md) | 配置分层：`FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext` |
-| 03 | [`03-filecache-manager-lifecycle-design.md`](03-filecache-manager-lifecycle-design.md) | `FileCacheManager` 生命周期、全局入口、shutdown、stats |
-| 04 | [`04-filecache-infra-mapping.md`](04-filecache-infra-mapping.md) | CH 底层设施到 Velox 的替换矩阵 |
-| 05 | [`05-filecache-port-order-design.md`](05-filecache-port-order-design.md) | 文件落地顺序、SCC 切片、阶段计划 |
-| 06 | [`06-filecache-key-hash-design.md`](06-filecache-key-hash-design.md) | `FileCacheKey` 和 `sipHash128` 兼容设计 |
-| 07 | [`07-filecache-scheduler-design.md`](07-filecache-scheduler-design.md) | `FileCacheScheduler` 调度封装设计 |
-| 08 | [`08-filecache-caller-token-design.md`](08-filecache-caller-token-design.md) | `getCallerId` / downloader ownership token 设计 |
-| 09 | [`09-filecache-thread-pool-design.md`](09-filecache-thread-pool-design.md) | `ThreadFromGlobalPool` / `ThreadPool` 迁移设计 |
-| 10 | [`10-filecache-metrics-debug-design.md`](10-filecache-metrics-debug-design.md) | metrics / tracing / debug no-op shim 设计 |
-| 11 | [`11-filecache-basic-shims-design.md`](11-filecache-basic-shims-design.md) | locks / logging / filesystem basic shims 设计 |
-| 12 | [`12-filecache-origin-segment-type-design.md`](12-filecache-origin-segment-type-design.md) | `FileSegmentKeyType` / `FileCacheOriginInfo` 设计 |
-| 13 | [`13-filecache-priority-eviction-design.md`](13-filecache-priority-eviction-design.md) | priority / eviction 文件迁移设计 |
-| 14 | [`14-filecache-metadata-files-design.md`](14-filecache-metadata-files-design.md) | `FileSegmentInfo.h` / `Metadata.h` / `Metadata.cpp` 文件迁移设计 |
-| 15 | [`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md) | `FileSegment.h` / `FileSegment.cpp` 文件迁移设计 |
-| 16 | [`16-filecache-core-files-design.md`](16-filecache-core-files-design.md) | `FileCache.h` / `FileCache.cpp` 文件迁移设计 |
-| 17 | [`17-filecache-query-limit-design.md`](17-filecache-query-limit-design.md) | `QueryLimit.h` / `QueryLimit.cpp` 文件迁移设计 |
-| 18 | [`18-filecache-fwd-files-design.md`](18-filecache-fwd-files-design.md) | `FileCache_fwd.h` / `FileCache_fwd_internal.h` 文件迁移设计 |
-| 19 | [`19-filecache-utils-design.md`](19-filecache-utils-design.md) | `FileCacheUtils.h` 文件迁移设计 |
-| 20 | [`20-filecache-sharded-map-design.md`](20-filecache-sharded-map-design.md) | `ShardedMap.h` 文件迁移设计 |
-| 21 | [`21-filecache-settings-files-design.md`](21-filecache-settings-files-design.md) | `FileCacheSettings.h` / `FileCacheSettings.cpp` 文件迁移设计 |
-| 22 | [`22-filecache-factory-files-design.md`](22-filecache-factory-files-design.md) | `FileCacheFactory.h` / `FileCacheFactory.cpp` registry 迁移设计 |
-| 23 | [`23-filecache-manager-files-design.md`](23-filecache-manager-files-design.md) | `FileCacheManager.h` / `FileCacheManager.cpp` runtime ownership 设计 |
+| 00 | `00-filecache-velox-migration.md` | 总览、范围和核心决策 |
+| 01 | [`01-filecache-port-order-design.md`](01-filecache-port-order-design.md) | 跨分类实现顺序、SCC 切片和阶段计划 |
+
+### 1. 依赖
+
+| 序号 | 文档 | 内容 |
+|---|---|---|
+| 01 | [`FileCache` 底层设施替换矩阵](1-dependencies/01-filecache-infra-mapping.md) | CH 基础设施到 Velox 的总映射 |
+| 02 | [基础 shims](1-dependencies/02-filecache-basic-shims-design.md) | locks、logging和 filesystem |
+| 03 | [Metrics/debug shims](1-dependencies/03-filecache-metrics-debug-design.md) | metrics、tracing、cancellation和 failpoints |
+| 04 | [线程池](1-dependencies/04-filecache-thread-pool-design.md) | global physical pool和 per-cache logical pool |
+| 05 | [`FileCacheScheduler`](1-dependencies/05-filecache-scheduler-design.md) | timer与 callback execution |
+| 06 | [Caller identity](1-dependencies/06-filecache-caller-token-design.md) | query id、physical TID和 downloader ownership |
+
+### 2. `FileCache`
+
+| 序号 | 文档 | 内容 |
+|---|---|---|
+| 01 | [Forward files](2-file-cache/01-filecache-fwd-files-design.md) | `FileCache_fwd.h` / `FileCache_fwd_internal.h` |
+| 02 | [Origin和 segment type](2-file-cache/02-filecache-origin-segment-type-design.md) | `FileSegmentKeyType` / `FileCacheOriginInfo` |
+| 03 | [Key/hash](2-file-cache/03-filecache-key-hash-design.md) | `FileCacheKey` / `sipHash128` |
+| 04 | [Utils](2-file-cache/04-filecache-utils-design.md) | `FileCacheUtils.h` |
+| 05 | [Sharded map](2-file-cache/05-filecache-sharded-map-design.md) | `ShardedMap.h` |
+| 06 | [Settings](2-file-cache/06-filecache-settings-files-design.md) | `FileCacheSettings.h` / `FileCacheSettings.cpp` |
+| 07 | [Priority/eviction](2-file-cache/07-filecache-priority-eviction-design.md) | priority和 eviction文件 |
+| 08 | [Metadata](2-file-cache/08-filecache-metadata-files-design.md) | `FileSegmentInfo.h` / `Metadata.h` / `Metadata.cpp` |
+| 09 | [`FileSegment`](2-file-cache/09-filecache-file-segment-design.md) | `FileSegment.h` / `FileSegment.cpp` |
+| 10 | [`FileCache`](2-file-cache/10-filecache-core-files-design.md) | `FileCache.h` / `FileCache.cpp` |
+| 11 | [`QueryLimit`](2-file-cache/11-filecache-query-limit-design.md) | `QueryLimit.h` / `QueryLimit.cpp` |
+| 12 | [`FileCacheFactory`](2-file-cache/12-filecache-factory-files-design.md) | registry和 name/path dedup |
+
+### 3. 使用方
+
+| 序号 | 文档 | 内容 |
+|---|---|---|
+| 01 | [Read context](3-consumers/01-filecache-read-context-design.md) | `FileCacheReadOptions` / `FileCacheRequestContext` |
+| 02 | [`FileCacheManager`](3-consumers/02-filecache-manager-design.md) | runtime ownership和 lifecycle |
+| 03 | [Buffered input](3-consumers/03-filecache-buffered-input-design.md) | `FileCacheBufferedInput` / `FileCacheInputStream` |
 
 ## 核心决策
 
@@ -142,49 +158,20 @@ FileCacheManager::toString
 但 `FileCacheManager` 不继承 `memory::Cache`，因为 `FileCache` 是磁盘 file segment
 cache，不是内存页 cache。
 
-## Review 状态总表
+## Review 状态
 
-本设计按三类对象推进：
+当前范围内的依赖、`FileCache` 文件和使用方均已完成设计 review。每类文档按实现顺序放在
+对应目录；跨分类的实际落地顺序统一由
+[`01-filecache-port-order-design.md`](01-filecache-port-order-design.md)维护。
+
+已确认后置或排除：
 
 ```text
-使用方 -> FileCache -> 依赖方
+WriteBufferToFileSegment        -> 后置；不属于读 miss填 cache主路径
+CachedOnDiskWriteBufferFromFile -> 不迁移
+cache_on_write_operations       -> 不支持
+write-through cache             -> 不支持
 ```
-
-- **使用方**：Velox/DWIO 如何调用 cache。`FileCacheBufferedInput` /
-  `FileCacheInputStream`、settings/read options/request context、manager 生命周期、
-  caller token 都属于这一类。当前使用方设计基本结束，只剩具体接入时的字段来源细节。
-- **`FileCache` 本体**：`FileCache`、`FileSegment`、`CacheMetadata`、priority、query
-  limit 等算法类。当前只定了原则：算法迁移，不用 Velox cache 替代；中心 SCC 按功能闭环迁移。
-- **依赖方**：`FileCache` 算法依赖的底层设施，例如 hash、scheduler、thread pool、
-  metrics、locks、logging、fs、debug/cancellation hooks。当前正在 review 这一层。
-
-| 分类 | CH | Velox / 迁移设计 | 状态 |
-|---|---|---|---|
-| 使用方 | `CachedOnDiskReadBufferFromFile` | `FileCacheBufferedInput` / `FileCacheInputStream`，详见 `01` | 已 review |
-| 使用方 | `Settings` / `ReadSettings` / `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext`，详见 `02` | 已 review |
-| 使用方 | cache 获取和生命周期 | `FileCacheManager`，详见 `03` | 已 review |
-| 使用方 | `getThreadId` / `getCallerId` | `FileCacheQueryIdScope` + 当前 OS TID，保持 physical-thread downloader ownership；详见 `08` | 已 review |
-| 依赖方 | `ReadBufferFromFileBase` | `ReadBufferFromVeloxReadFile`，接受 Velox `ReadFile`，内部自带 `BufferPtr` | 已 review |
-| 依赖方 | `WriteBufferFromFile` | `WriteBufferFromVeloxWriteFile`，接受 Velox `WriteFile`，内部自带 `BufferPtr` | 已 review |
-| 依赖方 | `WriteBufferToFileSegment` | 只服务 `TemporaryDataOnDisk` 写 `Ephemeral` segment；第一阶段不迁移 | 已确认后置 |
-| 依赖方 | `CachedOnDiskWriteBufferFromFile` | 当前不支持，write-through cache 暂不迁移 | 已确认范围 |
-| 依赖方 | `OpenedFileCache` | `OpenedFileCache` alias/wrapper 到独立 `FileHandleFactory` / `FileHandleCache` 实例 | 已 review |
-| 依赖方 | `Poco::Util::AbstractConfiguration` | `ConfigBase` | 已 review |
-| 依赖方 | `NamedCollection` | connector properties / `ConfigBase` prefix | 已 review |
-| 依赖方 | `BackgroundSchedulePool` | `FileCacheScheduler`：cancelable Folly timer + shared dynamic worker pool；详见 `07` | 已 review |
-| 依赖方 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`，用 `using` 保留 CH 名字；详见 `09` | 待 review |
-| 依赖方 | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
-| `FileCache` 本体 | `FileSegmentKeyType` / `FileCacheOriginInfo` | 直接迁移 CH 语义；详见 `12` | 已 review |
-| `FileCache` 本体 | priority / eviction 文件 | LRU / SLRU / Split / eviction 直接迁移；overcommit 后置；详见 `13` | 待 review |
-| `FileCache` 本体 | `FileSegmentInfo.h` / `Metadata.h` / `Metadata.cpp` | 按文件精确迁移；与 `FileSegment` / `FileCache` 同属中心 SCC；详见 `14` | 待 review |
-| `FileCache` 本体 | `FileSegment.h` / `FileSegment.cpp` | 按文件精确迁移；保留 state/downloader/write/complete/holder 语义；详见 `15` | 待 review |
-| `FileCache` 本体 | `FileCache.h` / `FileCache.cpp` | 按文件精确迁移；保留 lookup/reserve/eviction/load/resize/shutdown；详见 `16` | 待 review |
-| `FileCache` 本体 | `QueryLimit.h` / `QueryLimit.cpp` | 按文件精确迁移；保留 query-local LRU 和 holder release；详见 `17` | 待 review |
-| 依赖方 | CH locks / `std::shared_mutex` | CH-compatible guard classes + `folly::SharedMutex` / `std::mutex`；详见 `11` | 待 review |
-| 依赖方 | `LOG_*` / `logger_useful` / `fs::` | logging and filesystem compat shims；详见 `11` | 待 review |
-| 依赖方 | `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；详见 `10` | 待 review |
-| 依赖方 | `QueryStatus::throwIfKilled` / `OpenTelemetry` / `FailPoint` / `assertCacheCorrectness*` | no-op shim，cancellation 后续接 `ConnectorQueryCtx::cancellationToken`；详见 `10` | 待 review |
-| `FileCache` 本体 | `FileCache` / `FileSegment` / `CacheMetadata` / priorities | 算法迁移；中心 SCC 按功能闭环 review | 原则已定，未 review |
 
 ## 当前落地策略
 
@@ -201,7 +188,7 @@ ReadBufferFromVeloxReadFile
 WriteBufferFromVeloxWriteFile
 ```
 
-详见 [`05-filecache-port-order-design.md`](05-filecache-port-order-design.md)。
+详见 [`01-filecache-port-order-design.md`](01-filecache-port-order-design.md)。
 
 ## 未决问题
 

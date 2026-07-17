@@ -1,4 +1,4 @@
-# `FileCache` 迁移落地顺序设计
+# 01. `FileCache` 迁移落地顺序设计
 
 这个文档定义从 ClickHouse `src/Interpreters/FileCache` 迁移到 Velox
 `velox/ch/...` 的落地顺序。目标是先按文件 DAG 降低编译风险，到中心 SCC 后按功能
@@ -15,18 +15,18 @@
 
 ## Review 分层
 
-设计按三类对象推进：
+设计按依赖方向分为三个目录：
 
 ```text
-使用方 -> FileCache -> 依赖方
+3-consumers -> 2-file-cache -> 1-dependencies
 ```
 
-- **使用方**：`FileCacheBufferedInput` / `FileCacheInputStream`、settings/read options、
-  `FileCacheManager`、caller token 等。当前基本结束。
-- **依赖方**：`FileCache` 算法依赖的底层设施，例如 hash、scheduler、thread pool、
-  metrics、locks、logging、fs、debug/cancellation hooks。当前正在 review。
-- **`FileCache` 本体**：`FileCache` / `FileSegment` / `CacheMetadata` / priority / query
-  limit 等中心 SCC。当前只定原则，尚未进入逐功能闭环 review。
+- [`1-dependencies/`](1-dependencies/)：scheduler、thread pool、caller identity、
+  metrics、locks、logging、filesystem和 debug/cancellation hooks。
+- [`2-file-cache/`](2-file-cache/)：`FileCache` / `FileSegment` / `Metadata` /
+  priority / query limit / factory等 module文件。
+- [`3-consumers/`](3-consumers/)：read options/request context、`FileCacheManager`、
+  `FileCacheBufferedInput`和 `FileCacheInputStream`。
 
 ## CMake target
 
@@ -119,16 +119,16 @@ velox/ch/Interpreters/FileCache/FileCacheSettings.h / .cpp
 ```
 
 `FileCache_fwd.h` / `FileCache_fwd_internal.h` 逐文件设计详见
-[`18-filecache-fwd-files-design.md`](18-filecache-fwd-files-design.md)。
+[`FileCache` forward文件设计](2-file-cache/01-filecache-fwd-files-design.md)。
 
 `FileCacheUtils.h` 逐文件设计详见
-[`19-filecache-utils-design.md`](19-filecache-utils-design.md)。
+[`FileCacheUtils.h` 设计](2-file-cache/04-filecache-utils-design.md)。
 
 `ShardedMap.h` 逐文件设计详见
-[`20-filecache-sharded-map-design.md`](20-filecache-sharded-map-design.md)。
+[`ShardedMap.h` 设计](2-file-cache/05-filecache-sharded-map-design.md)。
 
 `FileCacheSettings.h` / `FileCacheSettings.cpp` 逐文件设计详见
-[`21-filecache-settings-files-design.md`](21-filecache-settings-files-design.md)。
+[`FileCacheSettings` 设计](2-file-cache/06-filecache-settings-files-design.md)。
 
 ### 依赖替换
 
@@ -160,7 +160,7 @@ velox/ch/Interpreters/FileCache/FileCacheSettings.h / .cpp
 ```
 
 `FileSegmentKeyType` / `FileCacheOriginInfo` 语义详见
-[`12-filecache-origin-segment-type-design.md`](12-filecache-origin-segment-type-design.md)。
+[`FileSegmentKeyType` / `FileCacheOriginInfo` 设计](2-file-cache/02-filecache-origin-segment-type-design.md)。
 
 ## 阶段 2：priority 和 eviction 类型
 
@@ -203,7 +203,7 @@ Split routes by FileSegmentKeyType
 ```
 
 Priority / eviction 语义详见
-[`13-filecache-priority-eviction-design.md`](13-filecache-priority-eviction-design.md)。
+[Priority / eviction设计](2-file-cache/07-filecache-priority-eviction-design.md)。
 `OvercommitFileCachePriority` 属于 Cloud / distributed-cache 条件路径，第一阶段后置。
 
 ## 阶段 3：中心 SCC 文件 review：metadata
@@ -250,7 +250,7 @@ background queue cancel and resize
 ```
 
 逐文件设计详见
-[`14-filecache-metadata-files-design.md`](14-filecache-metadata-files-design.md)。
+[Metadata文件设计](2-file-cache/08-filecache-metadata-files-design.md)。
 
 ## 阶段 4：中心 SCC 第二组：`FileSegment`
 
@@ -303,7 +303,7 @@ holder destructor completes/removes
 ```
 
 逐文件设计详见
-[`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md)。
+[`FileSegment` 文件设计](2-file-cache/09-filecache-file-segment-design.md)。
 
 ## 阶段 5：中心 SCC 第三组：`FileCache`
 
@@ -356,7 +356,7 @@ removeKey/removeFileSegment
 ```
 
 逐文件设计详见
-[`16-filecache-core-files-design.md`](16-filecache-core-files-design.md)。
+[`FileCache` 核心文件设计](2-file-cache/10-filecache-core-files-design.md)。
 
 ## 阶段 5.1：`QueryLimit`
 
@@ -370,11 +370,11 @@ velox/ch/Interpreters/FileCache/QueryLimit.cpp
 setting 启用时不能 stub query context holder 或 query priority。
 
 逐文件设计详见
-[`17-filecache-query-limit-design.md`](17-filecache-query-limit-design.md)。
+[`QueryLimit` 文件设计](2-file-cache/11-filecache-query-limit-design.md)。
 
 ## 阶段 5.2：factory semantics / manager implementation
 
-严格按文件 review CH factory；registry semantics并入 Velox manager：
+严格按文件 review CH factory；Velox保留真实 Factory，并由 Manager持有：
 
 ```text
 src/Interpreters/FileCache/FileCacheFactory.h / .cpp
@@ -386,10 +386,10 @@ manager 是 runtime owner并包含一个真实 Factory。只有 Factory持有多
 `FileCache` registry；Manager不实现第二套 registry。
 
 逐文件设计详见
-[`22-filecache-factory-files-design.md`](22-filecache-factory-files-design.md)。
+[`FileCacheFactory` 文件设计](2-file-cache/12-filecache-factory-files-design.md)。
 
 Manager目标文件设计详见
-[`23-filecache-manager-files-design.md`](23-filecache-manager-files-design.md)。
+[`FileCacheManager` 文件设计](3-consumers/02-filecache-manager-design.md)。
 
 ## 阶段 6：Velox scan 接入
 

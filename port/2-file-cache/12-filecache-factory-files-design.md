@@ -1,4 +1,4 @@
-# 22. `FileCacheFactory` 文件迁移设计
+# 12. `FileCacheFactory` 文件迁移设计
 
 ## 结论
 
@@ -126,16 +126,9 @@ CH API把 name和 settings分开：
 getOrCreate(cache_name, settings, config_path);
 ```
 
-因此 `FileCacheConfig` 不包含 `name`。manager配置使用：
-
-```cpp
-struct NamedFileCacheConfig
-{
-    std::string name;
-    FileCacheConfig config;
-    std::string configPath;
-};
-```
+因此 `FileCacheConfig` 不包含 `name`。Manager-owned wrapper
+`NamedFileCacheConfig` 的唯一结构定义见
+[`FileCacheManager`](../3-consumers/02-filecache-manager-design.md#supporting-types)。
 
 这保留：
 
@@ -469,7 +462,8 @@ outside lock:
 
 `clear` deactivate全部 unique caches、清 registry/相关 opened handles，并在 workers退出后
 把 dynamic worker max降到 1；scheduler/worker pool保持运行，因此 manager可以继续创建
-新的 caches。完整 lifecycle见 `23`。
+新的 caches。完整 lifecycle见
+[`FileCacheManager`](../3-consumers/02-filecache-manager-design.md)。
 
 ### path prefix helper
 
@@ -486,7 +480,8 @@ cachePathPrefix
 allowedCacheRoot
 ```
 
-path resolution/authorization属于 `21` 的 settings loader。
+path resolution/authorization属于
+[`FileCacheSettings` loader](06-filecache-settings-files-design.md)。
 
 ## tests
 
@@ -543,4 +538,4 @@ reload does not hold registry mutex across apply
 Factory并提供 runtime services；不存在第二套 registry。
 
 Manager runtime ownership的目标文件设计详见
-[`23-filecache-manager-files-design.md`](23-filecache-manager-files-design.md)。
+[`FileCacheManager` 文件设计](../3-consumers/02-filecache-manager-design.md)。

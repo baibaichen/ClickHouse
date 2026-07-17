@@ -1,4 +1,4 @@
-# 23. `FileCacheManager` 文件设计
+# 02. `FileCacheManager` 文件设计
 
 ## 结论
 
@@ -12,12 +12,12 @@ velox/ch/Interpreters/FileCache/FileCacheManager.cpp
 `FileCacheManager` 没有单个 CH 同名源文件。它组合：
 
 ```text
-CH FileCacheFactory registry semantics       -> 22
+CH FileCacheFactory registry semantics       -> ../2-file-cache/12
 CH global Context/runtime dependencies       -> explicit ownership
-FileCache scheduler                          -> 07
-global/local worker-pool mapping             -> 09
-opened local file handles                    -> 03 / 14 / 15
-settings loader and runtime apply            -> 21
+FileCache scheduler                          -> ../1-dependencies/05
+global/local worker-pool mapping             -> ../1-dependencies/04
+opened local file handles                    -> BufferedInput / Metadata / FileSegment
+settings loader and runtime apply            -> ../2-file-cache/06
 ```
 
 Manager包含一个真实 `FileCacheFactory`。只有 Factory持有 registry，只有 Manager持有
@@ -59,6 +59,37 @@ FileCache
 
 这样 `FileCache` 算法可独立测试，也避免 manager/cache ownership cycle。
 
+### 与 `AsyncDataCache` 的边界
+
+Manager只参考 Velox `AsyncDataCache` 的 process-level lifecycle模式：
+
+| `AsyncDataCache` | `FileCacheManager` |
+|---|---|
+| `create` | `create` |
+| `getInstance` / `setInstance` | `getInstance` / `setInstance` |
+| `shutdown` | `shutdown` |
+| `refreshStats` / `toString` | `refreshStats` / `toString` |
+
+它不继承 `memory::Cache`，不复用 `AsyncDataCache` shards，也不改变 ClickHouse
+`FileCache` 的 metadata、priority或 eviction算法。
+
+### 与 scan读路径的边界
+
+`FileCacheBufferedInput` 不创建 cache，也不在读热路径解析实例配置：
+
+```text
+scan setup / BufferedInput builder
+  -> manager.getDefault() or manager.get(cacheName)
+  -> FileCacheBufferedInput(
+         FileCachePtr,
+         FileCacheReadOptions,
+         FileCacheRequestContext)
+```
+
+Manager持有的 `OpenedFileCache` 只服务本地 cache segment，不复用 Hive source-file
+handle cache。`FileSegment` / `Metadata` 通过注入的 reference或 callback使已删除路径的
+handle失效。
+
 ## `FileCacheManager.h`
 
 ### supporting types
@@ -72,7 +103,9 @@ struct NamedFileCacheConfig
 };
 ```
 
-name/configPath不参与 `FileCacheConfig` equality，详见 `21` / `22`。
+name/configPath不参与 `FileCacheConfig` equality，详见
+[`FileCacheSettings`](../2-file-cache/06-filecache-settings-files-design.md)和
+[`FileCacheFactory`](../2-file-cache/12-filecache-factory-files-design.md)。
 
 ```cpp
 struct FileCacheManagerStats
@@ -194,7 +227,8 @@ FileCachePtr get(const std::string & name) const;
 FileCachePtr getDefault() const;
 ```
 
-registry API本体位于 Factory，按 `22`。
+registry API本体位于
+[`FileCacheFactory`](../2-file-cache/12-filecache-factory-files-design.md)。
 
 ### runtime API
 
@@ -275,7 +309,9 @@ scheduler destroyed before worker pool
 
 ### option/config validation
 
-Manager不重复解析 scalar settings。Factory按 `22` 验证 name/path registry约束；
+Manager不重复解析 scalar settings。Factory按
+[`FileCacheFactory` 设计](../2-file-cache/12-filecache-factory-files-design.md)验证 name/path
+registry约束；
 Manager验证 runtime/options/default cache：
 
 ```text
@@ -349,7 +385,8 @@ commonUserId
 
 ### create/getOrCreate
 
-调用 `factory_.getOrCreate`；registry语义按 `22`。
+调用 `factory_.getOrCreate`；registry语义按
+[`FileCacheFactory` 设计](../2-file-cache/12-filecache-factory-files-design.md)。
 
 新 unique cache：
 
@@ -626,7 +663,7 @@ dynamic pool min=1 and max calculation
 
 ### registry
 
-全部 `22` tests。
+全部 [`FileCacheFactory` tests](../2-file-cache/12-filecache-factory-files-design.md#tests)。
 
 ### initialization
 

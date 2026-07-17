@@ -30,8 +30,8 @@ Do not add `.gitkeep` files.
 Read these before editing Velox:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/10-filecache-metrics-debug-design.md
-/home/chang/SourceCode/ClickHouse/port/11-filecache-basic-shims-design.md
+/home/chang/SourceCode/ClickHouse/port/1-dependencies/03-filecache-metrics-debug-design.md
+/home/chang/SourceCode/ClickHouse/port/1-dependencies/02-filecache-basic-shims-design.md
 /home/chang/SourceCode/ClickHouse/port/task/result/001-velox-ch-skeleton-result.md
 ```
 

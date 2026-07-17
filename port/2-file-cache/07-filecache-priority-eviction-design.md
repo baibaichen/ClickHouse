@@ -1,4 +1,4 @@
-# 13. Priority / eviction 文件迁移设计
+# 07. Priority / eviction文件迁移设计
 
 ## 结论
 
@@ -251,7 +251,8 @@ on_evict_callback
 `original_queue_types` 用于 dynamic resize 失败后恢复 entry 原队列类型，尤其是 SLRU
 protected/probationary。
 
-容器替换按 `04` 的总映射执行：
+容器替换按
+[`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)执行：
 
 ```text
 absl::flat_hash_map<FileCacheKey, KeyCandidates, std::hash<FileCacheKey>>
@@ -351,7 +352,7 @@ CacheUsagePerUser snapshot/getOrSet/touch/collectIdleClients minimal behavior
 
 ## Review 状态
 
-本文档待 review。当前决策：
+本文档已完成 review。关键决策：
 
 ```text
 directly port IFileCachePriority / LRU / SLRU / Split / EvictionCandidates
