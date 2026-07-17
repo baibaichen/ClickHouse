@@ -121,6 +121,9 @@ velox/ch/Interpreters/FileCache/FileCacheSettings.h / .cpp
 `FileCache_fwd.h` / `FileCache_fwd_internal.h` 逐文件设计详见
 [`18-filecache-fwd-files-design.md`](18-filecache-fwd-files-design.md)。
 
+`FileCacheUtils.h` 逐文件设计详见
+[`19-filecache-utils-design.md`](19-filecache-utils-design.md)。
+
 ### 依赖替换
 
 | CH | Velox |
