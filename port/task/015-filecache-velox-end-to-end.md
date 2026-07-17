@@ -1,10 +1,10 @@
-# Task 016: `FileCache` Full End-to-End Validation
+# Task 015: `FileCache` Velox End-to-End Validation and Basic Benchmark
 
 > **MVP task.**
 >
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> creates test and benchmark files in both the Velox checkout and the Gluten
-> checkout. It writes one result file under this ClickHouse checkout. Do not
+> creates test and benchmark files in the Velox checkout. It writes one result
+> file under this ClickHouse checkout. Do not
 > modify ClickHouse source files. Do not commit or stage either repository.
 >
 > Production changes are permitted **only** when a concrete integration defect
@@ -33,22 +33,15 @@ manager shutdown while stream is alive but not actively reading
 
 Deliverables:
 - Velox focused test binary `velox_ch_filecache_e2e_test`.
-- Gluten focused test binary `velox_file_cache_e2e_gluten_test`.
 - Velox benchmark binary `velox_ch_filecache_seek_benchmark`.
 - All test scenarios pass; benchmark builds and runs without crash.
 
 ## Starting point
 
 ```text
-Velox repository:    /home/chang/OpenSource/velox
-Required branch:     filecache
-Expected HEAD:       descendant of the task-014 result commit
-
-Gluten repository:   /home/chang/SourceCode/gluten1
-Required branch:     any
-Expected Gluten HEAD: descendant of the task-015 result commit
-
-(Task 015 must be complete in the Gluten checkout before starting this task.)
+Velox repository: /home/chang/OpenSource/velox
+Required branch:  filecache
+Expected HEAD:    descendant of the task-014 result commit
 ```
 
 ## Design references
@@ -60,7 +53,6 @@ Read before editing:
 /home/chang/SourceCode/ClickHouse/port/3-consumers/03-filecache-buffered-input-design.md
 /home/chang/SourceCode/ClickHouse/port/3-consumers/01-filecache-read-context-design.md
 /home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
-/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-gluten-integration-result.md
 ```
 
 ## File scope
@@ -68,7 +60,6 @@ Read before editing:
 Create in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/CMakeLists.txt
 /home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp
 /home/chang/OpenSource/velox/velox/ch/benchmarks/CMakeLists.txt
 /home/chang/OpenSource/velox/velox/ch/benchmarks/FileCacheSeekBenchmark.cpp
@@ -79,30 +70,17 @@ Modify in the Velox checkout:
 ```text
 /home/chang/OpenSource/velox/velox/ch/CMakeLists.txt
 /home/chang/OpenSource/velox/velox/ch/Disks/IO/CMakeLists.txt
-```
-
-Create in the Gluten checkout:
-
-```text
-/home/chang/SourceCode/gluten1/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
-```
-
-Modify in the Gluten checkout:
-
-```text
-/home/chang/SourceCode/gluten1/cpp/velox/tests/CMakeLists.txt
+/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/CMakeLists.txt
 ```
 
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/016-filecache-e2e-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-velox-e2e-result.md
 ```
 
 Every new Velox C++ file must begin with the Apache 2.0 Facebook license
-header from `port/task/003-filecache-basic-common-shims.md`. Every new
-Gluten C++ file must begin with the Apache 2.0 ASF header used in
-`cpp/velox/compute/VeloxBackend.cc`.
+header from `port/task/003-filecache-basic-common-shims.md`.
 
 ## Steps
 
@@ -112,13 +90,9 @@ Gluten C++ file must begin with the Apache 2.0 ASF header used in
 cd /home/chang/OpenSource/velox
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
-
-cd /home/chang/SourceCode/gluten1
-git --no-pager status --short --branch
-git --no-pager log -1 --oneline
 ```
 
-Expected: Velox on `filecache` after task 014; Gluten after task 015.
+Expected: Velox on `filecache` after Task 014.
 Record all pre-existing dirty files in the result file.
 
 - [ ] **Step 2: Create the `velox/ch/Disks/IO/tests` directory and skeleton CMakeLists.txt**
@@ -132,23 +106,10 @@ if(${VELOX_BUILD_TESTING} OR ${VELOX_BUILD_TEST_UTILS})
 endif()
 ```
 
-Create `velox/ch/Disks/IO/tests/CMakeLists.txt`:
+Append the E2E target to the existing
+`velox/ch/Disks/IO/tests/CMakeLists.txt` created by Task 014:
 
 ```cmake
-# Copyright (c) Facebook, Inc. and its affiliates.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 add_executable(velox_ch_filecache_e2e_test FileCacheE2ETest.cpp)
 add_test(velox_ch_filecache_e2e_test velox_ch_filecache_e2e_test)
 
@@ -322,14 +283,14 @@ contracts to verify per test:
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_filecache_e2e_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_e2e.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_e2e.log 2>&1
 echo "exit: $?"
 
 ctest \
   --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   -R '^velox_ch_filecache_e2e_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_016_e2e.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_015_e2e.log 2>&1
 echo "exit: $?"
 ```
 
@@ -477,7 +438,7 @@ Implement `setupFixture()` to initialize the benchmark context, then build:
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_filecache_seek_benchmark \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_benchmark.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_benchmark.log 2>&1
 echo "exit: $?"
 ```
 
@@ -489,78 +450,16 @@ Run the benchmark (short warmup to confirm it does not crash):
   --file_size_mb=8 \
   --cache_size_mb=32 \
   --cache_dir=/home/chang/OpenSource/velox/cmake-build-debug-gcc13/fc_bench \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/bench_016_seek.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/bench_015_seek.log 2>&1
 echo "exit: $?"
 ```
 
 Expected: exit code 0; the log contains timing rows for the three benchmark
 variants.
 
-- [ ] **Step 7: Create the Gluten E2E test**
+- [ ] **Step 7: Verify that no production defects required changes**
 
-Add to `cpp/velox/tests/CMakeLists.txt`:
-
-```cmake
-add_velox_test(
-  velox_file_cache_e2e_gluten_test
-  SOURCES FileCacheE2EGlutenTest.cpp)
-```
-
-Create `cpp/velox/tests/FileCacheE2EGlutenTest.cpp` with real `FileHandle`,
-`ConnectorQueryCtx`, memory pool, optional `AsyncDataCache`, and
-`FileCacheManager` fixtures. Drive the stack from
-`GlutenBufferedInputBuilder::create` through `FileCacheBufferedInput` into
-`FileCacheInputStream`. Implement these tests with real assertions:
-
-```text
-BuilderProducesFileCacheInputWhenManagerInstalled
-BuilderFallsBackToCachedInputWhenNoFileCache
-BuilderFallsBackToDirectInputWhenNoCache
-MissFillHitViaBuilder
-FileCacheExcludesAsyncDataCacheOnSamePath
-```
-
-Reject false-green skipped tests before building:
-
-```bash
-if rg -n 'GTEST_SKIP|DISABLED_' \
-  /home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp \
-  /home/chang/SourceCode/gluten1/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
-then
-  echo "ERROR: skipped E2E test remains"
-  exit 1
-fi
-```
-
-Then build:
-
-```bash
-cmake --build /home/chang/SourceCode/gluten1/cpp/build \
-  --target velox_file_cache_e2e_gluten_test \
-  > /home/chang/SourceCode/gluten1/cpp/build/build_016_gluten_e2e.log 2>&1
-echo "exit: $?"
-```
-
-Run:
-
-```bash
-ctest --test-dir /home/chang/SourceCode/gluten1/cpp/build \
-  -R '^velox_file_cache_e2e_gluten_test$' \
-  --output-on-failure \
-  > /home/chang/SourceCode/gluten1/cpp/build/test_016_gluten_e2e.log 2>&1
-echo "exit: $?"
-```
-
-Expected:
-
-```text
-Build exit code: 0.
-100% tests passed, 0 tests failed.
-```
-
-- [ ] **Step 8: Verify that no production defects required changes**
-
-Inspect the diff for production files in both repos:
+Inspect the diff for Velox production files:
 
 ```bash
 cd /home/chang/OpenSource/velox
@@ -569,48 +468,40 @@ git --no-pager diff -- \
   velox/ch/Disks/IO/FileCacheInputStream.cpp \
   velox/ch/Interpreters/FileCache/FileCache.cpp \
   velox/ch/Interpreters/FileCache/FileCacheManager.cpp
-
-cd /home/chang/SourceCode/gluten1
-git --no-pager diff -- \
-  cpp/velox/compute/VeloxBackend.cc \
-  cpp/velox/memory/GlutenBufferedInputBuilder.h
 ```
 
 If any production file changed, describe the defect and fix in the result
 file before stating `status: success`.
 
-- [ ] **Step 9: Inspect all task-owned changes**
+- [ ] **Step 8: Inspect all task-owned changes**
 
 ```bash
 cd /home/chang/OpenSource/velox
 git --no-pager diff --check
 git --no-pager status --short
 
-cd /home/chang/SourceCode/gluten1
-git --no-pager diff --check
-git --no-pager status --short
 ```
 
 Expected:
 
 ```text
-No whitespace errors in either repo.
-Only task-owned files appear in each diff.
+No whitespace errors in Velox.
+Only task-owned files appear in the diff.
 Changes remain unstaged and uncommitted.
 ```
 
-- [ ] **Step 10: Write the result handoff**
+- [ ] **Step 9: Write the result handoff**
 
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/016-filecache-e2e-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-velox-e2e-result.md
 ```
 
 Use exactly this structure:
 
 ````markdown
-# Task 016 Result: `FileCache` Full E2E Validation
+# Task 015 Result: `FileCache` Velox E2E Validation and Basic Benchmark
 
 ## Status
 
@@ -620,13 +511,12 @@ status: success
 
 ```text
 Velox branch, HEAD, git status --short
-Gluten branch, HEAD, git status --short
 ```
 
 ## Files changed
 
 ```text
-<list only task-owned files in both repos>
+<list only task-owned Velox files>
 ```
 
 ## Commands run
@@ -638,19 +528,16 @@ Gluten branch, HEAD, git status --short
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_e2e.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_016_e2e.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_benchmark.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/bench_016_seek.log
-/home/chang/SourceCode/gluten1/cpp/build/build_016_gluten_e2e.log
-/home/chang/SourceCode/gluten1/cpp/build/test_016_gluten_e2e.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_e2e.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_015_e2e.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_benchmark.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/bench_015_seek.log
 ```
 
 ## Test results
 
 ```text
 velox_ch_filecache_e2e_test:         <N> tests, 0 failed
-velox_file_cache_e2e_gluten_test:    <N> tests, 0 failed
 velox_ch_filecache_seek_benchmark:   3 iterations, no crash,
                                      timing rows for cache-hit / miss / bypass
 ```
@@ -667,9 +554,8 @@ None
 ```text
 No E2E source contains GTEST_SKIP or DISABLED_ tests.
 Final Velox E2E build exit code: 0
-Final Gluten E2E build exit code: 0
 Benchmark build exit code: 0
-git diff --check: no whitespace errors in either repo
+git diff --check: no whitespace errors in Velox
 ```
 
 ## Blocking errors
@@ -681,8 +567,10 @@ None
 ## Recommended next task
 
 ```text
-Task 017 (optional post-MVP): WriteBufferToFileSegment for Ephemeral segments.
-Task 018 (optional post-MVP): Observability and cancellation hardening.
+Task 016 (optional post-MVP): WriteBufferToFileSegment for Ephemeral segments.
+Task 017 (optional post-MVP): Observability and cancellation hardening.
+Task 018 (future): Gluten host integration.
+Task 019 (future): Gluten builder and lifecycle E2E validation.
 ```
 ````
 
@@ -692,7 +580,7 @@ Do not implement in this task:
 
 ```text
 Parquet / ORC / DWRF format reader integration tests — those require
-  Velox format-reader fixtures and fall under Task 016 follow-up work once
+  Velox format-reader fixtures and fall under Task 015 follow-up work once
   the core read-state-machine tests here pass cleanly.
 
 Background prefetch via executor — load() is a no-op planning barrier;
@@ -705,9 +593,7 @@ Per-query cache limit tests — those depend on QueryLimit (task 011) and the
 SsdCache / checkpoint tests — the E2E suite uses a memory-backed cache only;
   SsdCache durability tests belong to a dedicated cache-persistence task.
 
-Maven / Scala integration tests — the builder selection is fully covered by
-  native C++ tests; a JVM-level integration test can be added when the Spark
-  e2e test harness for FileCache is established in a later task.
+Gluten builder and lifecycle integration — deferred to Tasks 018-019.
 
 format-cpp-code.sh global run — do not run the formatter globally; apply
   clang-format-15 only to the new files created by this task if needed.

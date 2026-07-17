@@ -103,14 +103,16 @@ Run tasks in this order in the same Velox `filecache` worktree:
 | 012 | priority + center SCC compile/link closure | `velox_ch_filecache_core_scc_test` |
 | 013 | Factory and Manager | `velox_ch_filecache_manager_test` |
 | 014 | `FileCacheBufferedInput` / `FileCacheInputStream` | `velox_ch_filecache_buffered_input_test` |
-| 015 | Gluten `VeloxBackend` ownership and Builder integration | Gluten focused native test |
-| 016 | Velox + Gluten E2E and random-seek benchmark | all MVP acceptance gates |
-| 017 | post-MVP `WriteBufferToFileSegment` | focused ephemeral writer test |
-| 018 | post-MVP observability and cancellation | focused + E2E regression tests |
+| 015 | Velox-only E2E and random-seek benchmark | current MVP acceptance gate |
+| 016 | post-MVP `WriteBufferToFileSegment` | focused ephemeral writer test |
+| 017 | post-MVP observability and cancellation | focused + E2E regression tests |
+| 018 | future Gluten `VeloxBackend` ownership and Builder integration | Gluten focused native test |
+| 019 | future Gluten builder/lifecycle E2E | Gluten integration acceptance gate |
 
 Tasks 011 and 012 are one atomic implementation stage. Task 011 must not create
 fake center-SCC definitions or claim a build; Task 012 immediately completes
 the real types, registers all priority/core sources, and runs the green gate.
 
-Tasks 003-016 are the MVP path. Tasks 017 and 018 are optional post-MVP work and
-must not delay the E2E gate in Task 016.
+Tasks 003-015 are the current Velox MVP path. The execution protocol stops after
+Task 015. Tasks 016-017 are optional Velox post-MVP work. Tasks 018-019 are
+deferred Gluten integration work and are not dispatched in the current phase.

@@ -1,4 +1,4 @@
-# Task 017: Port `WriteBufferToFileSegment` — Ephemeral/TemporaryDataOnDisk Use Only
+# Task 016: Port `WriteBufferToFileSegment` — Ephemeral/TemporaryDataOnDisk Use Only
 
 > **Post-MVP optional task.**
 >
@@ -87,7 +87,7 @@ Create in the Velox checkout:
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/017-filecache-write-buffer-segment-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/016-filecache-write-buffer-segment-result.md
 ```
 
 Every new Velox C++ file must begin with the Apache 2.0 Facebook license
@@ -252,12 +252,12 @@ Reconfigure and build the skeleton (must compile):
   -G Ninja \
   -S /home/chang/OpenSource/velox \
   -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_017.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_016.log 2>&1
 
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_write_buffer_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_red.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_red.log 2>&1
 echo "exit: $?"
 ```
 
@@ -648,7 +648,7 @@ Then build:
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_write_buffer_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_write_buffer.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_write_buffer.log 2>&1
 echo "exit: $?"
 ```
 
@@ -661,7 +661,7 @@ ctest \
   --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   -R '^velox_ch_write_buffer_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_write_buffer.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_016_write_buffer.log 2>&1
 echo "exit: $?"
 ```
 
@@ -699,13 +699,13 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/017-filecache-write-buffer-segment-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/016-filecache-write-buffer-segment-result.md
 ```
 
 Use exactly this structure:
 
 ````markdown
-# Task 017 Result: `WriteBufferToFileSegment`
+# Task 016 Result: `WriteBufferToFileSegment`
 
 ## Status
 
@@ -732,10 +732,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_017.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_write_buffer.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_write_buffer.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_016.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_red.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_write_buffer.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_016_write_buffer.log
 ```
 
 ## Verification
@@ -756,7 +756,7 @@ None
 ## Recommended next task
 
 ```text
-Task 018 (optional post-MVP): observability and cancellation hardening.
+Task 017 (optional post-MVP): observability and cancellation hardening.
 ```
 ````
 

@@ -1150,9 +1150,7 @@ None
 ## Recommended next task
 
 ```text
-Task 015: Extend GlutenBufferedInputBuilder to select FileCacheBufferedInput
-when FileCacheManager is installed and FileCache is enabled.
-(This task edits Gluten; it is the first Gluten-touching task.)
+Task 015: run Velox-only FileCache E2E tests and the basic random-seek benchmark.
 ```
 ````
 
@@ -1161,7 +1159,7 @@ when FileCacheManager is installed and FileCache is enabled.
 Do not implement in this task:
 
 ```text
-GlutenBufferedInputBuilder extension (edits Gluten; belongs to Task 015)
+GlutenBufferedInputBuilder extension (edits Gluten; belongs to Task 018)
 CachedReadFile / CacheFileSystem fallback
 AsyncDataCache raw-bytes path sharing with FileCacheBufferedInput
 FileCacheSettingsLoader Gluten config parsing

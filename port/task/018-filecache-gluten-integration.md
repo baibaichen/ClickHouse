@@ -1,6 +1,6 @@
-# Task 015: Gluten Host Integration — `FileCacheManager` Ownership and Builder Selection
+# Task 018: Gluten Host Integration — `FileCacheManager` Ownership and Builder Selection
 
-> **MVP task.**
+> **Deferred Gluten task.** Do not dispatch in the current Velox-only phase.
 >
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
 > modifies the Gluten checkout under `/home/chang/SourceCode/gluten1` and
@@ -76,7 +76,7 @@ Create in the Gluten checkout:
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-gluten-integration-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/018-filecache-gluten-integration-result.md
 ```
 
 Every new Gluten C++ file must start with the Apache 2.0 ASF license header
@@ -115,14 +115,14 @@ preserving its other cached options:
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_015_external_velox.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_018_external_velox.log 2>&1
 
 /usr/bin/cmake \
   -S /home/chang/SourceCode/gluten1/cpp \
   -B /home/chang/SourceCode/gluten1/cpp/build \
   -DVELOX_HOME=/home/chang/OpenSource/velox \
   -DVELOX_BUILD_PATH=/home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/SourceCode/gluten1/cpp/build/configure_task_015_external_velox.log 2>&1
+  > /home/chang/SourceCode/gluten1/cpp/build/configure_task_018_external_velox.log 2>&1
 
 grep -E '^(VELOX_HOME|VELOX_BUILD_PATH):' \
   /home/chang/SourceCode/gluten1/cpp/build/CMakeCache.txt
@@ -298,7 +298,7 @@ TEST_F(FileCacheGlutenLifecycleTest, BuilderSelectsFileCacheInputWhenManagerInst
   // (Build-time type check: the returned BufferedInput must be castable to
   //  facebook::velox::ch::FileCacheBufferedInput.)
   EXPECT_NE(FileCacheManager::getInstance(), nullptr);
-  // Full scan-path test is covered by Task 016 E2E tests; here we only
+  // Full Gluten scan-path test is covered by Task 019; here we only
   // verify the singleton is reachable from the builder's call site.
 }
 
@@ -349,7 +349,7 @@ Build the test target (red build):
 ```bash
 cmake --build /home/chang/SourceCode/gluten1/cpp/build \
   --target velox_file_cache_gluten_lifecycle_test \
-  > /home/chang/SourceCode/gluten1/cpp/build/build_015_red.log 2>&1
+  > /home/chang/SourceCode/gluten1/cpp/build/build_018_red.log 2>&1
 echo "exit: $?"
 ```
 
@@ -361,7 +361,7 @@ If it unexpectedly succeeds, record the binary path, run it with:
 ctest --test-dir /home/chang/SourceCode/gluten1/cpp/build \
   -R '^velox_file_cache_gluten_lifecycle_test$' \
   --output-on-failure \
-  > /home/chang/SourceCode/gluten1/cpp/build/test_015_red.log 2>&1
+  > /home/chang/SourceCode/gluten1/cpp/build/test_018_red.log 2>&1
 ```
 
 and record the result. Proceed only if either the build or tests fail.
@@ -624,7 +624,7 @@ Add the required include at the top of `GlutenBufferedInputBuilder.h`:
 ```bash
 cmake --build /home/chang/SourceCode/gluten1/cpp/build \
   --target velox_file_cache_gluten_lifecycle_test \
-  > /home/chang/SourceCode/gluten1/cpp/build/build_015_lifecycle.log 2>&1
+  > /home/chang/SourceCode/gluten1/cpp/build/build_018_lifecycle.log 2>&1
 echo "exit: $?"
 ```
 
@@ -639,7 +639,7 @@ Do not proceed to run until the build is clean.
 ctest --test-dir /home/chang/SourceCode/gluten1/cpp/build \
   -R '^velox_file_cache_gluten_lifecycle_test$' \
   --output-on-failure \
-  > /home/chang/SourceCode/gluten1/cpp/build/test_015_lifecycle.log 2>&1
+  > /home/chang/SourceCode/gluten1/cpp/build/test_018_lifecycle.log 2>&1
 echo "exit: $?"
 ```
 
@@ -686,13 +686,13 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-gluten-integration-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/018-filecache-gluten-integration-result.md
 ```
 
 Use exactly this structure:
 
 ````markdown
-# Task 015 Result: Gluten Host Integration
+# Task 018 Result: Gluten Host Integration
 
 ## Status
 
@@ -720,9 +720,9 @@ Gluten branch, HEAD, and git status --short
 ## Generated logs
 
 ```text
-/home/chang/SourceCode/gluten1/cpp/build/build_015_red.log
-/home/chang/SourceCode/gluten1/cpp/build/build_015_lifecycle.log
-/home/chang/SourceCode/gluten1/cpp/build/test_015_lifecycle.log
+/home/chang/SourceCode/gluten1/cpp/build/build_018_red.log
+/home/chang/SourceCode/gluten1/cpp/build/build_018_lifecycle.log
+/home/chang/SourceCode/gluten1/cpp/build/test_018_lifecycle.log
 ```
 
 ## Verification
@@ -744,7 +744,7 @@ None
 ## Recommended next task
 
 ```text
-Task 016: full E2E validation across Velox and Gluten.
+Task 019: Gluten builder and lifecycle E2E validation.
 ```
 ````
 
@@ -756,16 +756,16 @@ Do not implement in this task:
 
 ```text
 JNI Scala lifecycle tests — verifiable via the native lifecycle tests here
-  plus the integration described in task 016; native coverage is sufficient
-  for the MVP.
+  plus the integration described in Task 019; native coverage is sufficient
+  for the deferred Gluten integration acceptance.
 
 Multi-cache configuration — only the single "default" cache path is tested;
   multi-cache requires FileCacheFactory::getOrCreate semantics verified in
   task 012 and is not a Gluten concern in the first integration.
 
-Etag-based key resolver — current Gluten does not supply etags; the path-only
-  resolver is the full implementation for now; the non-empty-etag branch is
-  exercised only in task 016 once an etag source is available.
+Supplying etags from the Gluten scan path — current Gluten does not supply
+  etags, so the path-only resolver is the full integration for now. Task 018
+  still tests the non-empty-etag key derivation directly.
 
 ReadLease — not introduced; the VeloxBackend tearDown barrier is the
   lifecycle gate.
@@ -774,7 +774,7 @@ Per-runtime FileCacheManager ownership — VeloxRuntime only uses the
   non-owning Manager pointer; it must not call shutdown.
 
 AsyncDataCache + FileCache co-existence on the same scan path — the Builder
-  selection is mutually exclusive by construction; the test in task 016
+  selection is mutually exclusive by construction; the test in Task 019
   verifies this.
 
 VeloxConfig.h format-cpp-code.sh — do not run the global formatter; the

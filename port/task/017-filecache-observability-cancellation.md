@@ -1,4 +1,4 @@
-# Task 018: `FileCache` Observability and Cancellation Hardening
+# Task 017: `FileCache` Observability and Cancellation Hardening
 
 > **Post-MVP optional task.**
 >
@@ -79,7 +79,7 @@ Read before editing:
 /home/chang/SourceCode/ClickHouse/port/3-consumers/03-filecache-buffered-input-design.md
   (section "FileCacheInputStream::Next 的主调用关系")
 /home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
-/home/chang/SourceCode/ClickHouse/port/task/result/016-filecache-e2e-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-velox-e2e-result.md
 ```
 
 Reference ClickHouse implementations for behavioral semantics only — do not
@@ -121,7 +121,7 @@ Create in the Velox checkout:
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/018-filecache-observability-cancellation-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/017-filecache-observability-cancellation-result.md
 ```
 
 ## Steps
@@ -302,13 +302,13 @@ Build the skeleton (must compile):
   -G Ninja \
   -S /home/chang/OpenSource/velox \
   -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_018.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_017.log 2>&1
 
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_observability_test \
   velox_ch_cancellation_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_018_skeleton.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_skeleton.log 2>&1
 echo "exit: $?"
 ```
 
@@ -820,7 +820,7 @@ Replace each `GTEST_SKIP()` in
 Replace each `GTEST_SKIP()` in
 `velox/ch/Disks/IO/tests/FileCacheCancellationTest.cpp` with real
 assertions. Use the same per-test fixture as `FileCacheE2ETest` (from
-task 016).
+Task 015).
 
 **`NextThrowsWhenCancelledBeforeRead`:**
 1. Create a `folly::CancellationSource`; cancel it immediately.
@@ -875,14 +875,14 @@ Then build:
   velox_ch_observability_test \
   velox_ch_cancellation_test \
   velox_ch_common_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_018_observability.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_observability.log 2>&1
 echo "exit: $?"
 
 ctest \
   --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   -R '^(velox_ch_observability_test|velox_ch_cancellation_test|velox_ch_common_test)$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_018_observability.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_observability.log 2>&1
 echo "exit: $?"
 ```
 
@@ -893,21 +893,21 @@ Build exit code: 0.
 100% tests passed, 0 tests failed.
 ```
 
-Also build the E2E test from task 016 to confirm the shim changes do not
+Also build the E2E test from Task 015 to confirm the shim changes do not
 break existing coverage:
 
 ```bash
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_filecache_e2e_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_018_regression.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_regression.log 2>&1
 echo "exit: $?"
 
 ctest \
   --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   -R '^velox_ch_filecache_e2e_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_018_regression.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_regression.log 2>&1
 echo "exit: $?"
 ```
 
@@ -955,13 +955,13 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/018-filecache-observability-cancellation-result.md
+/home/chang/SourceCode/ClickHouse/port/task/result/017-filecache-observability-cancellation-result.md
 ```
 
 Use exactly this structure:
 
 ````markdown
-# Task 018 Result: Observability and Cancellation Hardening
+# Task 017 Result: Observability and Cancellation Hardening
 
 ## Status
 
@@ -988,12 +988,12 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_018.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_018_skeleton.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_018_observability.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_018_observability.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_018_regression.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_018_regression.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_017.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_skeleton.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_observability.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_observability.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_regression.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_regression.log
 ```
 
 ## Test results
