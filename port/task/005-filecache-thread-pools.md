@@ -26,6 +26,32 @@ using ThreadPool = FileCacheThreadPool;
 Deliverable: `velox/ch/Common/ThreadPool.h/.cpp` and a focused test executable
 `velox_ch_threadpool_test`.
 
+## Controller amendment after Worker attempt 1
+
+This amendment overrides the conflicting literal class, implementation, and
+test blocks below:
+
+```text
+FileCacheThreadPool must enforce its maxThreads argument as a per-cache
+concurrency limit. Reuse folly::MeteredExecutor as the dispatch conduit over
+FileCacheWorkerPool's shared executor, but do not treat maxInQueue as a running
+task limit: Folly admits its next queue item before the current task body
+finishes. Keep excess local tasks in a logical admission backlog until a
+running task completes so they never block physical worker threads. queueSize
+continues to bound all pending tasks owned by the logical pool.
+
+Add a focused test with a shared physical pool larger than the logical pool.
+Hold the first maxThreads tasks at a gate and prove an additional task cannot
+start before the gate is released, then prove all tasks complete.
+
+FileCacheWorker move-assignment must reject overwriting a joinable target,
+preserving the same no-silent-background-task-leak invariant as its destructor.
+Add focused success and death-path tests.
+```
+
+Do not defer these invariants to `FileCacheManager`; later capacity budgeting
+depends on each logical pool enforcing its own `maxThreads`.
+
 ## Starting point
 
 ```text
