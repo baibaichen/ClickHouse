@@ -235,7 +235,6 @@ remove empty key
 
 ```text
 velox/ch/Interpreters/FileCache/FileSegment.h / .cpp
-velox/ch/Interpreters/FileCache/WriteBufferToFileSegment.h / .cpp
 ```
 
 ### 功能闭环
@@ -255,6 +254,9 @@ WriteBufferFromVeloxWriteFile
 
 - debug per-segment logger。
 - read-back helper 可后置。
+- `WriteBufferToFileSegment` 后置。它当前服务 `TemporaryDataOnDisk` 写
+  `FileSegmentKind::Ephemeral` segment，不是读 miss 填 cache 的主路径，也不承担
+  `cache_on_write_operations`。
 
 ### 不能 stub 的内容
 

@@ -154,7 +154,7 @@ cache，不是内存页 cache。
 | 使用方 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，显式表达 downloader ownership；详见 `08` | 已 review |
 | 依赖方 | `ReadBufferFromFileBase` | `ReadBufferFromVeloxReadFile`，接受 Velox `ReadFile`，内部自带 `BufferPtr` | 已 review |
 | 依赖方 | `WriteBufferFromFile` | `WriteBufferFromVeloxWriteFile`，接受 Velox `WriteFile`，内部自带 `BufferPtr` | 已 review |
-| 依赖方 | `WriteBufferToFileSegment` | 保留为临时数据 / cache segment 写入 adapter，不承载 `cache_on_write_operations` | 待 review |
+| 依赖方 | `WriteBufferToFileSegment` | 只服务 `TemporaryDataOnDisk` 写 `Ephemeral` segment；第一阶段不迁移 | 已确认后置 |
 | 依赖方 | `CachedOnDiskWriteBufferFromFile` | 当前不支持，write-through cache 暂不迁移 | 已确认范围 |
 | 依赖方 | `OpenedFileCache` | `OpenedFileCache` alias/wrapper 到独立 `FileHandleFactory` / `FileHandleCache` 实例 | 已 review |
 | 依赖方 | `Poco::Util::AbstractConfiguration` | `ConfigBase` | 已 review |

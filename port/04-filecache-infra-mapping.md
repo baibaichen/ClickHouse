@@ -188,8 +188,14 @@ downloadedSize += size
 标记 canceled，释放 writer，后续由 `FileSegment::setDownloadFailed` 处理 segment
 状态和残留文件。
 
-这个类只覆盖读路径 miss 后填充本地 cache segment，以及临时数据写入
-`WriteBufferToFileSegment` 所需能力；不实现 `cache_on_write_operations`。
+这个类覆盖读路径 miss 后填充本地 cache segment 所需能力；不实现
+`cache_on_write_operations`。
+
+`WriteBufferToFileSegment` 不是读 miss 主路径，也不是“先写 cache 再写远端”的
+write-through 组件。当前实际调用点是 `TemporaryDataOnDisk`：它创建
+`FileSegmentKind::Ephemeral` segment，把临时数据写到本地 cache segment，后续再从该
+segment path 读回。Velox 第一阶段不迁移 `TemporaryDataOnDisk` 写入 `FileCache`
+的能力，因此 `WriteBufferToFileSegment` 后置。
 
 ### `sipHash128`
 
