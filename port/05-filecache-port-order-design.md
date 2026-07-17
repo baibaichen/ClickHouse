@@ -444,6 +444,7 @@ FileCacheScheduler
 FileCacheCallerToken
 FileCacheThreadPool / FileCacheWorker + CH-compatible using aliases
 ProfileEvents / CurrentMetrics / OpenTelemetry / FailPoint no-op shims
+Guards / logger / fs compatibility shims
 FileCacheSettings parse/validate skeleton
 ReadBufferFromVeloxReadFile
 WriteBufferFromVeloxWriteFile

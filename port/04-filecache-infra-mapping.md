@@ -19,10 +19,10 @@
 | `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 one-shot `addFunctionOnce` + `cancelFunctionAndWait` 封装 `schedule` / `scheduleAfter` / `deactivate`，详见 `07-filecache-scheduler-design.md` | wrapper：封成 `FileCacheScheduler` | 已 review |
 | `ThreadFromGlobalPool` / 线程池 | `FileCacheWorker` / `FileCacheThreadPool`，通过 `using ThreadFromGlobalPool = FileCacheWorker` 和 `using ThreadPool = FileCacheThreadPool` 保留 CH 名字，详见 `09-filecache-thread-pool-design.md` | wrapper：保留 CH-style join/resize/shutdown 语义 | 需要 review |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | wrapper：`WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` | 已 review |
-| `fs::` 文件系统操作 | `std::filesystem` 处理目录和 exists/remove；本地 IO 通过 `LocalReadFile` / `LocalWriteFile` | 直接替换 + wrapper | 需要 review |
+| `fs::` 文件系统操作 | `std::filesystem` + 必要时 Velox `FileSystem` local API；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
 | `sipHash128` | 不直接换成 `SpookyHashV2`；需要保留 CH cache key hash 语义，详见 `06-filecache-key-hash-design.md` | 保留小 helper | 已 review |
-| `std::shared_mutex` / CH 锁 | `folly::SharedMutex` 用于读写锁；`std::mutex` 用于普通状态锁 | 直接替换或薄 typedef | 需要 review |
-| `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 直接替换 | 需要 review |
+| `std::shared_mutex` / CH 锁 | CH-compatible guard classes，内部用 `folly::SharedMutex` / `std::mutex`；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
+| `LOG_*` / `logger_useful` | CH-compatible logging macros，内部用 `LOG` / `VLOG`；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，由 `ConnectorQueryCtx::queryId`、`scanId` / `driverId` 和 `FileCacheInputStream` 本地 token 组成，详见 `08-filecache-caller-token-design.md` | wrapper：显式传递 downloader ownership | 已 review |
 | `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；后续再接 `RuntimeMetric` / `IoStats` / `StatsReporter`，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
 | `OpenTelemetry` | no-op `OpenTelemetry::SpanHolder` shim，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
