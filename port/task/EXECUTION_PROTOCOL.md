@@ -76,8 +76,9 @@ attempt.
 8. Resolve every actionable in-scope review finding and rerun affected gates.
    Record findings and resolutions. Unresolved findings make the task
    `blocked`, not successful.
-9. Write or append the task's declared result receipt, set
-   `worker_status: ready_for_controller`, and stop immediately.
+9. Write or append the task's declared result receipt. Set
+   `worker_status: ready_for_controller` when complete or
+   `worker_status: blocked` when unresolved, then stop immediately.
 
 The worker is responsible for correctness inside the assigned task. It is not
 responsible for approving the overall port architecture or earlier tasks.
@@ -153,6 +154,39 @@ The worker stopped after writing this receipt.
 For a rework attempt, append `## Worker attempt 2` with fresh baselines,
 commands, evidence, and review. Do not alter the previous attempt or the
 controller's request.
+
+## Blocked handoff
+
+When a worker cannot finish within the declared scope, it writes a normal
+worker-attempt section with `worker_status: blocked`, includes the first
+actionable error or decision needed, and stops. The controller investigates
+without asking the stopped worker to remain active.
+
+The controller appends:
+
+````markdown
+## Controller unblock response 1
+
+```text
+controller_status: blocker_resolved | waiting_for_user | waiting_for_environment
+task: NNN
+```
+
+## Resolution
+
+```text
+root cause:
+decision:
+task or environment update:
+evidence:
+redispatch same task: yes | no
+```
+````
+
+If a product or architecture decision is required, the controller asks the
+user and records the answer here. If the task file or environment changes, the
+controller records the exact change. Only `blocker_resolved` with
+`redispatch same task: yes` starts another worker attempt.
 
 ## Controller rules
 
@@ -271,4 +305,62 @@ accepted, commit only task-owned implementation changes separately in each
 affected implementation repository with a `Task NNN:` subject, record those
 SHAs in the receipt, and then commit only the receipt in the ClickHouse
 repository. Never amend, rebase, or commit on master.
+```
+
+## End-to-end workflow
+
+```mermaid
+flowchart TD
+    START(["Select Task NNN"])
+
+    subgraph WORKER["Worker — exactly one task"]
+        READ["Read protocol, environment, Task NNN,<br/>and accepted dependency receipts"]
+        BASELINE["Record branch, HEAD, and dirty status<br/>for every affected repository"]
+        IMPLEMENT["Implement only the declared file scope"]
+        VALIDATE["Run required build, tests, and benchmark<br/>with persistent logs"]
+        SELF_REVIEW["Launch one read-only review subagent<br/>for the complete task-owned diff"]
+        FINDINGS{"Actionable in-scope<br/>findings?"}
+        FIX["Fix findings"]
+        READY["Write or append receipt<br/>worker_status: ready_for_controller"]
+        BLOCKED["Write or append receipt<br/>worker_status: blocked"]
+        WORKER_STOP(["Worker stops"])
+    end
+
+    subgraph CONTROLLER["Controller — overall correctness and commits"]
+        CLASSIFY{"Receipt status?"}
+        UNBLOCK["Investigate blocker, ask user if needed,<br/>or update task/environment"]
+        UNBLOCK_RESPONSE["Append Controller unblock response"]
+        RESOLVED{"Blocker resolved<br/>and redispatch approved?"}
+        WAIT(["Wait for decision or environment"])
+        REVIEW["Inspect all diffs and logs;<br/>review task and accumulated architecture"]
+        ACCEPT{"Accept Task NNN?"}
+        CHANGES["Append controller_status: changes_requested"]
+        COMMIT_IMPL["Commit task-owned implementation separately<br/>in every affected repository"]
+        RECORD_SHA["Record implementation commit SHA(s)<br/>in the receipt"]
+        COMMIT_RECEIPT["Commit the receipt in ClickHouse"]
+        LAST{"NNN = 015?"}
+        NEXT["Select Task NNN + 1<br/>Task 011 must go directly to Task 012"]
+        PHASE_DONE(["Current Velox MVP phase complete"])
+    end
+
+    START --> READ
+    READ --> BASELINE --> IMPLEMENT --> VALIDATE --> SELF_REVIEW --> FINDINGS
+    FINDINGS -- "Yes, resolvable in scope" --> FIX --> VALIDATE
+    FINDINGS -- "No, or all resolved" --> READY --> WORKER_STOP
+
+    IMPLEMENT -. "scope conflict or external blocker" .-> BLOCKED
+    VALIDATE -. "unresolved build/test failure" .-> BLOCKED
+    SELF_REVIEW -. "unresolved review finding" .-> BLOCKED
+    BLOCKED --> WORKER_STOP
+
+    WORKER_STOP --> CLASSIFY
+    CLASSIFY -- "blocked" --> UNBLOCK --> UNBLOCK_RESPONSE --> RESOLVED
+    RESOLVED -- "No" --> WAIT
+    RESOLVED -- "Yes: same Task NNN" --> READ
+
+    CLASSIFY -- "ready_for_controller" --> REVIEW --> ACCEPT
+    ACCEPT -- "No" --> CHANGES --> READ
+    ACCEPT -- "Yes" --> COMMIT_IMPL --> RECORD_SHA --> COMMIT_RECEIPT --> LAST
+    LAST -- "No" --> NEXT --> START
+    LAST -- "Yes" --> PHASE_DONE
 ```
