@@ -13,6 +13,21 @@
 - 当前阶段不支持 `cache_on_write_operations` / write-through cache。
 - 每一阶段都要有可编译目标。
 
+## Review 分层
+
+设计按三类对象推进：
+
+```text
+使用方 -> FileCache -> 依赖方
+```
+
+- **使用方**：`FileCacheBufferedInput` / `FileCacheInputStream`、settings/read options、
+  `FileCacheManager`、caller token 等。当前基本结束。
+- **依赖方**：`FileCache` 算法依赖的底层设施，例如 hash、scheduler、thread pool、
+  metrics、locks、logging、fs、debug/cancellation hooks。当前正在 review。
+- **`FileCache` 本体**：`FileCache` / `FileSegment` / `CacheMetadata` / priority / query
+  limit 等中心 SCC。当前只定原则，尚未进入逐功能闭环 review。
+
 ## CMake target
 
 建议先建一个主 target：

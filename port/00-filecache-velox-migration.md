@@ -130,24 +130,41 @@ cache，不是内存页 cache。
 
 ## Review 状态总表
 
+本设计按三类对象推进：
+
+```text
+使用方 -> FileCache -> 依赖方
+```
+
+- **使用方**：Velox/DWIO 如何调用 cache。`FileCacheBufferedInput` /
+  `FileCacheInputStream`、settings/read options/request context、manager 生命周期、
+  caller token 都属于这一类。当前使用方设计基本结束，只剩具体接入时的字段来源细节。
+- **`FileCache` 本体**：`FileCache`、`FileSegment`、`CacheMetadata`、priority、query
+  limit 等算法类。当前只定了原则：算法迁移，不用 Velox cache 替代；中心 SCC 按功能闭环迁移。
+- **依赖方**：`FileCache` 算法依赖的底层设施，例如 hash、scheduler、thread pool、
+  metrics、locks、logging、fs、debug/cancellation hooks。当前正在 review 这一层。
+
 | 分类 | CH | Velox / 迁移设计 | 状态 |
 |---|---|---|---|
-| IO | `ReadBufferFromFileBase` | `ReadBufferFromVeloxReadFile`，接受 Velox `ReadFile`，内部自带 `BufferPtr` | 已 review |
-| IO | `WriteBufferFromFile` | `WriteBufferFromVeloxWriteFile`，接受 Velox `WriteFile`，内部自带 `BufferPtr` | 已 review |
-| IO | `WriteBufferToFileSegment` | 保留为临时数据 / cache segment 写入 adapter，不承载 `cache_on_write_operations` | 待 review |
-| IO | `CachedOnDiskWriteBufferFromFile` | 当前不支持，write-through cache 暂不迁移 | 已确认范围 |
-| IO | `OpenedFileCache` | `OpenedFileCache` alias/wrapper 到独立 `FileHandleFactory` / `FileHandleCache` 实例 | 已 review |
-| 配置 | `Poco::Util::AbstractConfiguration` | `ConfigBase` | 已 review |
-| 配置 | `NamedCollection` | connector properties / `ConfigBase` prefix | 已 review |
-| 配置 | `Settings` / `ReadSettings` / `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext` | 已 review |
-| 调度 | `BackgroundSchedulePool` | `FileCacheScheduler` wrapper over `folly::FunctionScheduler`，详见 `07` | 已 review |
-| 线程 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`，用 `using` 保留 CH 名字；详见 `09` | 待 review |
-| Hash | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
-| 身份 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，显式表达 downloader ownership；详见 `08` | 已 review |
-| 锁 | CH locks / `std::shared_mutex` | `folly::SharedMutex` / `std::mutex` / thin typedef | 待 review |
-| 日志 | `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 待 review |
-| 指标 | `ProfileEvents` / `CurrentMetrics` | `FileCacheMetrics`，后续接 `RuntimeMetric` / `IoStats` / `StatsReporter` | 待 review |
-| 调试 | `OpenTelemetry` / `FailPoint` / `assertCacheCorrectness*` | 当前剥离/后置，保留接口位置 | 待 review |
+| 使用方 | `CachedOnDiskReadBufferFromFile` | `FileCacheBufferedInput` / `FileCacheInputStream`，详见 `01` | 已 review |
+| 使用方 | `Settings` / `ReadSettings` / `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext`，详见 `02` | 已 review |
+| 使用方 | cache 获取和生命周期 | `FileCacheManager`，详见 `03` | 已 review |
+| 使用方 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，显式表达 downloader ownership；详见 `08` | 已 review |
+| 依赖方 | `ReadBufferFromFileBase` | `ReadBufferFromVeloxReadFile`，接受 Velox `ReadFile`，内部自带 `BufferPtr` | 已 review |
+| 依赖方 | `WriteBufferFromFile` | `WriteBufferFromVeloxWriteFile`，接受 Velox `WriteFile`，内部自带 `BufferPtr` | 已 review |
+| 依赖方 | `WriteBufferToFileSegment` | 保留为临时数据 / cache segment 写入 adapter，不承载 `cache_on_write_operations` | 待 review |
+| 依赖方 | `CachedOnDiskWriteBufferFromFile` | 当前不支持，write-through cache 暂不迁移 | 已确认范围 |
+| 依赖方 | `OpenedFileCache` | `OpenedFileCache` alias/wrapper 到独立 `FileHandleFactory` / `FileHandleCache` 实例 | 已 review |
+| 依赖方 | `Poco::Util::AbstractConfiguration` | `ConfigBase` | 已 review |
+| 依赖方 | `NamedCollection` | connector properties / `ConfigBase` prefix | 已 review |
+| 依赖方 | `BackgroundSchedulePool` | `FileCacheScheduler` wrapper over `folly::FunctionScheduler`，详见 `07` | 已 review |
+| 依赖方 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`，用 `using` 保留 CH 名字；详见 `09` | 待 review |
+| 依赖方 | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
+| 依赖方 | CH locks / `std::shared_mutex` | `folly::SharedMutex` / `std::mutex` / thin typedef | 待 review |
+| 依赖方 | `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 待 review |
+| 依赖方 | `ProfileEvents` / `CurrentMetrics` | `FileCacheMetrics`，后续接 `RuntimeMetric` / `IoStats` / `StatsReporter` | 待 review |
+| 依赖方 | `OpenTelemetry` / `FailPoint` / `assertCacheCorrectness*` | 当前剥离/后置，保留接口位置 | 待 review |
+| `FileCache` 本体 | `FileCache` / `FileSegment` / `CacheMetadata` / priorities | 算法迁移；中心 SCC 按功能闭环 review | 原则已定，未 review |
 
 ## 当前落地策略
 
