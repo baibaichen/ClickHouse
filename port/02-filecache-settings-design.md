@@ -30,8 +30,6 @@ FileCacheRequestContext
 ```cpp
 struct FileCacheConfig
 {
-    // Cache 实例名称，用于区分多个 cache 配置。
-    std::string name;
     // 本地 cache 根目录。
     std::string path;
 
@@ -125,6 +123,19 @@ struct FileCacheConfig
     bool cacheOnWriteOperations = false;
 };
 ```
+
+Cache name不属于 settings equality。manager注册层使用：
+
+```cpp
+struct NamedFileCacheConfig
+{
+    std::string name;
+    FileCacheConfig config;
+    std::string configPath;
+};
+```
+
+这样不同 names可以在 path/effective settings相同时 alias同一个 `FileCache`。
 
 ### 当前不支持的实例级配置
 

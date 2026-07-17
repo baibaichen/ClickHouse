@@ -95,7 +95,6 @@ FileCacheSettingsImpl pimpl
 ```cpp
 struct FileCacheConfig
 {
-    std::string name;
     std::string path;
 
     uint64_t maxSize = 0;

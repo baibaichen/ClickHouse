@@ -52,6 +52,7 @@ write-through cache
 | 19 | [`19-filecache-utils-design.md`](19-filecache-utils-design.md) | `FileCacheUtils.h` 文件迁移设计 |
 | 20 | [`20-filecache-sharded-map-design.md`](20-filecache-sharded-map-design.md) | `ShardedMap.h` 文件迁移设计 |
 | 21 | [`21-filecache-settings-files-design.md`](21-filecache-settings-files-design.md) | `FileCacheSettings.h` / `FileCacheSettings.cpp` 文件迁移设计 |
+| 22 | [`22-filecache-factory-files-design.md`](22-filecache-factory-files-design.md) | `FileCacheFactory.h` / `FileCacheFactory.cpp` registry 迁移设计 |
 
 ## 核心决策
 

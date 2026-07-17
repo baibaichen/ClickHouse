@@ -47,9 +47,16 @@ refreshStats / toString
 class FileCacheManager
 {
 public:
+    struct NamedFileCacheConfig
+    {
+        std::string name;
+        FileCacheConfig config;
+        std::string configPath;
+    };
+
     struct Options
     {
-        std::vector<FileCacheConfig> caches;
+        std::vector<NamedFileCacheConfig> caches;
         std::string defaultCacheName;
         std::string commonUserId;
         std::string cachePathPrefix;
@@ -63,11 +70,15 @@ public:
 
     static FileCacheManager * getInstance();
     static void setInstance(FileCacheManager * manager);
+    static FileCacheManager & instance();
 
     FileCachePtr get(const std::string & name) const;
     FileCachePtr getDefault() const;
 
-    FileCachePtr getOrCreate(const FileCacheConfig & config);
+    FileCachePtr getOrCreate(
+        const std::string & name,
+        const FileCacheConfig & config,
+        const std::string & configPath);
 
     OpenedFileCache & openedFileCache();
 
@@ -89,6 +100,8 @@ private:
     std::string defaultCacheName_;
     bool shutdown_ = false;
 };
+
+using FileCacheFactory = FileCacheManager;
 ```
 
 资源字段必须声明在 `caches_` 之前，使 C++ 逆序析构时先销毁 caches，再销毁
@@ -114,8 +127,8 @@ opened handles / scheduler / worker pool。
 ```text
 FileCacheManager::create(options)
   -> manager = make_shared<FileCacheManager>(options)
-  -> for each FileCacheConfig:
-         manager->getOrCreate(config)
+  -> for each NamedFileCacheConfig:
+         manager->getOrCreate(name, config, configPath)
   -> if initializeOnCreate:
          manager->initialize()
   -> return manager
