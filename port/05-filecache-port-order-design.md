@@ -118,8 +118,8 @@ velox/ch/Interpreters/FileCache/ShardedMap.h
 velox/ch/Interpreters/FileCache/FileCacheSettings.h / .cpp
 ```
 
-`FileCache_fwd.h` 逐文件设计详见
-[`18-filecache-fwd-design.md`](18-filecache-fwd-design.md)。
+`FileCache_fwd.h` / `FileCache_fwd_internal.h` 逐文件设计详见
+[`18-filecache-fwd-files-design.md`](18-filecache-fwd-files-design.md)。
 
 ### 依赖替换
 
