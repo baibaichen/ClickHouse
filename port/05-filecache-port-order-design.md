@@ -443,6 +443,7 @@ SipHash128 helper
 FileCacheScheduler
 FileCacheCallerToken
 FileCacheThreadPool / FileCacheWorker + CH-compatible using aliases
+ProfileEvents / CurrentMetrics / OpenTelemetry / FailPoint no-op shims
 FileCacheSettings parse/validate skeleton
 ReadBufferFromVeloxReadFile
 WriteBufferFromVeloxWriteFile

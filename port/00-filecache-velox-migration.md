@@ -40,6 +40,7 @@ write-through cache
 | 07 | [`07-filecache-scheduler-design.md`](07-filecache-scheduler-design.md) | `FileCacheScheduler` 调度封装设计 |
 | 08 | [`08-filecache-caller-token-design.md`](08-filecache-caller-token-design.md) | `getCallerId` / downloader ownership token 设计 |
 | 09 | [`09-filecache-thread-pool-design.md`](09-filecache-thread-pool-design.md) | `ThreadFromGlobalPool` / `ThreadPool` 迁移设计 |
+| 10 | [`10-filecache-metrics-debug-design.md`](10-filecache-metrics-debug-design.md) | metrics / tracing / debug no-op shim 设计 |
 
 ## 核心决策
 
@@ -162,8 +163,8 @@ cache，不是内存页 cache。
 | 依赖方 | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
 | 依赖方 | CH locks / `std::shared_mutex` | `folly::SharedMutex` / `std::mutex` / thin typedef | 待 review |
 | 依赖方 | `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 待 review |
-| 依赖方 | `ProfileEvents` / `CurrentMetrics` | `FileCacheMetrics`，后续接 `RuntimeMetric` / `IoStats` / `StatsReporter` | 待 review |
-| 依赖方 | `OpenTelemetry` / `FailPoint` / `assertCacheCorrectness*` | 当前剥离/后置，保留接口位置 | 待 review |
+| 依赖方 | `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；详见 `10` | 待 review |
+| 依赖方 | `QueryStatus::throwIfKilled` / `OpenTelemetry` / `FailPoint` / `assertCacheCorrectness*` | no-op shim，cancellation 后续接 `ConnectorQueryCtx::cancellationToken`；详见 `10` | 待 review |
 | `FileCache` 本体 | `FileCache` / `FileSegment` / `CacheMetadata` / priorities | 算法迁移；中心 SCC 按功能闭环 review | 原则已定，未 review |
 
 ## 当前落地策略

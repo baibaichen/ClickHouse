@@ -24,11 +24,11 @@
 | `std::shared_mutex` / CH 锁 | `folly::SharedMutex` 用于读写锁；`std::mutex` 用于普通状态锁 | 直接替换或薄 typedef | 需要 review |
 | `LOG_*` / `logger_useful` | `LOG` / `VLOG` / `FB_LOG_EVERY_MS` | 直接替换 | 需要 review |
 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，由 `ConnectorQueryCtx::queryId`、`scanId` / `driverId` 和 `FileCacheInputStream` 本地 token 组成，详见 `08-filecache-caller-token-design.md` | wrapper：显式传递 downloader ownership | 已 review |
-| `ProfileEvents` / `CurrentMetrics` | `FileCacheMetrics` 本地 counters；后续接 `RuntimeMetric` / `IoStats` / `StatsReporter` | wrapper；第一版可 no-op/atomic | 需要 review |
-| `OpenTelemetry` | 暂不接；后续如需要再接 Velox tracing/`TraceContext` | 剥离 / 后置 | 需要 review |
-| `QueryStatus::throwIfKilled` | 暂不接；如需要取消语义，从 Velox query/task context 显式传入 cancellation hook | 剥离 / 后置 | 需要 review |
-| `FailPoint` | 暂不接；测试阶段用 Velox test hook 或注入式 failure callback | 剥离 / 后置 | 需要 review |
-| `assertCacheCorrectness*` | 保留接口和 debug/sanitizer 开关；第一版可 no-op，后续迁移完整检查 | 剥离 / 后置 | 需要 review |
+| `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；后续再接 `RuntimeMetric` / `IoStats` / `StatsReporter`，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
+| `OpenTelemetry` | no-op `OpenTelemetry::SpanHolder` shim，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
+| `QueryStatus::throwIfKilled` | no-op `QueryStatus` shim；后续接 `ConnectorQueryCtx::cancellationToken`，详见 `10-filecache-metrics-debug-design.md` | compat shim，后续补语义 | 需要 review |
+| `FailPoint` | no-op failpoint shim，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
+| `assertCacheCorrectness*` | no-op correctness shim，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
 
 ## 重点说明
 
@@ -199,27 +199,20 @@ SipHash128 小 helper，保持 cache key/path 兼容。
 
 详细设计见 [`06-filecache-key-hash-design.md`](06-filecache-key-hash-design.md)。
 
-### `ProfileEvents` / `CurrentMetrics`
+### Metrics / debug / cancellation
 
-不要在算法代码里散落 Velox 指标 API。应集中到：
-
-```text
-FileCacheMetrics
-```
-
-第一版可以是：
+这些依赖不是当前主线。第一阶段尽量 no-op，只保留 ClickHouse 调用点。统一放到：
 
 ```text
-atomic counters / no-op timers
+ProfileEvents shim
+CurrentMetrics shim
+QueryStatus shim
+OpenTelemetry shim
+FailPoint shim
+assertCacheCorrectness shim
 ```
 
-后续再映射到：
-
-```text
-RuntimeMetric
-IoStats
-StatsReporter
-```
+详细设计见 [`10-filecache-metrics-debug-design.md`](10-filecache-metrics-debug-design.md)。
 
 ### `BackgroundSchedulePool`
 
@@ -276,15 +269,7 @@ FileCacheInputStream-local sequence
 `FileSegment::getOrSetDownloader` / `isDownloader` / `write` / `complete`。详细设计见
 [`08-filecache-caller-token-design.md`](08-filecache-caller-token-design.md)。
 
-### A 类剥离项
+### A 类后置项
 
-下面这些当前不进入主迁移路径：
-
-```text
-OpenTelemetry
-QueryStatus::throwIfKilled
-FailPoint
-assertCacheCorrectness*
-```
-
-它们不是没价值，而是会扩大第一阶段迁移面。保留接口位置，后续按测试/观测需求补。
+`ProfileEvents` / `CurrentMetrics` / `OpenTelemetry` / `FailPoint` /
+`assertCacheCorrectness*` 不直接依赖 CH 实现。第一版通过 no-op shim 保留接口位置。
