@@ -17,6 +17,7 @@ Create or update only these generated artifacts:
 /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_filecache_env.log
 /home/chang/OpenSource/velox/cmake-build-debug-gcc13/cache_filecache_env.txt
 /home/chang/OpenSource/velox/cmake-build-debug-gcc13/targets_filecache_env.txt
+/home/chang/SourceCode/ClickHouse/port/task/result/000-prepare-velox-dev-environment-result.md
 ```
 
 ## Steps
@@ -116,17 +117,73 @@ Expected:
 targets_filecache_env.txt is non-empty.
 ```
 
-- [ ] **Step 6: Report result**
+- [ ] **Step 6: Write result file**
 
-Return a short report with:
+Create the result directory:
+
+```bash
+mkdir -p /home/chang/SourceCode/ClickHouse/port/task/result
+```
+
+Write `/home/chang/SourceCode/ClickHouse/port/task/result/000-prepare-velox-dev-environment-result.md`
+with this structure:
+
+````markdown
+# Task 000 Result: Prepare Velox Development Environment
+
+## Status
+
+status: success
+
+## Velox status
 
 ```text
-Velox branch/status summary
-CMake configure result
-Compiler paths from cache_filecache_env.txt
-Path to configure_filecache_env.log
-Path to targets_filecache_env.txt
-Any blocking errors
+<paste `git --no-pager status --short --branch` output here>
+```
+
+## Commands run
+
+```text
+<paste the commands that were run>
+```
+
+## Generated files
+
+```text
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_filecache_env.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/cache_filecache_env.txt
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/targets_filecache_env.txt
+```
+
+## CMake cache summary
+
+```text
+<paste the grep output from Step 4>
+```
+
+## Blocking errors
+
+```text
+None
+```
+
+## Recommended next task
+
+```text
+Read targets_filecache_env.txt and choose the smallest target that can compile a new velox/ch/Common shim.
+```
+````
+
+If the task is blocked or failed, set `status: blocked` or `status: failed`, replace `None`
+under `Blocking errors` with the first actionable error, and still write the result file.
+
+- [ ] **Step 7: Return result path**
+
+Return a short message with:
+
+```text
+Path to /home/chang/SourceCode/ClickHouse/port/task/result/000-prepare-velox-dev-environment-result.md
+One-line status
 ```
 
 Do not start a full build in this task unless explicitly asked. The next handoff

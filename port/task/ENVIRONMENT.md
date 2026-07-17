@@ -41,6 +41,32 @@ Ninja: /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64
 - Put build/configuration logs under `/home/chang/OpenSource/velox/cmake-build-debug-gcc13`.
 - For long builds/tests, redirect output to a log in the build directory and report the log path.
 - If a command fails, stop and report the first actionable error plus the log path.
+- Result files under `port/task/result/` are handoff artifacts. Do not commit them unless explicitly asked.
+
+## Result handoff
+
+Each task must write its final result back under:
+
+```text
+/home/chang/SourceCode/ClickHouse/port/task/result/
+```
+
+Use this naming pattern:
+
+```text
+<task-number>-<short-task-name>-result.md
+```
+
+The result file must include:
+
+```text
+status: success / blocked / failed
+Velox git branch and dirty status
+commands run
+generated files or logs
+first actionable error, if blocked or failed
+recommended next task
+```
 
 ## Existing design docs
 
