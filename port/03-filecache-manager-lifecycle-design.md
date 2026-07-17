@@ -52,6 +52,8 @@ public:
         std::vector<FileCacheConfig> caches;
         std::string defaultCacheName;
         std::string commonUserId;
+        std::string cachePathPrefix;
+        std::string allowedCacheRoot;
         std::shared_ptr<filesystems::FileSystem> localFileSystem;
         memory::MemoryPool * memoryPool = nullptr;
         bool initializeOnCreate = true;
@@ -313,7 +315,7 @@ idle worker 超时后回落到 min。因此 conservative max 不会在启动时�
 
 ## config reload / dynamic resize
 
-配置 reload 不在第一阶段强制实现，但接口要留位置：
+宿主如何监听/刷新配置不作强制要求，但 `FileCache` 已支持的 runtime apply行为必须迁移：
 
 ```cpp
 void applyConfig(const FileCacheConfig & newConfig);

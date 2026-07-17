@@ -35,31 +35,31 @@ struct FileCacheConfig
     // 本地 cache 根目录。
     std::string path;
 
-    // Cache 最大字节数；0 表示不按大小限制。
+    // Effective cache max bytes. Loader requires explicit maxSize or ratio.
     uint64_t maxSize = 0;
     // Cache 最大元素数，即 file segment 数；0 表示不按元素数限制。
-    uint64_t maxElements = 0;
+    uint64_t maxElements = FILECACHE_DEFAULT_MAX_ELEMENTS;
     // 单个 file segment 的最大大小。
-    uint64_t maxFileSegmentSize = 0;
+    uint64_t maxFileSegmentSize = FILECACHE_DEFAULT_MAX_FILE_SEGMENT_SIZE;
     // File segment 边界对齐粒度。
-    uint64_t boundaryAlignment = 0;
+    uint64_t boundaryAlignment = FILECACHE_DEFAULT_FILE_SEGMENT_ALIGNMENT;
     // 下载 reserve 时至少向前预留的粒度；0 表示按实际请求精确预留。
-    uint64_t reserveGranularity = 0;
+    uint64_t reserveGranularity = FILECACHE_DEFAULT_RESERVE_GRANULARITY;
 
     // 驱逐策略，例如 LRU / SLRU / overcommit 变体。
     FileCachePolicy cachePolicy = FileCachePolicy::SLRU;
     // SLRU 中 protected/probationary 队列的大小比例。
-    double slruSizeRatio = 0.0;
+    double slruSizeRatio = FILECACHE_DEFAULT_SLRU_RATIO;
 
     // 后台下载线程数；0 表示禁用后台下载。
-    uint64_t backgroundDownloadThreads = 0;
+    uint64_t backgroundDownloadThreads = FILECACHE_DEFAULT_BACKGROUND_DOWNLOAD_THREADS;
     // 后台下载队列长度限制；0 表示不限制或禁用，按 CH 语义保持。
-    uint64_t backgroundDownloadQueueSizeLimit = 0;
+    uint64_t backgroundDownloadQueueSizeLimit = FILECACHE_DEFAULT_BACKGROUND_DOWNLOAD_QUEUE_SIZE_LIMIT;
     // 后台下载单个 file segment 的最大下载大小。
-    uint64_t backgroundDownloadMaxFileSegmentSize = 0;
+    uint64_t backgroundDownloadMaxFileSegmentSize = FILECACHE_DEFAULT_MAX_FILE_SEGMENT_SIZE_WITH_BACKGROUND_DOWLOAD;
 
     // 启动时加载 cache metadata 的最大线程数。
-    uint64_t loadMetadataThreads = 1;
+    uint64_t loadMetadataThreads = FILECACHE_DEFAULT_LOAD_METADATA_THREADS;
     // 是否异步加载 cache metadata。
     bool loadMetadataAsynchronously = false;
 
@@ -68,7 +68,7 @@ struct FileCacheConfig
     // 后台维持空闲 elements 的目标比例。
     double keepFreeSpaceElementsRatio = 0.0;
     // 后台 free-space 任务单批移除的 segment 数。
-    uint64_t keepFreeSpaceRemoveBatch = 0;
+    uint64_t keepFreeSpaceRemoveBatch = FILECACHE_DEFAULT_FREE_SPACE_REMOVE_BATCH;
     // 后台 free-space 任务中执行实际文件删除的线程数。
     uint64_t keepFreeSpaceEvictionThreads = 1;
 
@@ -77,7 +77,7 @@ struct FileCacheConfig
     // invalidated entries 累积到该阈值后触发后台清理。
     uint64_t invalidatedEntriesCleanupThreshold = 1000;
     // 单次后台清理最多移除的 invalidated entries 数。
-    uint64_t invalidatedEntriesCleanupRemoveBatch = 0;
+    uint64_t invalidatedEntriesCleanupRemoveBatch = FILECACHE_DEFAULT_FREE_SPACE_REMOVE_BATCH;
 
     // 是否启用单 query cache 写入限额。
     bool enableFilesystemQueryCacheLimit = false;
@@ -107,7 +107,7 @@ struct FileCacheConfig
     uint64_t overcommitEvictionEvictStep = 10 * 1024 * 1024;
 
     // Debug/sanitizer 构建下随机检查 cache 正确性的概率。
-    double checkCacheProbability = 0.0;
+    double checkCacheProbability = 0.001;
 
     // idle client TTL，超过该时长未访问的 client cache 可被清理。
     uint64_t idleClientTtlSec = 7 * 24 * 60 * 60;
@@ -130,7 +130,7 @@ struct FileCacheConfig
 
 | ClickHouse setting | 当前策略 |
 |---|---|
-| `cache_on_write_operations` | 当前阶段不支持；配置存在也应忽略或显式拒绝，避免用户误以为 write-through 生效 |
+| `cache_on_write_operations` | 当前阶段不支持；`true` 必须显式拒绝，避免用户误以为 write-through 生效 |
 
 ### 保留但不建议使用的实例级配置
 
@@ -305,13 +305,16 @@ public:
 保留 ClickHouse `FileCacheSettings::validate` 的核心约束：
 
 - `path` 必须非空。
-- `maxSize` / `maxElements` 至少有一个限制。
+- 必须显式配置 `maxSize` 或 `maxSizeRatioToTotalSpace`，且只能配置一个。
+- explicit/effective `maxSize` 必须大于 0。
 - `maxFileSegmentSize` 必须大于 0。
-- `boundaryAlignment` 和 `reserveGranularity` 要与 segment split/reserve 逻辑一致。
-- `slruSizeRatio` / `splitCacheRatio` 必须在有效范围内。
-- `keepFreeSpace*Ratio` 必须在有效范围内。
+- `boundaryAlignment` 不能大于 `maxFileSegmentSize`。
 - 线程数和 batch size 不能为 0 的项保留 non-zero 约束。
-- 当前阶段如果设置 `cache_on_write_operations=true`，应明确报不支持或记录 warning 并禁用。
+- 当前阶段 `cache_on_write_operations=true` 明确报不支持。
+- 当前阶段 overcommit policy 明确报不支持。
+
+逐文件 review详见
+[`21-filecache-settings-files-design.md`](21-filecache-settings-files-design.md)。
 
 ## 与当前设计的连接
 

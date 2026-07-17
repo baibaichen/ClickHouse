@@ -127,6 +127,9 @@ velox/ch/Interpreters/FileCache/FileCacheSettings.h / .cpp
 `ShardedMap.h` 逐文件设计详见
 [`20-filecache-sharded-map-design.md`](20-filecache-sharded-map-design.md)。
 
+`FileCacheSettings.h` / `FileCacheSettings.cpp` 逐文件设计详见
+[`21-filecache-settings-files-design.md`](21-filecache-settings-files-design.md)。
+
 ### 依赖替换
 
 | CH | Velox |
