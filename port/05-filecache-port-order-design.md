@@ -137,12 +137,18 @@ velox/ch/Interpreters/FileCache/FileCacheSettings.h / .cpp
 
 - key hash / path string / origin identity。
 - settings validate。
+- `FileSegmentKeyType::General` prefix must stay empty.
+- `FileCacheOriginInfo::operator==` remains user-id-only, while `OriginPoolKey`
+  compares user id, weight, and segment type.
 
 ### 验证
 
 ```text
 基础类型单测：key parse/hash/toString、origin hash、settings parse/validate
 ```
+
+`FileSegmentKeyType` / `FileCacheOriginInfo` 语义详见
+[`12-filecache-origin-segment-type-design.md`](12-filecache-origin-segment-type-design.md)。
 
 ## 阶段 2：priority 和 eviction 类型
 
