@@ -39,6 +39,7 @@ write-through cache
 | 06 | [`06-filecache-key-hash-design.md`](06-filecache-key-hash-design.md) | `FileCacheKey` 和 `sipHash128` 兼容设计 |
 | 07 | [`07-filecache-scheduler-design.md`](07-filecache-scheduler-design.md) | `FileCacheScheduler` 调度封装设计 |
 | 08 | [`08-filecache-caller-token-design.md`](08-filecache-caller-token-design.md) | `getCallerId` / downloader ownership token 设计 |
+| 09 | [`09-filecache-thread-pool-design.md`](09-filecache-thread-pool-design.md) | `ThreadFromGlobalPool` / `ThreadPool` 迁移设计 |
 
 ## 核心决策
 
@@ -140,7 +141,7 @@ cache，不是内存页 cache。
 | 配置 | `NamedCollection` | connector properties / `ConfigBase` prefix | 已 review |
 | 配置 | `Settings` / `ReadSettings` / `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext` | 已 review |
 | 调度 | `BackgroundSchedulePool` | `FileCacheScheduler` wrapper over `folly::FunctionScheduler`，详见 `07` | 已 review |
-| 线程 | `ThreadFromGlobalPool` / `ThreadPool` | 注入 `folly::Executor` | 待 review |
+| 线程 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`，用 `using` 保留 CH 名字；详见 `09` | 待 review |
 | Hash | `sipHash128` | 保留小 helper，不直接换 `SpookyHashV2`；详见 `06` | 已 review |
 | 身份 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，显式表达 downloader ownership；详见 `08` | 已 review |
 | 锁 | CH locks / `std::shared_mutex` | `folly::SharedMutex` / `std::mutex` / thin typedef | 待 review |

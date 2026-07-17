@@ -427,6 +427,7 @@ FileCacheKey / FileSegmentKeyType / OriginInfo
 SipHash128 helper
 FileCacheScheduler
 FileCacheCallerToken
+FileCacheThreadPool / FileCacheWorker + CH-compatible using aliases
 FileCacheSettings parse/validate skeleton
 ReadBufferFromVeloxReadFile
 WriteBufferFromVeloxWriteFile

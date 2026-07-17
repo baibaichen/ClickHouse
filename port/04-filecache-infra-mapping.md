@@ -17,7 +17,7 @@
 | CH | Velox | 处理方式 | review 状态 |
 |---|---|---|---|
 | `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 one-shot `addFunctionOnce` + `cancelFunctionAndWait` 封装 `schedule` / `scheduleAfter` / `deactivate`，详见 `07-filecache-scheduler-design.md` | wrapper：封成 `FileCacheScheduler` | 已 review |
-| `ThreadFromGlobalPool` / 线程池 | `folly::Executor` / `CPUThreadPoolExecutor` / `IOThreadPoolExecutor` | 直接替换，构造时注入 executor | 需要 review |
+| `ThreadFromGlobalPool` / 线程池 | `FileCacheWorker` / `FileCacheThreadPool`，通过 `using ThreadFromGlobalPool = FileCacheWorker` 和 `using ThreadPool = FileCacheThreadPool` 保留 CH 名字，详见 `09-filecache-thread-pool-design.md` | wrapper：保留 CH-style join/resize/shutdown 语义 | 需要 review |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | wrapper：`WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` | 已 review |
 | `fs::` 文件系统操作 | `std::filesystem` 处理目录和 exists/remove；本地 IO 通过 `LocalReadFile` / `LocalWriteFile` | 直接替换 + wrapper | 需要 review |
 | `sipHash128` | 不直接换成 `SpookyHashV2`；需要保留 CH cache key hash 语义，详见 `06-filecache-key-hash-design.md` | 保留小 helper | 已 review |
