@@ -9,33 +9,14 @@ src/Interpreters/FileCache/FileCacheFactory.h
 src/Interpreters/FileCache/FileCacheFactory.cpp
 ```
 
-Velox 不实现第二套 registry。CH factory行为并入：
-
-```text
-velox/ch/Interpreters/FileCache/FileCacheManager.h
-velox/ch/Interpreters/FileCache/FileCacheManager.cpp
-```
-
-并提供 compatibility header：
+Velox 保留真实 Factory target：
 
 ```text
 velox/ch/Interpreters/FileCache/FileCacheFactory.h
+velox/ch/Interpreters/FileCache/FileCacheFactory.cpp
 ```
 
-内容只包含：
-
-```cpp
-#include <velox/ch/Interpreters/FileCache/FileCacheManager.h>
-
-namespace facebook::velox::ch
-{
-using FileCacheFactory = FileCacheManager;
-}
-```
-
-不创建 target `FileCacheFactory.cpp`。
-
-This batch is an exact registry, name/path deduplication, settings-snapshot, and reload-semantics port, extended with the runtime ownership already assigned to FileCacheManager.
+This batch is an exact registry, name/path deduplication, settings-snapshot, and reload-semantics port, with runtime services injected by FileCacheManager.
 
 ## 为什么不是两个类
 
@@ -50,7 +31,7 @@ config reload
 create/get/remove/clear
 ```
 
-Velox `FileCacheManager` 额外持有：
+Velox `FileCacheManager` 持有：
 
 ```text
 FileCacheScheduler
@@ -63,28 +44,47 @@ explicit shutdown
 
 这些 runtime resources 在 CH 来自 global `Context` / global pool / singleton。
 
-所以目标结构是：
+目标结构：
 
 ```text
 FileCacheManager
-  = CH FileCacheFactory registry semantics
-  + Velox runtime-resource ownership
-
-FileCacheFactory
-  = compatibility alias only
+  -> owns runtime resources
+  -> owns one FileCacheFactory
+       -> owns the only registry
 ```
 
-不能让 Factory 和 Manager各自持有 mutex/map，否则 name/path identity、settings reload和
-shutdown会分叉。
+Factory不拥有 physical resources；它构造时接收 Manager-owned services的 references。
+Manager不持有第二张 name/path map。
+
+## 调用方向
+
+CH 和 target都保持：
+
+```text
+external integration
+  -> FileCacheFactory
+      -> create/get FileCache
+```
+
+`FileCache.h/.cpp` 本身不 include、不调用 `FileCacheFactory`。dependency direction不能
+反转：
+
+```text
+FileCacheFactory/FileCacheManager -> FileCache
+FileCache -X-> FileCacheFactory/FileCacheManager
+```
+
+Velox `FileCache` 通过 constructor显式接收 runtime dependencies，不保存 manager/factory
+pointer。
 
 ## `FileCacheFactory.h`
 
 ### `FileCacheData`
 
-把 CH nested data结构保留在 `FileCacheManager`：
+把 CH nested data结构保留在真实 `FileCacheFactory`：
 
 ```cpp
-class FileCacheManager final
+class FileCacheFactory final
 {
 public:
     class FileCacheData
@@ -107,6 +107,10 @@ public:
     };
 };
 ```
+
+Factory constructor接收 Manager-owned runtime services的 references，用于构造
+`FileCache` 和调整 worker budget；它不拥有这些 resources，也不保存
+`FileCacheManager*`。
 
 保留 `getSettings` / `setSettings` 名字，减少 admin/reload调用差异；真实类型是
 `FileCacheConfig`。
@@ -173,33 +177,29 @@ FileCacheData address is stable through shared_ptr
 
 ### singleton API
 
-真实 owner由外部创建：
+Factory保留 CH：
 
 ```cpp
-static FileCacheManager * getInstance();
-static void setInstance(FileCacheManager * manager);
+static FileCacheFactory & instance();
 ```
 
-为 alias兼容增加：
-
-```cpp
-static FileCacheManager & instance();
-```
-
-`instance` 对 null global pointer明确失败；不能 lazy-create无 runtime dependencies 的默认
-manager。
-
-owner sequence：
+内部使用 Manager安装的 atomic raw pointer。只有 Manager可以调用 private
+`setInstance(FileCacheFactory *)`：
 
 ```text
-manager = FileCacheManager::create(options)
-FileCacheManager::setInstance(manager.get())
-...
-manager->shutdown()
-FileCacheManager::setInstance(nullptr)
+install manager:
+  publish Manager pointer
+  publish &manager.factory()
+
+uninstall manager:
+  clear Factory pointer first
+  clear Manager pointer second
 ```
 
-global pointer不拥有 manager。
+Manager在完成构造/注册前不 publish Factory pointer；shutdown开始时先阻止新的 Factory
+users，所有 existing users退出后再清 registry。
+
+Factory不能自行 lazy construct，因为缺少 worker pool/scheduler/filesystem等 dependencies。
 
 ### API
 
@@ -216,14 +216,10 @@ remove
 clear
 ```
 
-增加 manager runtime API：
+Factory增加 constructor-injected runtime references，但 public registry API保持。
 
-```text
-getDefault
-initialize
-shutdown
-refreshStats
-```
+`FileCacheData::getSettings` 名字保留，但返回 plain `FileCacheConfig`；caller字段访问从 CH
+settings subscript改为 typed fields。
 
 ## `FileCacheFactory.cpp`
 
@@ -471,8 +467,9 @@ outside lock:
 
 不能在 registry mutex下 join workers或销毁 caches。
 
-测试用 `clear` 可以复用同一流程，但 manager如需继续使用，必须重新建立 runtime resources；
-第一阶段建议 `clear` 仅用于 terminal shutdown/test teardown。
+`clear` deactivate全部 unique caches、清 registry/相关 opened handles，并在 workers退出后
+把 dynamic worker max降到 1；scheduler/worker pool保持运行，因此 manager可以继续创建
+新的 caches。完整 lifecycle见 `23`。
 
 ### path prefix helper
 
@@ -541,6 +538,9 @@ reload does not hold registry mutex across apply
 
 ## Review 状态
 
-`FileCacheFactory.h` 和 `FileCacheFactory.cpp` 已按文件 review。registry、name/path
-dedup、settings snapshot和 reload semantics并入真实 `FileCacheManager`；通过
-`using FileCacheFactory = FileCacheManager` 保留 CH 名称，不实现第二套 registry。
+`FileCacheFactory.h` 和 `FileCacheFactory.cpp` 已按文件 review。target保留真实 Factory
+类、registry、name/path dedup、settings snapshot和 reload semantics。Manager包含一个
+Factory并提供 runtime services；不存在第二套 registry。
+
+Manager runtime ownership的目标文件设计详见
+[`23-filecache-manager-files-design.md`](23-filecache-manager-files-design.md)。

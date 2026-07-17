@@ -378,20 +378,18 @@ setting 启用时不能 stub query context holder 或 query priority。
 
 ```text
 src/Interpreters/FileCache/FileCacheFactory.h / .cpp
+velox/ch/Interpreters/FileCache/FileCacheFactory.h / .cpp
 velox/ch/Interpreters/FileCache/FileCacheManager.h / .cpp
-velox/ch/Interpreters/FileCache/FileCacheFactory.h  # alias only
 ```
 
-manager 是真实 singleton/runtime owner，但保留：
-
-```cpp
-using FileCacheFactory = FileCacheManager;
-```
-
-保留多个 named/path `FileCache` 实例，不实现第二套 registry。
+manager 是 runtime owner并包含一个真实 Factory。只有 Factory持有多个 named/path
+`FileCache` registry；Manager不实现第二套 registry。
 
 逐文件设计详见
 [`22-filecache-factory-files-design.md`](22-filecache-factory-files-design.md)。
+
+Manager目标文件设计详见
+[`23-filecache-manager-files-design.md`](23-filecache-manager-files-design.md)。
 
 ## 阶段 6：Velox scan 接入
 

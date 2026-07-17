@@ -63,6 +63,7 @@ public:
         std::string allowedCacheRoot;
         std::shared_ptr<filesystems::FileSystem> localFileSystem;
         memory::MemoryPool * memoryPool = nullptr;
+        std::shared_ptr<folly::Timekeeper> timekeeper;
         bool initializeOnCreate = true;
     };
 
@@ -75,10 +76,8 @@ public:
     FileCachePtr get(const std::string & name) const;
     FileCachePtr getDefault() const;
 
-    FileCachePtr getOrCreate(
-        const std::string & name,
-        const FileCacheConfig & config,
-        const std::string & configPath);
+    FileCacheFactory & factory();
+    const FileCacheFactory & factory() const;
 
     OpenedFileCache & openedFileCache();
 
@@ -96,15 +95,14 @@ private:
     FileCacheWorkerPool workerPool_;
     FileCacheScheduler scheduler_;
     OpenedFileCache openedFileCache_;
-    std::unordered_map<std::string, FileCachePtr> caches_;
+    FileCacheFactory factory_;
     std::string defaultCacheName_;
     bool shutdown_ = false;
 };
 
-using FileCacheFactory = FileCacheManager;
 ```
 
-资源字段必须声明在 `caches_` 之前，使 C++ 逆序析构时先销毁 caches，再销毁
+资源字段必须声明在 `factory_` 之前，使 C++ 逆序析构时先销毁 Factory/caches，再销毁
 opened handles / scheduler / worker pool。
 
 `commonUserId` 必须 non-empty、跨复用同一 cache path 的进程重启保持稳定，且不能为保留
@@ -128,7 +126,7 @@ opened handles / scheduler / worker pool。
 FileCacheManager::create(options)
   -> manager = make_shared<FileCacheManager>(options)
   -> for each NamedFileCacheConfig:
-         manager->getOrCreate(name, config, configPath)
+         manager->factory().getOrCreate(name, config, configPath)
   -> if initializeOnCreate:
          manager->initialize()
   -> return manager
@@ -364,6 +362,9 @@ struct FileCacheManagerStats
 - hit/miss/write/eviction counters
 
 更详细的指标后续再对接 Velox runtime stats / metrics。
+
+逐文件最终设计详见
+[`23-filecache-manager-files-design.md`](23-filecache-manager-files-design.md)。
 
 ## 最小落地步骤
 
