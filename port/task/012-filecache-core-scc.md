@@ -1,0 +1,1377 @@
+# Task 012: `FileCache` Center SCC — Mandatory Compile/Link Closure
+
+> **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
+> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
+> result file under this ClickHouse checkout. Do not modify ClickHouse source
+> files. Do not commit or stage either repository.
+
+## Goal
+
+Produce a single compilable and linkable batch that closes the center strongly
+connected component (SCC) of the `FileCache` implementation:
+
+```text
+IFileCachePriority/LRU/SLRU/Split/EvictionCandidates from Task 011
+FileSegmentInfo.h
+FileSegment.h / FileSegment.cpp
+Metadata.h / Metadata.cpp       (owns CleanupQueue and DownloadQueue)
+FileCache.h / FileCache.cpp
+QueryLimit.h / QueryLimit.cpp
+```
+
+The deliverable is a compiled and tested `velox_ch_filecache_core` library and
+a `velox_ch_filecache_core_scc_test` executable.
+
+## Why the Center SCC Cannot Be Split
+
+The priority and center implementation files form a genuine strongly connected component and
+cannot be split into independently linkable units:
+
+```text
+FileSegment.cpp
+  -> FileCache::tryReserve / tryIncreasePriority / config getters
+  -> LockedKey::removeFileSegment / removeAllFileSegments
+  -> KeyMetadata path / origin APIs
+
+Metadata.cpp
+  -> FileSegment state / range / write / reserve / detach / getInfo
+  -> FileCache::getInternalOrigin (static internal origin factory)
+
+FileCache.cpp
+  -> CacheMetadata (owns download/cleanup workers)
+  -> FileSegment (creates and owns through metadata)
+  -> FileCacheQueryLimit (optional construction)
+
+QueryLimit.cpp
+  -> FileCache::lockCache (CachePriorityGuard::WriteLock)
+  -> KeyMetadata (for path/access in add record)
+
+priority/eviction .cpp files
+  -> FileCache definitions
+  -> Metadata/KeyMetadata/FileSegment
+```
+
+Creating a fake `FileCache` stub with only the symbols `FileSegment.cpp` needs
+would require re-implementing the same eviction/reserve algorithm that
+`FileCache.cpp` provides. The result would be two conflicting implementations
+linked into the same test binary. The only sound option is to compile all `.cpp`
+files together and link once.
+
+Headers (`FileSegment.h`, `Metadata.h`, `FileCache.h`, `QueryLimit.h`) can be
+reviewed and added one at a time in earlier substeps because they carry no
+link-time symbols. The single compile/link closure is required only for the
+`.cpp` files.
+
+## Starting Point
+
+```text
+Velox repository: /home/chang/OpenSource/velox
+Required branch:  filecache
+Expected predecessors:
+  Task 003: basic common shims (ClickHouseAliases, FileCacheBoundedQueue, etc.)
+  Task 004: StatusFile, Guards.h
+  Task 005: FileCacheWorkerPool / FileCacheThreadPool
+  Task 006: FileCacheScheduler, FileCacheQueryIdScope
+  Task 007: ReadBufferFromVeloxReadFile, WriteBufferFromVeloxWriteFile
+  Task 008: SipHash128, key/origin/segment types, forward files, utils
+  Task 009: ShardedMap
+  Task 010: FileCacheSettings/FileCacheConfig
+  Task 011: priority/eviction source migration, atomic Part A (not compiled)
+```
+
+Do not require a clean worktree. Stop if the branch is not `filecache`.
+
+## Design References
+
+Read before editing:
+
+```text
+port/task/ENVIRONMENT.md
+port/01-filecache-port-order-design.md
+port/2-file-cache/07-filecache-priority-eviction-design.md
+port/2-file-cache/08-filecache-metadata-files-design.md
+port/2-file-cache/09-filecache-file-segment-design.md
+port/2-file-cache/10-filecache-core-files-design.md
+port/2-file-cache/11-filecache-query-limit-design.md
+port/1-dependencies/01-filecache-infra-mapping.md
+port/1-dependencies/02-filecache-basic-shims-design.md
+port/1-dependencies/04-filecache-thread-pool-design.md
+port/1-dependencies/06-filecache-caller-token-design.md
+```
+
+Use ClickHouse source only as behavioral reference:
+
+```text
+src/Interpreters/FileCache/FileSegmentInfo.h
+src/Interpreters/FileCache/CacheUsage.h
+src/Interpreters/FileCache/IFileCachePriority.h / .cpp
+src/Interpreters/FileCache/LRUFileCachePriority.h / .cpp
+src/Interpreters/FileCache/SLRUFileCachePriority.h / .cpp
+src/Interpreters/FileCache/SplitFileCachePriority.h / .cpp
+src/Interpreters/FileCache/EvictionCandidates.h / .cpp
+src/Interpreters/FileCache/FileSegment.h / .cpp
+src/Interpreters/FileCache/Metadata.h / .cpp
+src/Interpreters/FileCache/FileCache.h / .cpp
+src/Interpreters/FileCache/QueryLimit.h / .cpp
+```
+
+## File Scope
+
+Modify:
+
+```text
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CacheUsage.h
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/IFileCachePriority.h / .cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/LRUFileCachePriority.h / .cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h / .cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SplitFileCachePriority.h / .cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/EvictionCandidates.h / .cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
+```
+
+Create:
+
+```text
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegmentInfo.h
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegment.h
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegment.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/Metadata.h
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/Metadata.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCache.h
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCache.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/QueryLimit.h
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/QueryLimit.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/PriorityEvictionTest.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileSegmentInfoTest.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/MetadataTest.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp
+/home/chang/SourceCode/ClickHouse/port/task/result/012-filecache-core-scc-result.md
+```
+
+Every new Velox C++ and CMake file must begin with the Apache 2.0 license
+header. Use `/* ... */` for C++ and `#` for CMake, matching the repository style.
+
+## Steps
+
+- [ ] **Step 1: Confirm the Velox baseline**
+
+```bash
+cd /home/chang/OpenSource/velox
+git --no-pager status --short --branch
+git --no-pager log -1 --oneline
+```
+
+Expected: branch `filecache`, HEAD is a descendant of `bf379041f`.
+Record pre-existing dirty files in the result file. Stop if the branch differs.
+
+- [ ] **Step 2: Create the test CMakeLists**
+
+Append the following target to the existing
+`velox/ch/Interpreters/FileCache/tests/CMakeLists.txt`; preserve every test
+target added by Tasks 008-010:
+
+```cmake
+add_executable(
+  velox_ch_filecache_core_scc_test
+  PriorityEvictionTest.cpp
+  FileSegmentInfoTest.cpp
+  FileSegmentTest.cpp
+  MetadataTest.cpp
+  FileCacheTest.cpp
+  QueryLimitTest.cpp
+)
+add_test(velox_ch_filecache_core_scc_test velox_ch_filecache_core_scc_test)
+
+target_link_libraries(
+  velox_ch_filecache_core_scc_test
+  PRIVATE
+    velox_ch_filecache_core
+    velox_ch_filecache
+    velox_test_util
+    velox_exception
+    velox_file
+    velox_memory
+    Folly::folly
+    fmt::fmt
+    GTest::gtest
+    GTest::gtest_main
+)
+```
+
+- [ ] **Step 3: Write priority/eviction and `FileSegmentInfo` tests (red)**
+
+Create `PriorityEvictionTest.cpp` against the real Task-011 headers and the
+real core types that this task will add. Do not declare local
+`KeyMetadata`/`FileCache` substitutes. Cover:
+
+```text
+LRU add/remove/evict and stable iterator
+zero-size entry counts neither bytes nor elements
+reserve/background cursors advance independently
+total-space cleanup uses min(requested,current)
+SLRU second access promotes probationary to protected
+addForRestore restores original queue
+Split routes General/Data to Data and System to System
+Split partitions both bytes and elements
+failed second resize rolls first resize back
+EvictionInfo keeps separate QueueID entries and usage pins
+EvictionCandidates removeQueueEntries/original queue restore/failure accounting
+```
+
+Use a real temporary `FileCache` fixture once the SCC implementation exists;
+the file is expected to fail at the red-build step before those definitions are
+added.
+
+Create `velox/ch/Interpreters/FileCache/tests/FileSegmentInfoTest.cpp`:
+
+```cpp
+#include "velox/ch/Interpreters/FileCache/FileSegmentInfo.h"
+#include <gtest/gtest.h>
+#include <cstdint>
+#include <type_traits>
+
+namespace facebook::velox::ch
+{
+namespace
+{
+
+TEST(FileSegmentInfoTest, StateEnumLayout)
+{
+    // Order and underlying values preserved from ClickHouse.
+    static_assert(static_cast<uint8_t>(FileSegmentState::DOWNLOADED) == 0);
+    static_assert(static_cast<uint8_t>(FileSegmentState::EMPTY) == 1);
+    static_assert(static_cast<uint8_t>(FileSegmentState::DOWNLOADING) == 2);
+    static_assert(
+        static_cast<uint8_t>(
+            FileSegmentState::PARTIALLY_DOWNLOADED_NO_CONTINUATION)
+        == 3);
+    static_assert(
+        static_cast<uint8_t>(FileSegmentState::PARTIALLY_DOWNLOADED) == 4);
+    static_assert(static_cast<uint8_t>(FileSegmentState::DETACHED) == 5);
+}
+
+TEST(FileSegmentInfoTest, KindEnumLayout)
+{
+    static_assert(static_cast<uint8_t>(FileSegmentKind::Regular) == 0);
+    static_assert(static_cast<uint8_t>(FileSegmentKind::Ephemeral) == 1);
+}
+
+TEST(FileSegmentInfoTest, InfoSnapshotCompiles)
+{
+    FileSegmentInfo info;
+    (void)info.key;
+    (void)info.offset;
+    (void)info.path;
+    (void)info.range_left;
+    (void)info.range_right;
+    (void)info.kind;
+    (void)info.state;
+    (void)info.size;
+    (void)info.downloaded_size;
+    (void)info.download_finished_time;
+    (void)info.cache_hits;
+    (void)info.references;
+    (void)info.is_unbound;
+    (void)info.queue_entry_type;
+    (void)info.origin;
+}
+
+TEST(FileSegmentInfoTest, KindToString)
+{
+    EXPECT_EQ(toString(FileSegmentKind::Regular), "Regular");
+    EXPECT_EQ(toString(FileSegmentKind::Ephemeral), "Ephemeral");
+}
+
+} // namespace
+} // namespace facebook::velox::ch
+```
+
+- [ ] **Step 4: Write `FileSegmentTest.cpp` (red)**
+
+Create `velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp`:
+
+```cpp
+#include "velox/ch/Interpreters/FileCache/FileSegment.h"
+#include "velox/ch/Interpreters/FileCache/FileCache.h"
+#include "velox/ch/Common/FileCacheQueryIdScope.h"
+#include <folly/system/ThreadId.h>
+#include <gtest/gtest.h>
+
+namespace facebook::velox::ch
+{
+namespace
+{
+
+// Range is inclusive [left, right].
+TEST(RangeTest, SizeIsRightMinusLeftPlusOne)
+{
+    FileSegment::Range r{10, 19};
+    EXPECT_EQ(r.size(), 10ULL);
+}
+
+TEST(RangeTest, ContainsPoint)
+{
+    FileSegment::Range r{5, 10};
+    EXPECT_TRUE(r.contains(5));
+    EXPECT_TRUE(r.contains(10));
+    EXPECT_FALSE(r.contains(4));
+    EXPECT_FALSE(r.contains(11));
+}
+
+TEST(RangeTest, ContainsRange)
+{
+    FileSegment::Range outer{0, 100};
+    FileSegment::Range inner{10, 50};
+    FileSegment::Range overlap{80, 110};
+    EXPECT_TRUE(outer.contains(inner));
+    EXPECT_FALSE(outer.contains(overlap));
+}
+
+TEST(RangeTest, StrictOrderingNonOverlapping)
+{
+    FileSegment::Range a{0, 9};
+    FileSegment::Range b{10, 19};
+    EXPECT_TRUE(a < b);
+    EXPECT_FALSE(b < a);
+}
+
+TEST(CreateFileSegmentSettingsTest, RegularIsBounded)
+{
+    CreateFileSegmentSettings s;
+    EXPECT_EQ(s.kind, FileSegmentKind::Regular);
+    EXPECT_FALSE(s.unbounded);
+}
+
+TEST(CreateFileSegmentSettingsTest, EphemeralIsUnbounded)
+{
+    CreateFileSegmentSettings s{FileSegmentKind::Ephemeral};
+    EXPECT_EQ(s.kind, FileSegmentKind::Ephemeral);
+    EXPECT_TRUE(s.unbounded);
+}
+
+TEST(CallerIdTest, SameScopeStableId)
+{
+    FileCacheQueryIdScope scope("q1");
+    auto id1 = FileSegment::getCallerId();
+    auto id2 = FileSegment::getCallerId();
+    EXPECT_EQ(id1, id2);
+    EXPECT_NE(id1, "None:" + std::to_string(folly::getOSThreadID()));
+}
+
+TEST(CallerIdTest, NoScopeBackgroundId)
+{
+    // Without a query scope, caller is "None:<tid>".
+    auto id = FileSegment::getCallerId();
+    EXPECT_TRUE(id.rfind("None:", 0) == 0);
+}
+
+} // namespace
+} // namespace facebook::velox::ch
+```
+
+- [ ] **Step 5: Write `MetadataTest.cpp` (red)**
+
+Create `velox/ch/Interpreters/FileCache/tests/MetadataTest.cpp`:
+
+```cpp
+#include "velox/ch/Interpreters/FileCache/Metadata.h"
+#include "velox/ch/Interpreters/FileCache/FileCache.h"
+#include "velox/ch/Interpreters/FileCache/FileCacheKey.h"
+#include "velox/common/testutil/TempDirectoryPath.h"
+#include <gtest/gtest.h>
+#include <filesystem>
+
+namespace facebook::velox::ch
+{
+namespace
+{
+
+using common::testutil::TempDirectoryPath;
+namespace fs = std::filesystem;
+
+TEST(PathLayoutTest, RegularDownloadingFilename)
+{
+    // Downloading segment: filename is just the offset decimal string.
+    EXPECT_EQ(
+        CacheMetadata::getFileNameForFileSegment(
+            100, FileSegmentKind::Regular, std::nullopt),
+        "100");
+}
+
+TEST(PathLayoutTest, RegularDownloadedFilename)
+{
+    // Downloaded segment: "<offset>_<size>".
+    EXPECT_EQ(
+        CacheMetadata::getFileNameForFileSegment(
+            100, FileSegmentKind::Regular, 512),
+        "100_512");
+}
+
+TEST(PathLayoutTest, EphemeralFilename)
+{
+    // Ephemeral segment: "<offset>_temporary".
+    EXPECT_EQ(
+        CacheMetadata::getFileNameForFileSegment(
+            0, FileSegmentKind::Ephemeral, std::nullopt),
+        "0_temporary");
+}
+
+TEST(MetadataTest, KeyNotFoundPolicyThrow)
+{
+    auto dir = TempDirectoryPath::create();
+    // A default-initialized CacheMetadata with no existing key should throw
+    // when asked for a non-existent key with policy THROW.
+    // (Exact setup depends on constructor; see design doc.)
+}
+
+TEST(LockedKeyTest, MemberOrderDestructionSafety)
+{
+    // lock member must be declared after key_metadata in LockedKey to ensure
+    // the lock releases before the metadata shared_ptr drops.
+    // Verify by inspecting static member offsets:
+    static_assert(
+        offsetof(LockedKey, key_metadata) < offsetof(LockedKey, lock),
+        "LockedKey::lock must be declared after key_metadata");
+}
+
+} // namespace
+} // namespace facebook::velox::ch
+```
+
+- [ ] **Step 6: Write `FileCacheTest.cpp` (red)**
+
+Create `velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp`:
+
+```cpp
+#include "velox/ch/Interpreters/FileCache/FileCache.h"
+#include "velox/ch/Interpreters/FileCache/FileCacheSettings.h"
+#include "velox/common/testutil/TempDirectoryPath.h"
+#include <gtest/gtest.h>
+
+namespace facebook::velox::ch
+{
+namespace
+{
+
+using common::testutil::TempDirectoryPath;
+
+class FileCacheTest : public ::testing::Test
+{
+protected:
+    static std::shared_ptr<FileCache> makeCache(
+        const std::string & path,
+        size_t maxSize = 64 * 1024 * 1024)
+    {
+        FileCacheConfig config;
+        config.path = path;
+        config.maxSize = maxSize;
+        config.maxFileSegmentSize = 4 * 1024 * 1024;
+        // Supply required runtime dependencies via constructor injection.
+        // (Exact constructor signature from FileCache.h.)
+        return std::make_shared<FileCache>(config /*, injected deps */);
+    }
+};
+
+TEST_F(FileCacheTest, InitializeOnce)
+{
+    auto dir = TempDirectoryPath::create();
+    auto cache = makeCache(dir->getPath() + "/fc");
+    cache->initialize();
+    EXPECT_TRUE(cache->isInitialized());
+    // Second call must be a no-op, not an error.
+    cache->initialize();
+    EXPECT_TRUE(cache->isInitialized());
+}
+
+TEST_F(FileCacheTest, GetDoesNotCreateMetadata)
+{
+    auto dir = TempDirectoryPath::create();
+    auto cache = makeCache(dir->getPath() + "/fc");
+    cache->initialize();
+
+    auto key = FileCacheKey::fromPath("/some/file.orc");
+    auto origin = cache->getCommonOrigin();
+    // get(...) must return a holder of DETACHED segments without creating metadata.
+    auto holder = cache->get(key, FileSegment::Range{0, 1023}, origin);
+    ASSERT_FALSE(holder.empty());
+    for (const auto & seg : holder)
+    {
+        EXPECT_EQ(seg->state(), FileSegmentState::DETACHED);
+    }
+}
+
+TEST_F(FileCacheTest, GetOrSetCreatesHoles)
+{
+    auto dir = TempDirectoryPath::create();
+    auto cache = makeCache(dir->getPath() + "/fc");
+    cache->initialize();
+
+    auto key = FileCacheKey::fromPath("/data/part.bin");
+    auto origin = cache->getCommonOrigin();
+    FileCacheReadOptions opts;
+    auto holder = cache->getOrSet(key, FileSegment::Range{0, 4095}, origin, opts);
+    ASSERT_FALSE(holder.empty());
+    // Must return at least one EMPTY segment covering the requested range.
+    EXPECT_EQ(holder.front()->state(), FileSegmentState::EMPTY);
+}
+
+TEST_F(FileCacheTest, TryReserveEvictsReleasable)
+{
+    auto dir = TempDirectoryPath::create();
+    // Small cache that forces eviction.
+    auto cache = makeCache(dir->getPath() + "/fc", 8 * 1024);
+    cache->initialize();
+    // Detailed eviction integration test: fill cache, then request more space,
+    // verify evictable segments are removed.
+}
+
+TEST_F(FileCacheTest, ShutdownJoinsWorkers)
+{
+    auto dir = TempDirectoryPath::create();
+    auto cache = makeCache(dir->getPath() + "/fc");
+    cache->initialize();
+    cache->deactivateBackgroundOperations();
+    // No assertion: just must not hang or crash.
+}
+
+TEST_F(FileCacheTest, SecondProcessStatusLockFails)
+{
+    auto dir = TempDirectoryPath::create();
+    auto p = dir->getPath() + "/fc";
+    auto cache1 = makeCache(p);
+    cache1->initialize();
+
+    // A second cache pointing to the same path must fail its status lock.
+    auto cache2 = makeCache(p);
+    EXPECT_THROW(cache2->initialize(), VeloxRuntimeError);
+}
+
+TEST_F(FileCacheTest, InternalOriginAccessAllKeys)
+{
+    auto cache_unused = makeCache("/tmp/unused_012");
+    (void)cache_unused;
+    auto internal = FileCache::getInternalOrigin();
+    EXPECT_EQ(internal.user_id, "internal");
+}
+
+TEST_F(FileCacheTest, CommonOriginIsInjectedUserId)
+{
+    auto dir = TempDirectoryPath::create();
+    auto cache = makeCache(dir->getPath() + "/fc");
+    // Manager-injected commonUserId is reflected in getCommonOrigin().
+    // (Exact check depends on how commonUserId is passed in constructor.)
+    EXPECT_FALSE(cache->getCommonOrigin().user_id.empty());
+}
+
+} // namespace
+} // namespace facebook::velox::ch
+```
+
+- [ ] **Step 7: Write `QueryLimitTest.cpp` (red)**
+
+Create `velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp`:
+
+```cpp
+#include "velox/ch/Interpreters/FileCache/QueryLimit.h"
+#include "velox/ch/Interpreters/FileCache/FileCache.h"
+#include "velox/ch/Common/FileCacheQueryIdScope.h"
+#include "velox/common/testutil/TempDirectoryPath.h"
+#include <gtest/gtest.h>
+#include <thread>
+#include <vector>
+
+namespace facebook::velox::ch
+{
+namespace
+{
+
+using common::testutil::TempDirectoryPath;
+
+TEST(QueryLimitTest, EmptyQueryIdReturnsNull)
+{
+    // No scope -> currentQueryId is empty -> tryGetQueryContext returns null.
+    FileCacheQueryLimit limit;
+    // Use a dummy CacheStateGuard::Lock (construction details from Guards.h).
+    // auto ctx = limit.tryGetQueryContext(cacheLock);
+    // EXPECT_EQ(ctx, nullptr);
+}
+
+TEST(QueryLimitTest, SameQueryIdSharesContext)
+{
+    FileCacheQueryLimit limit;
+    FileCacheReadOptions opts;
+    opts.maxDownloadSizePerQuery = 1024 * 1024;
+    opts.skipDownloadIfExceedsPerQueryCacheWriteLimit = true;
+
+    // Two holders created for the same query id share one QueryContext.
+    // (Requires a FileCache instance for the write-lock parameter; abbreviated here.)
+}
+
+TEST(QueryLimitTest, LastHolderReleasesMapEntry)
+{
+    // After both holders are destroyed, the query map must be empty.
+    // Concurrent release must not leak a stale map entry.
+}
+
+TEST(QueryLimitTest, DoomContextDestroyedOutsideCacheWriteLock)
+{
+    // The doomed QueryContext must be destroyed after the write lock is released.
+    // Test uses a custom destructor spy to detect lock state at destruction time.
+}
+
+TEST(QueryLimitTest, MaxDownloadSizeMapsToQueryLRULimit)
+{
+    // getOrSetQueryContext with maxDownloadSizePerQuery=N creates a query LRU
+    // of size N.
+    FileCacheReadOptions opts;
+    opts.maxDownloadSizePerQuery = 512 * 1024;
+    // verify created QueryContext::priority max size.
+}
+
+} // namespace
+} // namespace facebook::velox::ch
+```
+
+- [ ] **Step 8: Verify the red build**
+
+Configure:
+
+```bash
+/usr/bin/cmake \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+  -DVELOX_ENABLE_BENCHMARKS=ON \
+  -DVELOX_BUILD_TESTING=ON \
+  -G Ninja \
+  -S /home/chang/OpenSource/velox \
+  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_012_scc.log 2>&1
+```
+
+Then attempt the build, expecting failure:
+
+```bash
+if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  velox_ch_filecache_core_scc_test \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_red.log 2>&1
+then
+  echo "ERROR: red build unexpectedly succeeded"
+  exit 1
+fi
+```
+
+Expected: configure succeeds, build fails because SCC headers and `.cpp` files
+do not exist. If configure fails for another reason, stop and report instead of
+continuing.
+
+- [ ] **Step 9: Implement `FileSegmentInfo.h`**
+
+`FileSegmentInfo.h` is a pure leaf with no mutual dependencies. Implement the
+exact enum layouts verified by the tests:
+
+```cpp
+#pragma once
+
+#include "velox/ch/Interpreters/FileCache/FileCacheKey.h"
+#include "velox/ch/Interpreters/FileCache/FileCacheOriginInfo.h"
+#include "velox/ch/Interpreters/FileCache/IFileCachePriority.h"
+
+#include <cstdint>
+#include <chrono>
+#include <string>
+
+namespace facebook::velox::ch
+{
+
+enum class FileSegmentState : uint8_t
+{
+    DOWNLOADED = 0,
+    EMPTY = 1,
+    DOWNLOADING = 2,
+    PARTIALLY_DOWNLOADED_NO_CONTINUATION = 3,
+    PARTIALLY_DOWNLOADED = 4,
+    DETACHED = 5,
+};
+
+enum class FileSegmentKind : uint8_t
+{
+    Regular = 0,
+    Ephemeral = 1,
+};
+
+// Defined in FileSegment.cpp (no separate FileSegmentInfo.cpp created).
+std::string toString(FileSegmentKind kind);
+
+struct FileSegmentInfo
+{
+    FileCacheKey key;
+    uint64_t offset = 0;
+    std::string path;
+    uint64_t range_left = 0;
+    uint64_t range_right = 0;
+    FileSegmentKind kind = FileSegmentKind::Regular;
+    FileSegmentState state = FileSegmentState::EMPTY;
+    uint64_t size = 0;
+    uint64_t downloaded_size = 0;
+    std::chrono::time_point<std::chrono::steady_clock> download_finished_time{};
+    uint64_t cache_hits = 0;
+    uint32_t references = 0;
+    bool is_unbound = false;
+    IFileCachePriority::QueueEntryType queue_entry_type
+        = IFileCachePriority::QueueEntryType::None;
+    FileCacheOriginInfo origin;
+};
+
+} // namespace facebook::velox::ch
+```
+
+- [ ] **Step 10: Implement `FileSegment.h`**
+
+The full `FileSegment.h` declares:
+
+- `CreateFileSegmentSettings` (kind, unbounded)
+- `Range` struct: inclusive `[left, right]`, `size`, `contains`, `operator<`
+- `FileSegment` class with all API groups:
+  - Constant state: `range`, `key`, `offset`, `kind`, `path`
+  - Any-holder: `getOrSetDownloader`, `isDownloader`, `wait`,
+    `getDownloadedSize`, `getReservedSize`, `getCurrentWriteOffset`,
+    `detach`, `complete`, `increasePriority`
+  - Cache-internal: `segmentLock`, `priorityIterator`, `keyMetadata`
+  - Downloader-only: `reserve`, `write`, `getRemoteFileReader`,
+    `setRemoteFileReader`, `resetRemoteFileReader`,
+    `extractRemoteFileReader`, `getLocalCacheWriter`,
+    `completePartAndResetDownloader`, `resetDownloader`
+  - Static: `getCallerId`
+- `FileSegmentsHolder` RAII type
+- Required type aliases:
+  - `RemoteFileReaderPtr = std::shared_ptr<ReadBufferFromVeloxReadFile>`
+  - `LocalCacheWriterPtr = std::shared_ptr<WriteBufferFromVeloxWriteFile>`
+  - `FileSegmentsHolderPtr = std::shared_ptr<FileSegmentsHolder>`
+
+Key invariants to encode in the header:
+
+```text
+Range::size() == right - left + 1
+FileSegment is non-copyable and non-movable
+FileSegmentsHolder is move-only
+is_unbound and background_download_enabled are immutable after construction
+size_in_filename transitions false -> true only (atomic)
+terminal states DOWNLOADED and DETACHED are published last after all fields final
+```
+
+`wait` signature injects a cancellation token:
+
+```cpp
+FileSegmentState wait(
+    size_t offset,
+    const folly::CancellationToken & cancellation_token);
+```
+
+- [ ] **Step 11: Implement `Metadata.h`**
+
+`Metadata.h` declares the following types. Do not split into separate files.
+
+**`FileSegmentMetadata`**
+
+```cpp
+struct FileSegmentMetadata
+{
+    explicit FileSegmentMetadata(std::shared_ptr<FileSegment> file_segment_);
+
+    bool releasable() const
+    {
+        return file_segment.use_count() == 1;
+    }
+
+    size_t size() const;
+
+    const std::shared_ptr<FileSegment> file_segment;
+    bool removed = false;
+};
+using FileSegmentMetadataPtr = std::shared_ptr<FileSegmentMetadata>;
+```
+
+**`KeyMetadata`** inherits `std::map<size_t, FileSegmentMetadataPtr>` (ordered,
+not F14; lower_bound and adjacency queries depend on ordering).
+
+Members:
+
+```text
+const FileCacheKey key
+const std::shared_ptr<FileCacheOriginInfo> origin  (shared / deduped)
+KeyState: ACTIVE / REMOVING / REMOVED
+KeyGuard for external callers
+std::atomic<bool> created_base_directory
+```
+
+Methods: `lock`, `tryLock`, `lockNoStateCheck`, `createBaseDirectory`,
+`getPath`, `getFileSegmentPath` overloads, `checkAccess`, `assertAccess`,
+download/cleanup queue submission.
+
+**`CacheMetadata`**
+
+Must declare:
+- 1024-bucket shard array, each bucket is
+  `folly::F14FastMap<FileCacheKey, KeyMetadataPtr, FileCacheKeyHash>` wrapped
+  with a per-bucket `CacheMetadataGuard`
+- origin dedup pool (ShardedMap of `FileCacheOriginInfo`)
+- `CleanupQueue` (handwritten internal type, NOT `FileCacheBoundedQueue`):
+  uses `folly::F14FastSet` for deduplication, mutex+cv for blocking pop,
+  `cancel` flag and `notify_all` on cancel
+- `DownloadQueue` (handwritten internal type, NOT `FileCacheBoundedQueue`):
+  uses `std::queue` of `DownloadInfo`, bounded capacity, mutex+cv, cancel flag
+- download worker vector: `std::vector<std::shared_ptr<DownloadThread>>`
+- cleanup worker thread
+- client-access callback
+
+**`DownloadInfo`** struct:
+
+```cpp
+struct DownloadInfo
+{
+    FileCacheKey key;
+    uint64_t offset = 0;
+    std::weak_ptr<FileSegment> segment; // must not be removed; see design
+};
+```
+
+**`LockedKey`**
+
+Member order (must be preserved for correct destruction sequence):
+
+```cpp
+class LockedKey
+{
+public:
+    // ...
+private:
+    // Declaration order determines destruction order.
+    // lock must be destroyed BEFORE key_metadata drops its shared reference.
+    const std::shared_ptr<KeyMetadata> key_metadata;
+    KeyGuard::Lock lock;
+};
+```
+
+`LockedKey` provides: map iteration/lower_bound, `get`/`tryGet` by offset,
+`removeFileSegment` variants, `removeAllReleasableSegments`,
+`submitToDownloadQueue`, range intersection, empty-key delayed cleanup,
+metadata/file sync.
+
+**`CacheMetadata::Iterator` and `BatchedIterator`**
+
+Declare both as nested classes with distinct locking contracts:
+
+```text
+Iterator:      one segment per next; not thread-safe
+BatchedIterator: one non-empty bucket batch per nextBatch;
+                sequential calls may run on different threads (no concurrent calls)
+```
+
+- [ ] **Step 12: Implement `QueryLimit.h`**
+
+The `QueryLimit.h` header declares:
+
+**`FileCacheQueryLimit`**
+
+```cpp
+class FileCacheQueryLimit
+{
+public:
+    struct QueryContext;
+    using QueryContextPtr = std::shared_ptr<QueryContext>;
+
+    struct QueryContextHolder
+    {
+        QueryContextHolder() = default;
+        QueryContextHolder(
+            std::string query_id_,
+            FileCache * cache_,
+            FileCacheQueryLimit * limit_,
+            QueryContextPtr ctx_);
+
+        QueryContextHolder(const QueryContextHolder &) = delete;
+        QueryContextHolder & operator=(const QueryContextHolder &) = delete;
+        QueryContextHolder(QueryContextHolder &&) = default;
+        QueryContextHolder & operator=(QueryContextHolder &&) = default;
+
+        ~QueryContextHolder();
+
+        QueryContextPtr context;
+
+    private:
+        std::string query_id;
+        FileCache * cache = nullptr;
+        FileCacheQueryLimit * limit = nullptr;
+    };
+
+    QueryContextPtr tryGetQueryContext(
+        const CacheStateGuard::Lock & state_lock);
+
+    QueryContextPtr getOrSetQueryContext(
+        const std::string & query_id,
+        const FileCacheReadOptions & options,
+        const CachePriorityGuard::WriteLock & write_lock);
+
+    void removeQueryContext(
+        const std::string & query_id,
+        QueryContextPtr & doomed,
+        const CachePriorityGuard::WriteLock & write_lock);
+
+private:
+    folly::F14FastMap<std::string, QueryContextPtr> query_map;
+    std::mutex query_map_mutex;
+};
+
+using FileCacheQueryLimitPtr = std::unique_ptr<FileCacheQueryLimit>;
+```
+
+**`QueryContext`**
+
+```cpp
+struct FileCacheQueryLimit::QueryContext
+{
+    explicit QueryContext(
+        size_t query_cache_size,
+        bool recache_on_limit_exceeded_);
+
+    QueryContext(const QueryContext &) = delete;
+    QueryContext & operator=(const QueryContext &) = delete;
+
+    IFileCachePriority::IteratorPtr tryGet(
+        const FileCacheKey & key,
+        size_t offset,
+        const CachePriorityGuard::WriteLock &);
+
+    void add(
+        KeyMetadata & key_metadata,
+        size_t offset,
+        size_t size,
+        const CachePriorityGuard::WriteLock &);
+
+    void remove(
+        const FileCacheKey & key,
+        size_t offset,
+        const CachePriorityGuard::WriteLock &);
+
+    bool recache_on_limit_exceeded;
+    LRUFileCachePriority priority;
+
+private:
+    folly::F14FastMap<
+        FileCacheKeyAndOffset,
+        IFileCachePriority::IteratorPtr,
+        FileCacheKeyAndOffsetHash>
+        records;
+};
+```
+
+- [ ] **Step 13: Implement `FileCache.h`**
+
+`FileCache.h` is the public API apex of the SCC. Key declarations:
+
+**`FileCacheReserveStat`** — exact field list:
+
+```cpp
+struct FileCacheReserveStat
+{
+    struct Stat
+    {
+        size_t releasable_size = 0;
+        size_t releasable_count = 0;
+        size_t non_releasable_size = 0;
+        size_t non_releasable_count = 0;
+    };
+
+    // indexed by static_cast<uint8_t>(FileSegmentKind)
+    std::array<Stat, 2> stat_by_kind{};
+    Stat total;
+    size_t evicting = 0;
+    size_t moving = 0;
+    size_t invalidated = 0;
+    size_t candidates_iterated = 0;
+    size_t clients_iterated = 0;
+};
+```
+
+**`FileCache` public API groups** (all must be declared; no TBD):
+
+```text
+lifecycle:
+  void initialize()
+  bool isInitialized() const
+  void deactivateBackgroundOperations()
+
+origin/path:
+  FileCacheOriginInfo getCommonOrigin() const
+  static FileCacheOriginInfo getInternalOrigin()
+  FileCacheOriginInfo getCommonOriginWithSegmentKeyType(FileSegmentKeyType) const
+  std::string getFileSegmentPath(const FileCacheKey &, uint64_t offset,
+      FileSegmentKind, const KeyMetadata &) const
+  std::string getKeyPath(const FileCacheKey &, const KeyMetadata &) const
+
+lookup/create:
+  FileSegmentsHolder getOrSet(const FileCacheKey &, FileSegment::Range,
+      const FileCacheOriginInfo &, const FileCacheReadOptions &)
+  FileSegmentsHolder get(const FileCacheKey &, FileSegment::Range,
+      const FileCacheOriginInfo &)
+  FileSegmentsHolder getDownloadedContiguousOrEmpty(
+      const FileCacheKey &, FileSegment::Range,
+      const FileCacheOriginInfo &)
+  FileSegmentsHolder set(const FileCacheKey &, uint64_t offset, uint64_t size,
+      const FileCacheOriginInfo &, const CreateFileSegmentSettings &)
+  FileSegmentsHolder trySet(const FileCacheKey &, uint64_t offset, uint64_t size,
+      const FileCacheOriginInfo &, const CreateFileSegmentSettings &)
+
+reservation/priority:
+  bool tryReserve(FileSegment &, size_t size, const FileCacheReadOptions &)
+  void tryIncreasePriority(FileSegment &)
+  CachePriorityGuard::WriteLock lockCache()
+
+remove/admin:
+  void removeFileSegment(const FileCacheKey &, uint64_t offset,
+      const FileCacheOriginInfo &)
+  void removeKey(const FileCacheKey &, const FileCacheOriginInfo &)
+  void removePathIfExists(const std::string & path, const FileCacheOriginInfo &)
+  void removeAllReleasable(const FileCacheOriginInfo &)
+  void sync()
+  CacheMetadata::Iterator getCacheIterator()
+  std::vector<FileSegmentInfo> getFileSegmentInfos(
+      const FileCacheKey &, const FileCacheOriginInfo &)
+  std::string dumpQueue() const
+  FileCacheUsage getUsage() const
+
+settings/stats:
+  void applySettingsIfPossible(const FileCacheConfig & new_config,
+      FileCacheConfig & current_config)
+  size_t capacity() const
+  size_t getUsedCacheSize() const
+  size_t getFileSegmentsNum() const
+
+query limit:
+  FileCache::QueryContextHolderPtr getQueryContextHolder(
+      const std::string & query_id, const FileCacheReadOptions &)
+```
+
+`getQueryContextHolder` returns `std::unique_ptr<FileCacheQueryLimit::QueryContextHolder>`.
+
+**Member order** for correct destruction sequence:
+
+```text
+main_priority   declared before metadata
+  -> metadata destroyed first, priority iterators remain valid
+StatusFile      held for full FileCache lifetime
+metadata        CacheMetadata
+query_limit     optional FileCacheQueryLimitPtr
+```
+
+- [ ] **Step 14: Implement the `.cpp` files**
+
+First finish every Task-011 priority/eviction `.cpp` against the real
+`FileCache`/`Metadata`/`FileSegment` types. Remove no public method and add no
+compatibility stub. Then implement the center-SCC `.cpp` files below.
+
+All four `.cpp` files must be added before attempting the final build. There is
+intentionally no intermediate link step; partial `.cpp` presence is not
+expected to link.
+
+### `FileSegment.cpp`
+
+Implement the exact state machine and invariants from
+`port/2-file-cache/09-filecache-file-segment-design.md`. Key points:
+
+- `toString(FileSegmentKind)` is defined here (not in a separate file).
+- `getCallerId` queries `FileCacheQueryIdScope::currentQueryId()` and
+  `folly::getOSThreadID()`:
+  - non-empty query id → `"<query-id>:<tid>"`
+  - empty query id → `"None:<tid>"`
+- `getOrSetDownloader` election and state transition happen under `segment_guard`.
+- `wait` slices in one-second increments, checks the cancellation token each
+  slice, and returns after 60 seconds without blocking indefinitely.
+- `reserve`: calls `cache_->tryReserve(*this, size, options)`.
+- `write` short-write path: reconciles `downloaded_size` with actual on-disk
+  file size before propagating the write exception; never leaves
+  `downloaded_size > actual on-disk size`.
+- Final rename `<offset>` → `<offset>_<size>` precedes publishing `DOWNLOADED`.
+  Rename failure keeps legacy `<offset>` path; `size_in_filename` stays false.
+- `FileSegmentsHolder::reset` catches and logs (no-op shim) per-segment
+  completion exceptions; continues cleaning remaining segments.
+- `detach` sequence: clear downloader → publish `DETACHED` → reset
+  `key_metadata` weak_ptr → reset priority iterator → cancel writer →
+  release `DownloadState`.
+
+### `Metadata.cpp`
+
+Implement all eight sections from
+`port/2-file-cache/08-filecache-metadata-files-design.md`:
+
+1. Metadata wrappers and origin pool
+2. Key locking and path layout
+3. Bucket lookup and key state recovery (four `KeyNotFoundPolicy` behaviors)
+4. `IteratorImpl` / `BatchedIteratorImpl`
+5. Key removal and directory cleanup
+6. `CleanupQueue` with F14FastSet deduplication, cancel, notify_all
+7. `DownloadQueue` and workers: bounded std::queue, weak_ptr identity check,
+   per-worker `stopFlag` under queue mutex, resize join sequence
+8. Worker shutdown and resize ordering
+
+Path layout invariant:
+
+```text
+Regular downloading:  <offset>
+Regular downloaded:   <offset>_<size>
+Ephemeral:           <offset>_temporary
+```
+
+Key path invariant:
+
+```text
+without per-user:  <base>/<segment-prefix>/<first-3-key-chars>/<full-key>
+with per-user:     <base>/<segment-prefix>/<user-id>.<weight>/<first-3-key-chars>/<full-key>
+```
+
+`REMOVING` key reactivation by `CREATE_EMPTY`: cancel delayed removal, restore
+`ACTIVE`, return same locked key.
+
+`DownloadInfo` must carry `weak_ptr<FileSegment>` in addition to key+offset.
+Using key+offset alone for identity would accept a new segment created at the
+same offset after the original was deleted.
+
+Replace `OpenedFileCache::instance().remove(...)` with the manager-owned
+opened-file cache invalidation reference/callback injected at construction.
+
+### `QueryLimit.cpp`
+
+Implement `port/2-file-cache/11-filecache-query-limit-design.md`:
+
+- `tryGetQueryContext`: acquires `query_map_mutex`, looks up current query id
+  from `FileCacheQueryIdScope::currentQueryId()`, returns shared pointer.
+- `getOrSetQueryContext`: creates or reuses `QueryContext` under
+  `query_map_mutex`.
+- `removeQueryContext`: moves context out of map under mutex; caller destroys
+  the doomed context **after** releasing the `CachePriorityGuard::WriteLock`.
+- `QueryContextHolder::~QueryContextHolder`: acquires cache write lock, calls
+  `removeQueryContext`, releases lock, then lets doomed context go out of scope.
+  Must not throw.
+
+### `FileCache.cpp`
+
+Implement `port/2-file-cache/10-filecache-core-files-design.md`:
+
+- `initialize`: uses `std::call_once` (retry-on-exception semantics, matching
+  CH `callOnce`); acquires `StatusFile` process lock; dispatches sync or async
+  metadata initialization.
+- Scheduler task names include the cache name:
+  `"FileCache:<name>:background-cleanup"` and `"FileCache:<name>:free-space"`.
+- `getImpl`: `lower_bound(range.left)`, includes previous segment when it
+  overlaps, respects `fileSegmentsLimit`, bypass-threshold shortcut for large
+  ranges returns one synthetic `DETACHED` segment.
+- `fillHolesWithEmptyFileSegments`: `getOrSet` path creates metadata-owned
+  `EMPTY` segments; `get` path creates synthetic `DETACHED` placeholders.
+- `doTryReserve` fast path requires: main iterator exists AND no main eviction
+  needed AND `query_context == nullptr`.
+- Background free-space keeper: collector/remover/finalizer pipeline using two
+  `FileCacheBoundedQueue<EvictionBatchPtr>` instances. `running_removers` must
+  be incremented **before** submitting each remover task to the worker pool;
+  roll back on submission failure.
+- Metadata load: parallel listing/loading with
+  `FileCacheBoundedQueue<KeyDirectoryWork>` capacity 1000 when workers > 0;
+  listing producers use `tryPush`, falling back to direct load when the queue
+  is full or capacity is 0; last listing worker calls `finish`.
+- Overcommit policy (`LRU_OVERCOMMIT` / `SLRU_OVERCOMMIT`): explicitly reject
+  with `VELOX_FAIL`; do not stub.
+
+- [ ] **Step 15: Update `CMakeLists.txt`**
+
+Append the compiled core library to
+`velox/ch/Interpreters/FileCache/CMakeLists.txt`. Preserve the existing
+`target_sources(velox_ch_filecache ...)` entries from Tasks 008 and 010 and the
+existing `add_subdirectory(tests)` block:
+
+```cmake
+velox_add_library(
+  velox_ch_filecache_core
+  IFileCachePriority.cpp
+  LRUFileCachePriority.cpp
+  SLRUFileCachePriority.cpp
+  SplitFileCachePriority.cpp
+  EvictionCandidates.cpp
+  FileSegment.cpp
+  Metadata.cpp
+  FileCache.cpp
+  QueryLimit.cpp
+)
+
+target_link_libraries(
+  velox_ch_filecache_core
+  PUBLIC
+    velox_ch_filecache
+    velox_file
+    velox_memory
+    Folly::folly
+    fmt::fmt
+)
+
+if(${VELOX_BUILD_TESTING} OR ${VELOX_BUILD_TEST_UTILS})
+  add_subdirectory(tests)
+endif()
+```
+
+Do not replace or remove leaf, ShardedMap, or settings test targets from the
+shared tests CMake file.
+
+- [ ] **Step 16: One final build**
+
+Reconfigure using the same command as Step 8, then build:
+
+```bash
+/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  velox_ch_filecache_core_scc_test \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_scc.log 2>&1
+```
+
+Expected: exit code 0. This is the single compile/link closure that proves the
+SCC is complete.
+
+- [ ] **Step 17: Run the focused tests**
+
+```bash
+ctest \
+  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  -R '^velox_ch_filecache_core_scc_test$' \
+  --output-on-failure \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_012_scc.log 2>&1
+```
+
+Expected: `100% tests passed, 0 tests failed`.
+
+- [ ] **Step 18: Inspect task-owned changes**
+
+```bash
+cd /home/chang/OpenSource/velox
+git --no-pager diff --check
+git --no-pager status --short
+git --no-pager diff -- \
+  velox/ch/Interpreters/FileCache/CMakeLists.txt \
+  velox/ch/Interpreters/FileCache/CacheUsage.h \
+  velox/ch/Interpreters/FileCache/IFileCachePriority.h \
+  velox/ch/Interpreters/FileCache/IFileCachePriority.cpp \
+  velox/ch/Interpreters/FileCache/LRUFileCachePriority.h \
+  velox/ch/Interpreters/FileCache/LRUFileCachePriority.cpp \
+  velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h \
+  velox/ch/Interpreters/FileCache/SLRUFileCachePriority.cpp \
+  velox/ch/Interpreters/FileCache/SplitFileCachePriority.h \
+  velox/ch/Interpreters/FileCache/SplitFileCachePriority.cpp \
+  velox/ch/Interpreters/FileCache/EvictionCandidates.h \
+  velox/ch/Interpreters/FileCache/EvictionCandidates.cpp \
+  velox/ch/Interpreters/FileCache/FileSegmentInfo.h \
+  velox/ch/Interpreters/FileCache/FileSegment.h \
+  velox/ch/Interpreters/FileCache/FileSegment.cpp \
+  velox/ch/Interpreters/FileCache/Metadata.h \
+  velox/ch/Interpreters/FileCache/Metadata.cpp \
+  velox/ch/Interpreters/FileCache/FileCache.h \
+  velox/ch/Interpreters/FileCache/FileCache.cpp \
+  velox/ch/Interpreters/FileCache/QueryLimit.h \
+  velox/ch/Interpreters/FileCache/QueryLimit.cpp \
+  velox/ch/Interpreters/FileCache/tests/CMakeLists.txt \
+  velox/ch/Interpreters/FileCache/tests/PriorityEvictionTest.cpp \
+  velox/ch/Interpreters/FileCache/tests/FileSegmentInfoTest.cpp \
+  velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp \
+  velox/ch/Interpreters/FileCache/tests/MetadataTest.cpp \
+  velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp \
+  velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp
+```
+
+Expected: no whitespace errors, no files outside the declared scope changed by
+this task, changes remain unstaged and uncommitted.
+
+- [ ] **Step 19: Write the result handoff**
+
+Create:
+
+```text
+/home/chang/SourceCode/ClickHouse/port/task/result/012-filecache-core-scc-result.md
+```
+
+Use exactly this structure:
+
+````markdown
+# Task 012 Result: `FileCache` Center SCC
+
+## Status
+
+status: success
+
+## Velox status
+
+```text
+<paste branch, HEAD, and final `git status --short`>
+```
+
+## Files changed
+
+```text
+<list only task-owned files>
+```
+
+## Commands run
+
+```text
+<paste configure, build, test, and verification commands>
+```
+
+## Generated logs
+
+```text
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_012_scc.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_red.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_scc.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_012_scc.log
+```
+
+## Verification
+
+```text
+Red build failed because SCC headers and .cpp files were absent.
+Final build exit code:
+Focused test result:
+git diff --check result:
+```
+
+## Blocking errors
+
+```text
+None
+```
+
+## Recommended next task
+
+```text
+Task 013: FileCacheFactory and FileCacheManager.
+```
+````
+
+If blocked or failed, set the status accordingly, include the first actionable
+error and log path, and do not claim success.
+
+## Explicit Exclusions
+
+Do not implement in this task:
+
+```text
+FileCacheFactory / FileCacheManager
+FileCacheBufferedInput / FileCacheInputStream
+FileCacheRequestContext / FileCacheFileIdentity
+WriteBufferToFileSegment / TemporaryDataOnDisk
+CacheFileSystem / CachedReadFile
+cache_on_write_operations
+LRU_OVERCOMMIT / SLRU_OVERCOMMIT implementations
+Prometheus/custom metrics (keep no-op shims)
+Gluten integration
+```
+
+These belong to Tasks 013 and 014.

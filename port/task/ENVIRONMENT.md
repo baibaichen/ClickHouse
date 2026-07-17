@@ -84,3 +84,33 @@ Start with:
 ```
 
 Then read the specific design doc referenced by the task.
+
+## Implementation task sequence
+
+Run tasks in this order in the same Velox `filecache` worktree:
+
+| Task | Scope | Build gate |
+|---|---|---|
+| 003 | aliases, exception/log/fs shims, finishable bounded queue | `velox_ch_common_test` |
+| 004 | `StatusFile` and `Guards.h` | `velox_ch_guards_test` |
+| 005 | shared physical and logical thread pools | `velox_ch_threadpool_test` |
+| 006 | scheduler and caller query/TID scope | `velox_ch_scheduler_test` |
+| 007 | Velox `ReadFile` / `WriteFile` adapters | `velox_ch_io_test` |
+| 008 | hash, key/origin/segment types, forwards, utils | `velox_ch_leaf_types_test` |
+| 009 | `ShardedMap` | `velox_ch_sharded_map_test` |
+| 010 | instance settings plus `FileCacheReadOptions` | `velox_ch_settings_test` |
+| 011 | priority/eviction source migration, center-SCC Part A | structural check only |
+| 012 | priority + center SCC compile/link closure | `velox_ch_filecache_core_scc_test` |
+| 013 | Factory and Manager | `velox_ch_filecache_manager_test` |
+| 014 | `FileCacheBufferedInput` / `FileCacheInputStream` | `velox_ch_filecache_buffered_input_test` |
+| 015 | Gluten `VeloxBackend` ownership and Builder integration | Gluten focused native test |
+| 016 | Velox + Gluten E2E and random-seek benchmark | all MVP acceptance gates |
+| 017 | post-MVP `WriteBufferToFileSegment` | focused ephemeral writer test |
+| 018 | post-MVP observability and cancellation | focused + E2E regression tests |
+
+Tasks 011 and 012 are one atomic implementation stage. Task 011 must not create
+fake center-SCC definitions or claim a build; Task 012 immediately completes
+the real types, registers all priority/core sources, and runs the green gate.
+
+Tasks 003-016 are the MVP path. Tasks 017 and 018 are optional post-MVP work and
+must not delay the E2E gate in Task 016.
