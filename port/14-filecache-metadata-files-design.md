@@ -55,7 +55,7 @@ then FileCache.cpp
 ```text
 Metadata.h includes FileSegment.h
 Metadata.cpp calls FileSegment state/range/write/reserve/detach/getInfo APIs
-Metadata.cpp calls FileCache::getInternalOrigin / getCommonOrigin
+Metadata.cpp uses FileCache::getInternalOrigin and injected commonUserId
 FileSegment.cpp calls LockedKey and CacheMetadata APIs
 FileCache.cpp owns CacheMetadata and creates FileSegment
 ```

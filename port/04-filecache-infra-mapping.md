@@ -17,9 +17,10 @@
 | CH | Velox | 处理方式 | review 状态 |
 |---|---|---|---|
 | `String` / `UInt64` / `Int64` 等 CH 基础别名 | `velox/ch/Common/ClickHouseAliases.h` 中提供 `using String = std::string` 等；`UInt8` 用 `uint8_t`，不照搬 CH 的 `char8_t` | compat alias | 已 review |
-| `BackgroundSchedulePool`（定时 + 提前触发任务） | `folly::FunctionScheduler`，通过 one-shot `addFunctionOnce` + `cancelFunctionAndWait` 封装 `schedule` / `scheduleAfter` / `deactivate`，详见 `07-filecache-scheduler-design.md` | wrapper：封成 `FileCacheScheduler` | 已 review |
+| `BackgroundSchedulePool`（定时 + 并行执行 + 提前触发） | cancelable `folly::Timekeeper` future + shared `FileCacheWorkerPool`；详见 `07-filecache-scheduler-design.md` | wrapper + CH aliases | 已 review |
 | `ThreadFromGlobalPool` / 线程池 | `FileCacheWorker` / `FileCacheThreadPool`，通过 `using ThreadFromGlobalPool = FileCacheWorker` 和 `using ThreadPool = FileCacheThreadPool` 保留 CH 名字，详见 `09-filecache-thread-pool-design.md` | wrapper：保留 CH-style join/resize/shutdown 语义 | 需要 review |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | wrapper：`WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` | 已 review |
+| `ConcurrentBoundedQueue` | `folly::MPMCQueue<std::optional<T>>` + sentinel termination | 直接替换；保留 bounded/blocking/timed/drain 语义 | 已 review |
 | `fs::` 文件系统操作 | `std::filesystem` + 必要时 Velox `FileSystem` local API；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
 | `sipHash128` | 不直接换成 `SpookyHashV2`；需要保留 CH cache key hash 语义，详见 `06-filecache-key-hash-design.md` | 保留小 helper | 已 review |
 | `absl::flat_hash_map` / `absl::flat_hash_set` | 默认用 `folly::F14FastMap` / `folly::F14FastSet`；需要 value 地址稳定时再用 `F14NodeMap` / `F14NodeSet` | 直接替换，详见 `06` 和 `13` | 已 review |
@@ -229,6 +230,60 @@ if no further progress is possible:
 禁止解析 Velox exception message 中的 errno，也不能把失败伪装成成功。详细的 segment
 bookkeeping 见 [`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md)。
 
+### `ConcurrentBoundedQueue`
+
+`FileCache.cpp` 使用 bounded queue 的位置：
+
+```text
+parallel metadata load
+background free-space remover pipeline
+```
+
+Folly `MPMCQueue` 覆盖：
+
+```text
+fixed capacity       -> constructor(capacity)
+blocking push/pop    -> blockingWrite / blockingRead
+nonblocking push/pop -> write / read
+timed push/pop       -> tryWriteUntil / tryReadUntil
+```
+
+Folly 没有 native `finish`。按 `MPMCQueue` 官方建议使用 sentinel。为避免 sentinel 与真实
+值冲突：
+
+```cpp
+folly::MPMCQueue<std::optional<T>>
+```
+
+协议：
+
+```text
+producer writes std::nullopt after all normal work
+consumer reads all earlier FIFO items
+consumer that reads nullopt:
+  re-enqueues nullopt
+  exits
+```
+
+一个 sentinel 因此可以依次终止未知数量的 consumers，同时保留 drain-before-exit。
+异常路径使用 `std::once_flag` 保证只注入一次。
+
+`MPMCQueue` 不接受 capacity 0。metadata load 没有 loading workers 时不构造 queue，
+listing worker 直接 load。
+
+work item 必须满足 Folly 的 nothrow move/destruct requirement。已经验证：
+
+```text
+pair<filesystem::path, FileCacheOriginInfo>
+shared_ptr<EvictionBatch>
+optional wrappers of both
+```
+
+都满足。
+
+不使用 `boost::sync_bounded_queue`：它会给生产 target 新增 `Boost::thread` 链接依赖，
+而 Velox core 当前只普遍使用 `Boost::headers`；同时它没有本路径需要的 timed push。
+
 这个类覆盖读路径 miss 后填充本地 cache segment 所需能力；不实现
 `cache_on_write_operations`。
 
@@ -263,7 +318,7 @@ assertCacheCorrectness shim
 
 ### `BackgroundSchedulePool`
 
-`FileCache` 不直接依赖 `folly::FunctionScheduler`。通过 `FileCacheScheduler`
+`FileCache` 不直接依赖 Folly timer/future API。通过 `FileCacheScheduler`
 保留 CH 需要的语义：
 
 ```text
@@ -273,10 +328,9 @@ cancel()
 shutdown()
 ```
 
-已确认 `folly::FunctionScheduler` 提供 `addFunction`、`addFunctionOnce`、
-`cancelFunction`、`cancelFunctionAndWait`、`resetFunctionTimer`。当前设计选择 one-shot
-模式：由 `FileCache` task 函数自己决定下一次 `schedule` / `scheduleAfter`，更贴近
-ClickHouse 当前逻辑。
+底层使用 `folly::Timekeeper::after` 的 cancelable future 负责 delay，并通过 shared
+dynamic `FileCacheWorkerPool` 并行执行 callback。当前设计使用 one-shot 模式：由
+`FileCache` task 函数自己决定下一次 `schedule` / `scheduleAfter`。
 
 详细设计见 [`07-filecache-scheduler-design.md`](07-filecache-scheduler-design.md)。
 

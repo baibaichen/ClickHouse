@@ -3,33 +3,68 @@
 ## 结论
 
 `BackgroundSchedulePool` / `BackgroundSchedulePoolTaskHolder` 用
-`FileCacheScheduler` 包一层 Velox/Folly 调度设施替代。底层可用
-`folly::FunctionScheduler`，但 `FileCache` 算法代码不直接依赖 folly。
+`FileCacheScheduler` / `FileCacheScheduledTaskHolder` compatibility wrapper 替代。
 
-已确认 `folly::FunctionScheduler` 提供：
-
-```text
-addFunction
-addFunctionOnce
-resetFunctionTimer
-cancelFunction
-cancelFunctionAndWait
-shutdown
-start
-```
-
-可以覆盖 ClickHouse `FileCache` 需要的：
+底层组合：
 
 ```text
-定时执行
-立即/提前触发
-取消任务
-shutdown 时停止并等待
+folly::Timekeeper::after
+  -> cancelable delayed Future
+
+FileCacheWorkerPool
+  -> parallel callback execution
 ```
 
-## ClickHouse 里的使用点
+保留 CH 命名入口：
 
-`FileCache` 里主要有两个 schedule task：
+```cpp
+using BackgroundSchedulePool = FileCacheScheduler;
+using BackgroundSchedulePoolTaskHolder = FileCacheScheduledTaskHolder;
+```
+
+不直接使用 `folly::FunctionScheduler`。它只有一个线程并在 timer thread 内执行 callback；
+`FileCache::freeSpaceRatioKeepingThreadFunc` 可能长时间运行并等待 remover workers，会阻塞
+其他 cache 的全部 scheduled tasks。
+
+也不直接使用 `folly::TimekeeperScheduledExecutor`。它能把 callback dispatch 到 parent
+executor，但 `scheduleAt` 返回 `void`，不提供本路径需要的 per-task cancel handle。
+
+## ClickHouse contract
+
+CH `BackgroundSchedulePool` 同时提供：
+
+```text
+timer scheduling
+parallel worker execution
+```
+
+`FileCache` 需要的 task contract：
+
+```text
+createTask
+schedule
+scheduleAfter
+deactivate
+same task never executes concurrently with itself
+schedule while running coalesces one next execution
+callback may schedule itself again
+```
+
+不迁移 CH schedule pool 的其他通用能力：
+
+```text
+StorageID task grouping
+system.background_schedule_pool introspection
+max_parallel_tasks_per_type
+pausable-task API
+query/thread logging context
+```
+
+这些能力没有 `FileCache` caller。
+
+## `FileCache` 使用点
+
+`FileCache` 有两个 scheduled tasks：
 
 ```text
 background_cleanup_task
@@ -38,266 +73,385 @@ keep_up_free_space_ratio_task
 
 ### `background_cleanup_task`
 
-创建位置：
+创建：
 
 ```text
 FileCache::initializeImpl
-  -> createTask("FileCacheBackgroundCleanup", backgroundCleanupTaskFunc)
-  -> main_priority->setInvalidateNotifier(... schedule())
-  -> scheduleAfter(backgroundCleanupIntervalMs())
+  -> createTask("<cache-name>:background-cleanup", backgroundCleanupTaskFunc)
+  -> main_priority invalidate notifier calls schedule
+  -> initial scheduleAfter(backgroundCleanupIntervalMs)
 ```
 
-运行逻辑：
+运行：
 
 ```text
-backgroundCleanupTaskFunc
-  -> main_priority->removeInvalidatedEntries
-  -> evictIdleClients
-  -> 如果移满一批 invalidated entries:
-         schedule()              // 立即再跑
-     否则:
-         scheduleAfter(interval)  // 延迟再跑
-```
+remove invalidated entries
+run idle-client hook when supported
 
-shutdown：
-
-```text
-deactivateBackgroundOperations
-  -> background_cleanup_task->deactivate()
+full cleanup batch:
+  schedule immediately
+otherwise:
+  scheduleAfter(next interval)
 ```
 
 ### `keep_up_free_space_ratio_task`
 
-创建位置：
+仅在 free-space ratios 启用时创建：
 
 ```text
 FileCache::initializeImpl
-  -> if keep_free_space ratios enabled:
-         createTask(... freeSpaceRatioKeepingThreadFunc)
-         schedule()
+  -> createTask("<cache-name>:free-space", freeSpaceRatioKeepingThreadFunc)
+  -> schedule
 ```
 
-运行逻辑：
+运行：
 
 ```text
-freeSpaceRatioKeepingThreadFunc
-  -> freeSpaceRatioImpl(reschedule_ms)
-  -> scheduleAfter(reschedule_ms)
+collect free-space eviction batches
+dispatch remover tasks
+wait/finalize batches
+scheduleAfter(next delay)
 ```
 
-shutdown：
+该 callback 可能运行较久，必须在 shared dynamic worker pool 执行，不能占用 timer thread。
+
+### metadata workers
+
+以下不是 scheduled tasks：
 
 ```text
-deactivateBackgroundOperations
-  -> keep_up_free_space_ratio_task->deactivate()
-  -> eviction_pool->wait()
+async metadata main worker
+metadata listing/loading workers
+background download workers
+metadata cleanup worker
 ```
 
-### metadata 线程
+它们继续通过 `FileCacheWorkerPool` / `FileCacheWorker` 运行，详见 `09`。
 
-除了 schedule task，还有普通后台线程：
+## aliases 和接口
 
-```text
-load_metadata_main_thread = ThreadFromGlobalPool(...)
-Metadata::download_threads
-Metadata::cleanup_thread
+```cpp
+class FileCacheScheduledTask;
+
+class FileCacheScheduledTaskHolder
+{
+public:
+    FileCacheScheduledTaskHolder() = default;
+    explicit FileCacheScheduledTaskHolder(
+        std::shared_ptr<FileCacheScheduledTask> task);
+
+    FileCacheScheduledTaskHolder(const FileCacheScheduledTaskHolder &) = delete;
+    FileCacheScheduledTaskHolder & operator=(
+        const FileCacheScheduledTaskHolder &) = delete;
+
+    FileCacheScheduledTaskHolder(FileCacheScheduledTaskHolder &&) noexcept;
+    FileCacheScheduledTaskHolder & operator=(
+        FileCacheScheduledTaskHolder &&) noexcept;
+
+    ~FileCacheScheduledTaskHolder();
+
+    explicit operator bool() const;
+    FileCacheScheduledTask * operator->();
+    const FileCacheScheduledTask * operator->() const;
+
+private:
+    std::shared_ptr<FileCacheScheduledTask> task_;
+};
+
+class FileCacheScheduler
+{
+public:
+    FileCacheScheduler(
+        std::shared_ptr<folly::Timekeeper> timekeeper,
+        FileCacheWorkerPool & worker_pool);
+
+    FileCacheScheduledTaskHolder createTask(
+        std::string name,
+        std::function<void()> callback);
+
+    void shutdown();
+
+private:
+    std::shared_ptr<folly::Timekeeper> timekeeper_;
+    FileCacheWorkerPool & worker_pool_;
+    std::mutex mutex_;
+    bool shutdown_ = false;
+    std::vector<std::weak_ptr<FileCacheScheduledTask>> tasks_;
+};
+
+using BackgroundSchedulePool = FileCacheScheduler;
+using BackgroundSchedulePoolTaskHolder = FileCacheScheduledTaskHolder;
 ```
 
-这些不走 `FileCacheScheduler` 的 periodic task 接口。它们应改成 executor-backed
-long-running task 或自有 thread wrapper，仍由 `FileCacheManager::shutdown` /
-`FileCache::deactivateBackgroundOperations` 统一停止。
-
-## 接口设计
+`FileCacheScheduledTask` public API：
 
 ```cpp
 class FileCacheScheduledTask
 {
 public:
     bool schedule();
-    bool scheduleAfter(uint64_t delayMs);
-    void deactivate();
-};
-
-class FileCacheScheduler
-{
-public:
-    FileCacheScheduler();
-    ~FileCacheScheduler();
-
-    std::shared_ptr<FileCacheScheduledTask> createTask(
-        std::string name,
-        std::function<void()> callback);
-
-    void start();
-    void shutdown();
-
-private:
-    folly::FunctionScheduler scheduler_;
+    bool scheduleAfter(uint64_t delay_ms);
+    bool deactivate();
 };
 ```
 
-`FileCacheScheduledTask` 内部保存：
+`FileCache.h/.cpp` 可以继续保留：
+
+```cpp
+BackgroundSchedulePoolTaskHolder background_cleanup_task;
+BackgroundSchedulePoolTaskHolder keep_up_free_space_ratio_task;
+```
+
+`createTask` 在 scheduler shutdown 后失败。scheduler registry 保存 task weak pointers；
+`shutdown` snapshot 所有 live tasks、逐个 deactivate，并等待完成。
+
+## task state machine
+
+每个 task 独立维护：
 
 ```text
-task name
-callback
-FileCacheScheduler*
+Idle
+Delayed
+Queued
+Running
+Deactivated
+```
+
+内部 state 至少包含：
+
+```text
+mutex
+condition_variable
 active flag
+generation
+current state
+optional pending next-run request
+cancelable timer Future
+callback
 ```
-
-## `schedule` 和 `scheduleAfter` 映射
-
-`folly::FunctionScheduler` 的函数是按 name 管理的，所以每个 task 需要一个唯一 name。
-
-### `scheduleAfter(delayMs)`
-
-一个直接映射方案是注册 periodic `addFunction` task，再用 `resetFunctionTimer`
-提前触发：
-
-```text
-if task 已注册:
-    resetFunctionTimer(name)
-else:
-    addFunction(callback, interval, name, startDelay)
-```
-
-但是 `FunctionScheduler::resetFunctionTimer` 会按初次注册时的 `startDelay` 重置 timer，
-不能为每次调用设置不同 delay。因此建议 wrapper 使用 **one-shot reschedule 模式**：
-
-```text
-scheduleAfter(delay):
-    cancelFunction(name)
-    addFunctionOnce(callback, name, delay)
-```
-
-callback 运行完后由 `FileCache` 自己决定下一次 `schedule` / `scheduleAfter`。
-这和 CH 当前逻辑一致：task 函数末尾自己重新调度。
 
 ### `schedule`
 
-立即触发：
-
 ```text
-schedule():
-    scheduleAfter(0)
+Deactivated:
+  return false
+
+Idle / Delayed:
+  cancel/invalidate old delayed timer
+  state = Queued
+  dispatch one callback to worker pool
+
+Queued:
+  coalesce; return false
+
+Running:
+  remember one immediate next-run request
+  return true
 ```
 
-或使用极小 delay 的 `addFunctionOnce`。不要让 periodic task 自动循环；循环由
-`FileCache` 函数末尾显式决定。
+立即 request 优先于已有 delayed next-run request。
+
+### `scheduleAfter`
+
+```text
+Deactivated:
+  return false
+
+Idle / Delayed:
+  cancel/invalidate prior timer
+  timer = timekeeper.after(delay)
+  timer continuation runs via worker pool
+  state = Delayed
+
+Queued:
+  keep already queued immediate run
+
+Running:
+  remember/overwrite one delayed next-run request
+```
+
+使用 one-shot self-reschedule，不创建 fixed periodic timer：
+
+```text
+callback runs once
+callback decides schedule or scheduleAfter
+```
+
+这保留：
+
+```text
+background cleanup chooses immediate vs delayed based on batch fullness
+free-space keeper chooses normal vs retry delay based on outcome
+```
+
+### timer cancellation
+
+`folly::Timekeeper::after` 返回 cancelable `SemiFuture`。task 保存对应 future chain：
+
+```text
+after(delay)
+  -> via(FileCacheWorkerPool)
+  -> generation/active check
+  -> run callback
+```
+
+取消 delayed task：
+
+```text
+increment generation
+cancel timer Future
+wait for cancellation completion when required by deactivate
+```
+
+不能只用 generation no-op 而保留 pending timer；否则 manager shutdown 可能被 timer chain
+持有的 executor keep-alive 延迟。
+
+### callback execution
+
+worker closure 在运行 callback 前，在 task mutex 下检查：
+
+```text
+active
+generation matches
+state allows execution
+not already Running
+```
+
+然后设置 `Running`，释放 mutex，再调用 callback。
+
+callback invocation 必须 catch all exceptions，执行 task-state cleanup 后记录/上报；异常不能
+逃出 worker closure，使 task 永久停在 `Running`。这与 CH
+`BackgroundSchedulePoolTaskInfo::execute` 一致。
+
+callback 返回后：
+
+```text
+if Deactivated:
+  signal waiter
+else if pending immediate request:
+  queue one run
+else if pending delayed request:
+  create one timer
+else:
+  state = Idle
+```
+
+同一个 task 永远不会并发进入 callback；不同 cache/task 可以在 worker pool 中并行。
 
 ### `deactivate`
 
 ```text
-deactivate():
-    active = false
-    cancelFunctionAndWait(name)
+lock task state
+active = false
+state = Deactivated
+increment generation
+cancel pending timer
+invalidate queued-but-not-started closure
+wait until running callback returns
+clear callback
+return
 ```
 
-如果 callback 正在跑，`cancelFunctionAndWait` 等它退出。callback 内部也应检查
-`FileCache::shutdown`，避免 shutdown 后重新 schedule。
+`deactivate` 返回后，不得再访问 callback 捕获的 `FileCache`。
 
-## 为什么不用 periodic `addFunction`
+queued closure 可能稍后在 worker pool 被取出，但 generation/active check 只能走 no-op，
+且不能保留 `FileCache` capture。
 
-`FileCache` 的两个任务都不是固定周期自动循环：
+## task holder
 
-- `backgroundCleanupTaskFunc` 根据本轮是否清满 batch，选择立即或延迟。
-- `freeSpaceRatioKeepingThreadFunc` 根据执行结果修改 `reschedule_ms`。
-
-所以 one-shot 模式更贴近 CH：
+`FileCacheScheduledTaskHolder` 保持 CH RAII：
 
 ```text
-run once
-task function decides next schedule time
+default constructible
+move-only
+operator bool
+operator->
+destructor deactivates task
 ```
 
-## 与 `FileCache` 的交互
+显式 `deactivateBackgroundOperations` 仍应先 deactivate；holder destructor 只是兜底。
 
-`FileCache` 持有：
+## manager interaction
+
+`FileCacheManager` 持有：
 
 ```cpp
-std::shared_ptr<FileCacheScheduledTask> backgroundCleanupTask_;
-std::shared_ptr<FileCacheScheduledTask> keepUpFreeSpaceRatioTask_;
+FileCacheWorkerPool worker_pool_;
+FileCacheScheduler scheduler_;
 ```
 
-初始化：
+声明顺序必须是 worker pool 在 scheduler 前，使逆序析构先销毁 scheduler。
+
+创建：
 
 ```text
-backgroundCleanupTask_ = scheduler.createTask("FileCacheBackgroundCleanup", ...)
-mainPriority->setInvalidateNotifier(threshold, [&] { backgroundCleanupTask_->schedule(); })
-backgroundCleanupTask_->scheduleAfter(backgroundCleanupIntervalMs())
-
-keepUpFreeSpaceRatioTask_ = scheduler.createTask("FileCacheFreeSpaceRatio", ...)
-keepUpFreeSpaceRatioTask_->schedule()
-```
-
-任务内部：
-
-```text
-if shutdown:
-    return
-
-... do work ...
-
-if shutdown:
-    return
-
-task->scheduleAfter(nextDelay)
+worker_pool(maxThreads, minThreads=1)
+scheduler(timekeeper, worker_pool)
 ```
 
 shutdown：
 
 ```text
-shutdown = true
-backgroundCleanupTask_->deactivate()
-keepUpFreeSpaceRatioTask_->deactivate()
-evictionPool->wait()
-metadata.shutdown()
+for each FileCache:
+  deactivateBackgroundOperations
+
+scheduler.shutdown
+worker_pool.shutdown
+openedFileCache.clear
 ```
 
-## 与 `FileCacheManager` 的交互
+所有 cache tasks deactivate 后，scheduler 才释放 timer resources；worker pool 最后停止。
 
-`FileCacheManager` 持有一个 scheduler：
+## worker pool budget
 
-```cpp
-class FileCacheManager
-{
-    FileCacheScheduler scheduler_;
-};
-```
-
-创建 `FileCache` 时注入：
-
-```cpp
-FileCache(config, scheduler_)
-```
-
-或者给 `FileCache` 一个 `FileCacheScheduler*`。
-
-`FileCacheManager::shutdown`：
+scheduled callback 在 shared physical pool 执行，所以每个 cache 的 conservative max
+必须包括：
 
 ```text
-for each cache:
-    cache->deactivateBackgroundOperations()
-scheduler.shutdown()
-openedFileCache.clear()
++ 1 background-cleanup callback
++ (freeSpaceKeepingEnabled
+     ? 1 free-space collector callback + keepFreeSpaceEvictionThreads
+     : 0)
 ```
 
-## 测试
+完整公式见 `09`。
+
+## tests
 
 必须覆盖：
 
 ```text
-schedule 立即触发一次
-scheduleAfter 延迟触发一次
-任务函数可以再次 scheduleAfter 自调度
-schedule 可提前触发已延迟任务
-deactivate 后不会再执行
-deactivate 等待 in-flight callback 结束
-shutdown 后 schedule/scheduleAfter 返回 false
+schedule dispatches exactly one immediate callback
+scheduleAfter runs after delay
+schedule advances an existing delayed task
+scheduleAfter overwrites an existing delayed timer
+multiple schedule calls while Queued coalesce
+schedule while Running produces exactly one next run
+callback can self-scheduleAfter
+callback exception does not strand task in Running state
+same task never executes concurrently
+different tasks can execute concurrently
+timer cancellation reclaims pending timer
+deactivate prevents queued callback from touching captured state
+deactivate waits for running callback
+holder destructor deactivates
+shutdown cancels all timers and waits all callbacks
+two caches use unique task names without collision
 ```
+
+tests 应注入 controllable/manual `Timekeeper`，不使用 sleep。
 
 ## Review 状态
 
-`BackgroundSchedulePool` -> `FileCacheScheduler(folly::FunctionScheduler)` 已确认可行。
-后续实现时需要重点检查 `addFunctionOnce` + `cancelFunctionAndWait` 的线程安全和 callback
-内自调度场景。
+`BackgroundSchedulePool` 的 FileCache-required subset 映射为：
+
+```text
+timer: folly::Timekeeper cancelable futures
+execution: shared dynamic FileCacheWorkerPool
+compat names:
+  BackgroundSchedulePool
+  BackgroundSchedulePoolTaskHolder
+```
+
+不迁移完整 CH `BackgroundSchedulePool` 的 1000+ 行通用实现，也不使用单线程
+`folly::FunctionScheduler` 直接执行 callback。

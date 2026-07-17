@@ -34,6 +34,8 @@ refreshStats / toString
 - 触发 `FileCache::initialize` / metadata load。
 - 触发 shutdown，停止后台任务和下载线程。
 - 持有 `OpenedFileCache` 实例，用于本地 cache segment 的 read handle cache。
+- 持有所有 cache 共享的 `FileCacheScheduler` 和 physical `FileCacheWorkerPool`。
+- 向所有 cache 注入稳定的 common user id、local filesystem 和 memory pool。
 - 为 `FileCacheBufferedInput` 提供 `FileCachePtr`。
 - 提供 stats/debug 输出入口。
 
@@ -49,6 +51,9 @@ public:
     {
         std::vector<FileCacheConfig> caches;
         std::string defaultCacheName;
+        std::string commonUserId;
+        std::shared_ptr<filesystems::FileSystem> localFileSystem;
+        memory::MemoryPool * memoryPool = nullptr;
         bool initializeOnCreate = true;
     };
 
@@ -74,12 +79,21 @@ private:
     explicit FileCacheManager(Options options);
 
     mutable std::mutex mutex_;
+    std::string commonUserId_;
+    FileCacheWorkerPool workerPool_;
+    FileCacheScheduler scheduler_;
+    OpenedFileCache openedFileCache_;
     std::unordered_map<std::string, FileCachePtr> caches_;
     std::string defaultCacheName_;
-    OpenedFileCache openedFileCache_;
     bool shutdown_ = false;
 };
 ```
+
+资源字段必须声明在 `caches_` 之前，使 C++ 逆序析构时先销毁 caches，再销毁
+opened handles / scheduler / worker pool。
+
+`commonUserId` 必须 non-empty、跨复用同一 cache path 的进程重启保持稳定，且不能为保留
+值 `"internal"`。
 
 ## 与 `AsyncDataCache` 的对应关系
 
@@ -156,6 +170,8 @@ sequenceDiagram
         Manager->>Cache: deactivateBackgroundOperations()
         Manager->>Cache: shutdown / metadata shutdown
     end
+    Manager->>Manager: scheduler.shutdown()
+    Manager->>Manager: workerPool.shutdown()
     Manager->>Opened: clear / release handles
     Owner->>Manager: setInstance(nullptr)
 ```
@@ -185,6 +201,8 @@ static void setInstance(FileCacheManager * manager);
 for each FileCache:
     cache->deactivateBackgroundOperations()
     cache->shutdown / metadata shutdown（按迁移后的 FileCache 接口命名）
+scheduler.shutdown()
+workerPool.shutdown()
 clear openedFileCache
 mark shutdown_
 ```
@@ -257,6 +275,41 @@ file-cache.<name>.max-size
 `FileCacheManager` 用 name 管理多个实例。
 
 第一版可以只启用 default cache，但接口保留多 cache 能力。
+
+## shared worker pool 容量
+
+每个 cache 的 conservative max worker budget：
+
+```text
+cacheWorkerMax =
+  loadMetadataThreads
+  + (loadMetadataAsynchronously ? 1 : 0) async main worker
+  + backgroundDownloadThreads
+  + 1 metadata cleanup worker
+  + 1 background cleanup callback
+  + (freeSpaceKeepingEnabled
+      ? 1 free-space collector callback + keepFreeSpaceEvictionThreads
+      : 0)
+```
+
+manager 创建 shared pool 时：
+
+```text
+workerPoolMax = sum(cacheWorkerMax for every unique FileCache instance)
+workerPoolMin = 1
+```
+
+`folly::CPUThreadPoolExecutor` 使用 dynamic mode：只在有 pending task 时按需增长到 max，
+idle worker 超时后回落到 min。因此 conservative max 不会在启动时预创建全部 threads。
+
+动态新增 cache 或增加 `backgroundDownloadThreads` 时，先通过 `setNumThreads` 扩 max，
+再创建 worker。cache shutdown/remove 后才通过 `setNumThreads` 缩 max。
+
+同 path + 同 config 的多个名字复用一个 `FileCache`，只计一次 budget。
+
+每个 cache 自己的 free-space `eviction_pool` 是 logical `FileCacheThreadPool`；它没有
+独立 executor，physical workers 仍来自 manager pool。因此
+`keepFreeSpaceEvictionThreads` 已计入 `cacheWorkerMax`。
 
 ## config reload / dynamic resize
 

@@ -308,6 +308,49 @@ local cache segment read/write
 future non-local filesystem integration, if required
 ```
 
+### `StatusFile`
+
+CH `StatusFile` 是 cache-directory exclusive ownership guard，不是普通日志文件。
+Velox 直接迁移 `StatusFile` 小类，内部 fd RAII 使用 `folly::File`：
+
+```cpp
+class StatusFile
+{
+public:
+    StatusFile(std::string path, FillFunction fill);
+    ~StatusFile();
+
+private:
+    const std::string path;
+    folly::File file;
+};
+```
+
+映射：
+
+```text
+open/create fd        -> folly::File(path, O_WRONLY | O_CREAT | O_CLOEXEC)
+LOCK_EX | LOCK_NB     -> folly::File::try_lock
+close                 -> folly::File destructor
+truncate/write        -> use file.fd
+unlink status path    -> StatusFile destructor
+```
+
+`folly::File` 的 `lock` / `try_lock` 底层就是 inter-process `flock`。
+
+必须保持：
+
+```text
+second live process/instance on same cache path fails initialization
+lock held for full FileCache lifetime
+status file contains process diagnostics
+destructor closes lock fd before unlink
+constructor failure closes fd
+```
+
+不能把 `StatusFile` 做成 no-op，也不新增 `FileCacheStatusLock`；它是依赖方的
+CH-compatible wrapper。
+
 ### Error handling
 
 ClickHouse often catches `fs::filesystem_error` and wraps it with cache state. Preserve that pattern:
@@ -346,6 +389,7 @@ velox/ch/Common/SharedMutex.h
 velox/ch/Interpreters/FileCache/Guards.h
 velox/ch/Common/logger_useful.h
 velox/ch/Common/FileCacheFilesystem.h
+velox/ch/Common/StatusFile.h / .cpp
 ```
 
 `FileCacheFilesystem.h` provides:
@@ -382,4 +426,5 @@ logging is not mainline; Logger and LOG_* are no-op compat shims in first phase
 fs:: is std::filesystem for local metadata/cache paths
 Velox FileSystem is not the primary mapping for metadata directory traversal
 Velox FileSystem is used only where the IO path already uses ReadFile / WriteFile
+StatusFile is preserved and backed by folly::File inter-process locking
 ```

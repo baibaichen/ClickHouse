@@ -299,9 +299,6 @@ holder destructor completes/removes
 
 ```text
 velox/ch/Interpreters/FileCache/FileCache.h / .cpp
-velox/ch/Interpreters/FileCache/QueryLimit.h / .cpp
-velox/ch/Interpreters/FileCache/FileCacheFactory.h / .cpp
-velox/ch/Interpreters/FileCache/FileCacheManager.h / .cpp
 ```
 
 ### 功能闭环
@@ -314,18 +311,15 @@ getOrSet
 set
 tryReserve
 doEviction
-query limit
 metadata load
-background cleanup hooks
-dynamic resize hooks
-FileCacheManager lifecycle
+background cleanup / free-space keeping
+dynamic resize
+shutdown
 ```
 
 ### 可以 stub 的内容
 
-- config reload 可先保留接口。
 - Prometheus metrics 可后置。
-- background free-space keeper 可先 disabled，但接口保留。
 
 ### 不能 stub 的内容
 
@@ -334,7 +328,9 @@ FileCacheManager lifecycle
 - `set`
 - `tryReserve`
 - eviction candidate collection
-- query limit holder if setting enabled
+- metadata load
+- background free-space keeper
+- dynamic resize
 - shutdown/deactivate background operations
 
 ### 验证
@@ -346,6 +342,31 @@ getDownloadedContiguousOrEmpty cache-only behavior
 tryReserve evicts releasable segments
 removeKey/removeFileSegment
 ```
+
+逐文件设计详见
+[`16-filecache-core-files-design.md`](16-filecache-core-files-design.md)。
+
+## 阶段 5.1：`QueryLimit`
+
+严格按文件 review：
+
+```text
+velox/ch/Interpreters/FileCache/QueryLimit.h
+velox/ch/Interpreters/FileCache/QueryLimit.cpp
+```
+
+setting 启用时不能 stub query context holder 或 query priority。
+
+## 阶段 5.2：factory / manager
+
+严格按文件 review CH factory，并单独 review Velox manager：
+
+```text
+src/Interpreters/FileCache/FileCacheFactory.h / .cpp
+velox/ch/Interpreters/FileCache/FileCacheManager.h / .cpp
+```
+
+manager 是 singleton，但保留多个 named/path `FileCache` 实例。
 
 ## 阶段 6：Velox scan 接入
 

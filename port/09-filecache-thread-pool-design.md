@@ -8,14 +8,15 @@ ClickHouse 名字：
 
 | ClickHouse | Velox port |
 |---|---|
-| `GlobalThreadPool` | 不作为独立类迁移；并入 `FileCacheManager` 自持有的 `ThreadPool` |
+| `GlobalThreadPool` | manager-owned `FileCacheWorkerPool` |
 | `ThreadFromGlobalPoolImpl` / `ThreadFromGlobalPool` | `FileCacheWorker` + `using ThreadFromGlobalPool = FileCacheWorker` |
-| `ThreadPoolImpl<ThreadFromGlobalPool>` / `ThreadPool` | `FileCacheThreadPool` + `using ThreadPool = FileCacheThreadPool` |
+| `ThreadPoolImpl<ThreadFromGlobalPool>` / `ThreadPool` | per-cache `FileCacheThreadPool` over `FileCacheWorkerPool` + `using ThreadPool = FileCacheThreadPool` |
 
 也就是说，Velox port 的真实类型是：
 
 ```cpp
 class FileCacheWorker;
+class FileCacheWorkerPool;
 class FileCacheThreadPool;
 
 using ThreadFromGlobalPool = FileCacheWorker;
@@ -34,14 +35,18 @@ ClickHouse:
       -> ThreadPoolImpl<ThreadFromGlobalPool>
 
 Velox port:
-  FileCacheThreadPool
+  FileCacheWorkerPool
     -> FileCacheWorker
+    -> per-cache FileCacheThreadPool tasks
   using ThreadPool = FileCacheThreadPool
   using ThreadFromGlobalPool = FileCacheWorker
 ```
 
-`FileCacheThreadPool` 内部直接持有 `folly::CPUThreadPoolExecutor`。`FileCacheManager`
-持有 `FileCache` 专用的 `ThreadPool` alias 实例，并在 `shutdown` 中统一停止。
+`FileCacheWorkerPool` 内部持有唯一的 `folly::CPUThreadPoolExecutor`，对应 CH
+`GlobalThreadPool`。`FileCacheManager` 持有它并在 `shutdown` 中统一停止。
+
+manager 可以管理多个 `FileCache`，但只持有一个 shared worker pool。pool capacity 必须
+由所有 cache 的真实并发任务推导，不能使用任意默认值。
 
 ## ClickHouse 当前含义
 
@@ -99,7 +104,7 @@ GlobalThreadPool 管进程级 OS thread 复用
 ThreadPool 管业务局部队列、限流和 wait
 ```
 
-## 为什么 Velox port 可以简化
+## Velox 两层映射
 
 Velox 没有一个等价 `GlobalThreadPool` 的业务全局 singleton 可以直接复用。Velox 常见模式是：
 
@@ -112,17 +117,21 @@ component-owned executor // 组件自己持有 folly executor
 `FileCache` 的 background download、cleanup、metadata load、eviction 都是 cache/manager
 级后台工作，不属于某个 query。因此不能复用 `QueryCtx::executor`。
 
-所以 Velox port 直接让 `FileCacheManager` 自持有 `FileCache` 专属
-`FileCacheThreadPool`，并通过 `using ThreadPool = FileCacheThreadPool` 暴露 CH-compatible
-名字：
+Velox port 保留 CH 两层职责，不把 local `ThreadPool` 和 physical worker executor
+合并：
 
 ```text
 FileCacheManager
-  -> FileCacheThreadPool
+  -> FileCacheWorkerPool
        -> folly::CPUThreadPoolExecutor
+
+FileCache instance
+  -> FileCacheThreadPool
+       -> submits bounded local tasks to FileCacheWorkerPool
 ```
 
-这样实际类名不使用 CH 风格，同时避免在 Velox 里额外发明一个假的 `GlobalThreadPool`。
+`FileCacheThreadPool` 自己不创建 OS threads。它只保留 CH local pool 的 task queue、
+per-cache max concurrency、exception collection 和 `wait`。
 
 ## `FileCache` 中的使用点
 
@@ -135,6 +144,62 @@ FileCacheManager
 | free-space eviction | `FileCache::eviction_pool` | `std::unique_ptr<ThreadPool>` |
 
 `BackgroundSchedulePoolTaskHolder` 已由 `FileCacheScheduler` 设计覆盖，不属于本文。
+
+## shared dynamic pool 容量公式
+
+对每个 cache：
+
+```text
+cacheWorkerMax =
+  loadMetadataThreads
+  + (loadMetadataAsynchronously ? 1 : 0) async main worker
+  + backgroundDownloadThreads
+  + 1 metadata cleanup worker
+  + 1 background cleanup callback
+  + (freeSpaceKeepingEnabled
+      ? 1 free-space collector callback + keepFreeSpaceEvictionThreads
+      : 0)
+```
+
+所有 cache 共享 pool：
+
+```text
+workerPoolMax = sum(cacheWorkerMax for unique FileCache instances)
+workerPoolMin = 1
+```
+
+使用 `folly::CPUThreadPoolExecutor({workerPoolMax, workerPoolMin}, ...)`。Folly dynamic
+mode 默认启用：
+
+```text
+pending tasks -> create workers on demand, up to max
+idle timeout (default 60s) -> retire idle workers, down to min
+```
+
+因此 max 使用 conservative sum 不会立即创建所有 threads。CH 默认单 cache：
+
+```text
+16 metadata + 0 async main + 5 background + 1 metadata cleanup
++ 1 scheduled cleanup + 0 free-space = 23 max
+```
+
+steady state 只有 background/cleanup long-running workers 保持 active。
+同 path/config 的 name aliases 共享一个 cache，不重复计 budget。
+
+每个 cache 的 free-space `eviction_pool` 是独立的 **logical**
+`FileCacheThreadPool`，大小为 `keepFreeSpaceEvictionThreads`；它的 physical workers
+仍来自 shared `FileCacheWorkerPool`，所以这些 slots 必须计入 `cacheWorkerMax`。
+
+新增 cache 或动态增加 background download threads：
+
+```text
+recompute manager workerPoolMax
+FileCacheWorkerPool::setNumThreads(newMax)
+create/start new workers
+publish applied settings
+```
+
+增长必须发生在新 worker/task 提交前；shutdown/remove 后才能降低 max。
 
 ## Velox port 接口
 
@@ -214,39 +279,59 @@ state.stop = true
 析构规则对齐 ClickHouse：如果仍然 `joinable`，说明 owner 没有显式 shutdown/join。
 第一版可以 `VELOX_CHECK` 失败，避免静默泄漏后台 worker。
 
+### `FileCacheWorkerPool`
+
+`FileCacheWorkerPool` 对齐 CH `GlobalThreadPool` 的 physical worker 层：
+
+```cpp
+class FileCacheWorkerPool
+{
+public:
+    FileCacheWorkerPool(
+        size_t maxThreads,
+        size_t minThreads,
+        std::string threadNamePrefix);
+
+    FileCacheWorker startThread(FileCacheWorker::Function function);
+    folly::SemiFuture<folly::Unit> schedule(std::function<void()> task);
+
+    void shutdown();
+    void setNumThreads(size_t threads);
+
+private:
+    folly::CPUThreadPoolExecutor executor_;
+};
+```
+
+`FileCacheWorker` 构造时把 long-running function 投递到 `FileCacheWorkerPool`。
+
 ### `FileCacheThreadPool`
 
-`FileCacheThreadPool` 对齐 `ThreadPool` 的语义，底层使用
-`folly::CPUThreadPoolExecutor`：
+`FileCacheThreadPool` 对齐 CH per-instance local `ThreadPool`：
 
 ```cpp
 class FileCacheThreadPool
 {
 public:
-    FileCacheThreadPool(size_t maxThreads, std::string threadNamePrefix);
-    ~FileCacheThreadPool();
+    FileCacheThreadPool(
+        FileCacheWorkerPool & workerPool,
+        size_t maxThreads,
+        size_t queueSize);
 
-    FileCacheThreadPool(const FileCacheThreadPool &) = delete;
-    FileCacheThreadPool & operator=(const FileCacheThreadPool &) = delete;
-
-    FileCacheWorker startThread(FileCacheWorker::Function function);
-
-    folly::SemiFuture<folly::Unit> schedule(std::function<void()> task);
-
+    void scheduleOrThrowOnError(std::function<void()> task);
     void wait();
-    void shutdown();
-
-    size_t getMaxThreads() const;
-    void setMaxThreads(size_t threads);
 
 private:
-    folly::CPUThreadPoolExecutor executor_;
+    FileCacheWorkerPool & workerPool_;
+    size_t maxThreads_;
+    size_t queueSize_;
+    // local task/future state; no owned CPUThreadPoolExecutor
 };
 
 using ThreadPool = FileCacheThreadPool;
 ```
 
-`startThread` 用于 CH-style long-running workers：
+`FileCacheWorkerPool::startThread` 用于 CH-style long-running workers：
 
 ```text
 download worker
@@ -254,14 +339,14 @@ cleanup worker
 load metadata main task
 ```
 
-`schedule` 用于短任务：
+`FileCacheThreadPool::scheduleOrThrowOnError` 用于 per-cache 短任务：
 
 ```text
 metadata listing/loading subtasks
 eviction batches
 ```
 
-`wait` 只等已提交短任务完成。long-running worker 必须通过对应的
+local `wait` 只等本 pool 已提交短任务完成。long-running worker 必须通过对应的
 `FileCacheWorker::requestStop` + `join` 退出。
 
 ## `download_threads` 替换
@@ -406,6 +491,15 @@ Velox port 通过 `using ThreadPool = FileCacheThreadPool` 保持：
 std::unique_ptr<ThreadPool> eviction_pool;
 ```
 
+构造时注入 manager shared physical pool：
+
+```cpp
+eviction_pool = std::make_unique<ThreadPool>(
+    worker_pool,
+    keep_up_free_space_eviction_threads,
+    keep_up_free_space_eviction_threads);
+```
+
 使用方式：
 
 ```text
@@ -505,12 +599,12 @@ download_thread->join()
 ### Phase 3: destroy executors/resources
 
 ```text
-ThreadPool.shutdown()
+FileCacheWorkerPool.shutdown()
 metadata destroyed
 openedFileCache.clear()
 ```
 
-只有 worker 已经退出后，`FileCacheManager::shutdown` 才能释放 `ThreadPool`，从而关闭
+只有 worker 已经退出后，`FileCacheManager::shutdown` 才能释放 `FileCacheWorkerPool`，从而关闭
 底层 `folly::CPUThreadPoolExecutor`。
 
 ## 测试要求
@@ -538,7 +632,12 @@ ThreadFromGlobalPoolImpl / ThreadFromGlobalPool -> FileCacheWorker
 ThreadPoolImpl<ThreadFromGlobalPool> / ThreadPool -> FileCacheThreadPool
 using ThreadFromGlobalPool = FileCacheWorker
 using ThreadPool = FileCacheThreadPool
-FileCacheManager 持有 FileCacheThreadPool，FileCacheThreadPool 内部持有 folly::CPUThreadPoolExecutor
+FileCacheManager 持有 FileCacheWorkerPool，内部持有 folly::CPUThreadPoolExecutor
+each FileCache owns a logical FileCacheThreadPool for free-space eviction
+logical FileCacheThreadPool submits to shared FileCacheWorkerPool
+shared pool max = sum(conservative per-cache worker budgets)
+shared pool min = 1; idle workers retire by Folly timeout
+free-space eviction slots are included in each cache worker budget
 ```
 
 这样真实类名使用 Velox / FileCache 风格，迁移代码仍可通过 `using` 保留 ClickHouse

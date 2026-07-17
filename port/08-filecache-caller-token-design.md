@@ -162,12 +162,16 @@ public:
     FileCacheQueryIdScope(const FileCacheQueryIdScope &) = delete;
     FileCacheQueryIdScope & operator=(const FileCacheQueryIdScope &) = delete;
 
+    static std::string_view currentQueryId();
+
 private:
     std::string previous_query_id;
 };
 ```
 
 thread-local 状态隐藏在 `.cpp` 中并支持嵌套 scope；析构恢复之前的 query id。
+`FileCacheQueryLimit` 也通过 `currentQueryId` 复用同一 execution identity，不再引入第二套
+thread-local query context。
 `FileSegment::getCallerId` 保留静态无参 API：
 
 ```text
