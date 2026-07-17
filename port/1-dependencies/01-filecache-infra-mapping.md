@@ -20,7 +20,7 @@
 | `BackgroundSchedulePool` | cancelable `folly::Timekeeper` future + shared `FileCacheWorkerPool`；详见 [`FileCacheScheduler`](05-filecache-scheduler-design.md) | wrapper + CH aliases |
 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`；详见[线程池设计](04-filecache-thread-pool-design.md) | wrapper，保留 CH-style join/resize/shutdown |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | `WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` |
-| `ConcurrentBoundedQueue` | `folly::MPMCQueue<std::optional<T>>` + sentinel termination | 保留 bounded/blocking/timed/drain语义 |
+| `ConcurrentBoundedQueue` | CH-compatible `FileCacheBoundedQueue<T>` | mutex + condition variables + `finish`，保留 capacity 0、blocked producer/consumer wakeup和 drain语义 |
 | `fs::` 文件系统操作 | `std::filesystem` + 必要的 Velox local `FileSystem` API；详见[基础 shims](02-filecache-basic-shims-design.md) | compat shim |
 | `sipHash128` | 保留 CH cache key hash语义；详见[key/hash设计](../2-file-cache/03-filecache-key-hash-design.md) | 保留小 helper |
 | `absl::flat_hash_map` / `absl::flat_hash_set` | 默认用 `folly::F14FastMap` / `folly::F14FastSet`；需要 value地址稳定时使用 node variant | 按具体 ownership选择 |

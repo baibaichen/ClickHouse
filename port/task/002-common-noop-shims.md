@@ -132,13 +132,18 @@ inline void increment(Event, uint64_t = 1) {}
 
 } // namespace ProfileEvents
 
-template <typename Unit>
+enum Time {
+  Nanoseconds,
+  Microseconds,
+  Milliseconds,
+  Seconds,
+};
+
+template <Time unit>
 class ProfileEventTimeIncrement {
  public:
   explicit ProfileEventTimeIncrement(ProfileEvents::Event) {}
 };
-
-struct Microseconds {};
 
 } // namespace facebook::velox::ch
 ```

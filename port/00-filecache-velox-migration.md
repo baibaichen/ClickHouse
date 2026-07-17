@@ -158,6 +158,11 @@ FileCacheManager::toString
 但 `FileCacheManager` 不继承 `memory::Cache`，因为 `FileCache` 是磁盘 file segment
 cache，不是内存页 cache。
 
+Gluten集成中，process-global owner是 `gluten::VeloxBackend`，与其持有
+`AsyncDataCache` 的模式一致。`VeloxRuntime` / Hive connector只使用 Manager，不负责
+shutdown；`NativeBackendInitializer` 在 Spark Context停止后调用
+`VeloxBackend::tearDown`关闭 Manager。
+
 ## Review 状态
 
 当前范围内的依赖、`FileCache` 文件和使用方均已完成设计 review。每类文档按实现顺序放在

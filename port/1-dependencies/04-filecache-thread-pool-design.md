@@ -139,11 +139,25 @@ per-cache max concurrency、exception collection 和 `wait`。
 |---|---|---|
 | async metadata initialization | `FileCache::load_metadata_main_thread` | `std::unique_ptr<ThreadFromGlobalPool>` |
 | metadata listing/loading | `listing_threads` / `loading_threads` | `std::vector<ThreadFromGlobalPool>` 或 `ThreadPool::schedule` |
-| background download | `CacheMetadata::download_threads` | `std::vector<std::shared_ptr<DownloadThread>>`，其中 `using DownloadThread = ThreadFromGlobalPool` |
+| background download | `CacheMetadata::download_threads` | 保留 `DownloadThread { thread, stopFlag }`；thread使用 `ThreadFromGlobalPool` |
 | metadata cleanup | `CacheMetadata::cleanup_thread` | `std::unique_ptr<ThreadFromGlobalPool>` |
 | free-space eviction | `FileCache::eviction_pool` | `std::unique_ptr<ThreadPool>` |
 
 `BackgroundSchedulePoolTaskHolder` 已由 `FileCacheScheduler` 设计覆盖，不属于本文。
+
+所有原 `ThreadFromGlobalPool(lambda)` call sites显式注入 shared pool：
+
+```cpp
+listing_threads.emplace_back(worker_pool, listing_function);
+loading_threads.emplace_back(worker_pool, loading_function);
+load_metadata_main_thread =
+    std::make_unique<ThreadFromGlobalPool>(worker_pool, load_function);
+```
+
+metadata listing/loading共创建 `loadMetadataThreads` 个并发 blocking workers，该总数已计入
+Manager预算。不能把这些 call sites原样保留为 bare-lambda constructor，也不能提交到一个
+并发上限小于 `loadMetadataThreads` 的 logical pool，否则 listing和 loading之间可能互相
+等待而 starvation。
 
 ## shared dynamic pool容量 contract
 
@@ -184,7 +198,7 @@ publish applied settings
 `FileCacheWorker` 对齐 `ThreadFromGlobalPool` 的语义：
 
 ```text
-由 FileCache 专属 ThreadPool 承载的可 join long-running task handle
+由 shared FileCacheWorkerPool承载的可 join long-running task handle
 ```
 
 接口：
@@ -193,10 +207,9 @@ publish applied settings
 class FileCacheWorker
 {
 public:
-    using StopToken = std::atomic_bool;
-    using Function = std::function<void(const StopToken &)>;
+    using Function = std::function<void()>;
 
-    FileCacheWorker(FileCacheThreadPool & pool, Function function);
+    FileCacheWorker(FileCacheWorkerPool & pool, Function function);
 
     FileCacheWorker(FileCacheWorker &&) noexcept;
     FileCacheWorker & operator=(FileCacheWorker &&) noexcept;
@@ -206,7 +219,6 @@ public:
 
     ~FileCacheWorker();
 
-    void requestStop();
     void join();
     bool joinable() const;
 
@@ -222,7 +234,6 @@ using ThreadFromGlobalPool = FileCacheWorker;
 ```cpp
 struct State
 {
-    std::atomic_bool stop{false};
     std::atomic_bool joined{false};
     folly::Promise<folly::Unit> finished;
     folly::SemiFuture<folly::Unit> future;
@@ -234,7 +245,7 @@ struct State
 ```text
 pool.executor.add(lambda)
 lambda:
-  run function(state.stop)
+  run function()
   set finished
 ```
 
@@ -244,12 +255,6 @@ lambda:
 wait state.future
 propagate exception
 mark joined
-```
-
-`requestStop`：
-
-```text
-state.stop = true
 ```
 
 析构规则对齐 ClickHouse：如果仍然 `joinable`，说明 owner 没有显式 shutdown/join。
@@ -322,8 +327,8 @@ metadata listing/loading subtasks
 eviction batches
 ```
 
-local `wait` 只等本 pool 已提交短任务完成。long-running worker 必须通过对应的
-`FileCacheWorker::requestStop` + `join` 退出。
+local `wait` 只等本 pool 已提交短任务完成。long-running worker的业务 owner先设置自己的
+queue cancel/stop condition并 notify，再调用 `FileCacheWorker::join`。
 
 ## `download_threads` 替换
 
@@ -339,17 +344,22 @@ struct DownloadThread
 std::vector<std::shared_ptr<DownloadThread>> download_threads;
 ```
 
-Velox port 中 `stop_flag` 已封装进 `ThreadFromGlobalPool`，所以 `DownloadThread`
-不再需要保留 struct，直接用 alias：
+stop condition是 download queue业务协议的一部分，不属于 generic thread handle。Velox
+port保留 CH struct：
 
 ```cpp
-using DownloadThread = ThreadFromGlobalPool;
+struct DownloadThread
+{
+    std::unique_ptr<ThreadFromGlobalPool> thread;
+    bool stopFlag = false;
+};
+
 std::vector<std::shared_ptr<DownloadThread>> download_threads;
 ```
 
-差异是：`stop_flag` 不再裸露在 `DownloadThread` 里，而是封装到
-`ThreadFromGlobalPool` 内部，通过 `requestStop` 设置，并通过传入 worker loop 的
-`StopToken` 读取。`DownloadThread` 只是为了保留 ClickHouse 侧字段语义的别名。
+`stopFlag` 与 `download_queue->cancelled` 在同一个 queue mutex下读取，因此缩容也必须在
+该 mutex下写入，再 notify。即使改成 atomic，mutex外 store + notify仍可能发生 lost
+wakeup。
 
 启动：
 
@@ -359,20 +369,16 @@ void CacheMetadata::startup()
     download_threads.reserve(download_threads_num);
     for (size_t i = 0; i < download_threads_num; ++i)
     {
-        download_threads.emplace_back(std::make_shared<DownloadThread>(
-            thread_pool,
-            [this](const std::atomic_bool & stop)
-            {
-                downloadThreadFunc(stop);
-            }));
+        auto worker = std::make_shared<DownloadThread>();
+        worker->thread = std::make_unique<ThreadFromGlobalPool>(
+            worker_pool,
+            [this, worker] { downloadThreadFunc(worker->stopFlag); });
+        download_threads.emplace_back(std::move(worker));
     }
 
     cleanup_thread = std::make_unique<ThreadFromGlobalPool>(
-        thread_pool,
-        [this](const std::atomic_bool &)
-        {
-            cleanupThreadFunc();
-        });
+        worker_pool,
+        [this] { cleanupThreadFunc(); });
 }
 ```
 
@@ -386,22 +392,28 @@ bool CacheMetadata::setBackgroundDownloadThreads(size_t threads_num)
 
     while (download_threads.size() > threads_num)
     {
-        auto removed = download_threads.back();
-        download_threads.pop_back();
-
-        removed->requestStop();
+        const size_t removeThreads = download_threads.size() - threads_num;
+        {
+            std::lock_guard lock(download_queue->mutex);
+            for (size_t i = 0; i < removeThreads; ++i)
+                download_threads[download_threads.size() - 1 - i]->stopFlag = true;
+        }
         download_queue->cv.notify_all();
-        removed->join();
+
+        for (size_t i = 0; i < removeThreads; ++i)
+        {
+            download_threads.back()->thread->join();
+            download_threads.pop_back();
+        }
     }
 
     while (download_threads.size() < threads_num)
     {
-        download_threads.emplace_back(std::make_shared<DownloadThread>(
-            thread_pool,
-            [this](const std::atomic_bool & stop)
-            {
-                downloadThreadFunc(stop);
-            }));
+        auto worker = std::make_shared<DownloadThread>();
+        worker->thread = std::make_unique<ThreadFromGlobalPool>(
+            worker_pool,
+            [this, worker] { downloadThreadFunc(worker->stopFlag); });
+        download_threads.emplace_back(std::move(worker));
     }
 
     return true;
@@ -417,10 +429,7 @@ void CacheMetadata::shutdown()
     cleanup_queue->cancel();
 
     for (auto & download_thread : download_threads)
-    {
-        download_thread->requestStop();
-        download_thread->join();
-    }
+        download_thread->thread->join();
 
     if (cleanup_thread)
     {
@@ -551,7 +560,7 @@ FileCache::deactivateBackgroundOperations
 
 ```text
 for download_thread in download_threads:
-    download_thread->join()
+    download_thread->thread->join()
 
 cleanup_thread->join()
 
@@ -564,12 +573,14 @@ eviction_pool->wait()
 download worker 缩容仍然使用 per-worker stop：
 
 ```text
-download_thread->requestStop()
+under download_queue mutex:
+    download_thread->stopFlag = true
 download_queue->cv.notify_all()
-download_thread->join()
+download_thread->thread->join()
 ```
 
-这个语义不能用 `executor.stop` 替代，因为 `executor.stop` 是线程池整体操作，无法表达
+stop写入必须和 wait predicate使用同一 mutex；这个语义不能用 `executor.stop` 替代，因为
+`executor.stop` 是线程池整体操作，无法表达
 “只停某几个 download workers，保留其他 workers 继续运行”。
 
 ### Phase 3: destroy executors/resources
@@ -589,11 +600,12 @@ openedFileCache.clear()
 
 ```text
 FileCacheWorker 可以启动 long-running worker
-requestStop 后 worker 从 queue wait 中醒来并退出
 join 等待 worker 完成并传播异常
 析构未 join 的 worker 触发检查失败
 setBackgroundDownloadThreads 可以扩容
 setBackgroundDownloadThreads 可以缩容且未被缩容 worker 继续运行
+downscale empty download queue不会 lost wakeup
+stopFlag只在 download_queue mutex下读写
 shutdown 先 cancel queues，再 join download/cleanup workers
 eviction_pool schedule 多个短任务后 wait 全部完成
 ```

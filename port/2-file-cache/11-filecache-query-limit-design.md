@@ -483,6 +483,19 @@ then:
   maintain both main and query iterators
 ```
 
+两个必须保持的协同条件：
+
+```text
+main-priority increment fast path requires query_context == null
+
+when creating a main entry with query_context:
+  query_iterator = query_context.tryGet(key, offset)
+  add only when query_iterator is null
+```
+
+第一条防止 global accounting成功但 query-local accounting缺失；第二条允许并发 reserver
+复用已存在的 query record，避免 duplicate `add` exception。
+
 query-local LRU 只限制当前 query 下载进 cache 的内容，不替代全局 LRU/SLRU。
 
 ## 测试要求
@@ -502,6 +515,7 @@ skipDownloadIfExceeds maps to recache flag inversion
 ```text
 add / tryGet / remove
 duplicate add rolls back priority entry
+tryGet-before-add reuses an existing key+offset record
 remove missing record throws
 ```
 

@@ -142,7 +142,20 @@ background_eviction_pos
 foreground reserve eviction 和 background free-space keeping 不应互相重置扫描位置
 ```
 
-`State` 里的 size/elements 计数直接迁移。`CurrentMetrics` 调用走 no-op shim。
+`State` 里的 size/elements计数直接迁移。CH对 zero-size placeholder entry的语义是：
+
+```text
+entry.size == 0
+  -> queue中存在 iterator
+  -> state size不增加
+  -> state elements也不增加
+
+first positive increment
+  -> size和 elements(1)一起计入
+```
+
+不能采用其他实现中“size为 0但 elements加 1”的偏离；本迁移以 CH为唯一算法基准。
+`CurrentMetrics` 调用走 no-op shim。
 
 容器选择：
 
@@ -198,8 +211,10 @@ System  -> System priority
 容量拆分：
 
 ```text
-data_size   = max_size * (1 - system_segment_size_ratio)
-system_size = max_size * system_segment_size_ratio
+data_size       = max_size * (1 - system_segment_size_ratio)
+data_elements   = max_elements * (1 - system_segment_size_ratio)
+system_size     = max_size * system_segment_size_ratio
+system_elements = max_elements * system_segment_size_ratio
 ```
 
 `modifySizeLimits` 必须保持 rollback 语义：
@@ -209,6 +224,8 @@ system_size = max_size * system_segment_size_ratio
 System 修改失败时 rollback Data
 再更新 wrapper 自己的 max_size / max_elements
 ```
+
+size和 elements必须使用同一个 ratio重算并一起传给两个 sub-priorities；不能只拆 bytes。
 
 `SplitIterator::getType` 保持：
 
@@ -240,6 +257,14 @@ afterEvictState():
 必须保留：
 
 ```text
+evict
+afterEvictWrite
+afterEvictState
+requiresAfterEvictWrite
+requiresAfterEvictState
+removeQueueEntries
+getOriginalQueueType
+
 queue_entries_to_invalidate
 after_evict_write_callbacks
 after_evict_state_callbacks
@@ -250,6 +275,54 @@ on_evict_callback
 
 `original_queue_types` 用于 dynamic resize 失败后恢复 entry 原队列类型，尤其是 SLRU
 protected/probationary。
+
+`removeQueueEntries` 是 dynamic resize在 filesystem删除前提前移除 queue entries的
+必要步骤，不能 stub。两个 `requiresAfterEvict*` predicate用于决定是否需要获取对应
+write/state lock。
+
+dynamic resize失败恢复时，`EvictionCandidates::getOriginalQueueType`提供原 queue type，
+随后由 `FileSegment::restoreQueueIteratorAfterDelayedRemoval`恢复 iterator；后者属于
+`FileSegment` API，不是 `EvictionCandidates` member。
+
+## `EvictionInfo`
+
+真实结构不是一个全局 target，而是 per-queue map：
+
+```cpp
+class EvictionInfo
+    : public HashMap<QueueID, QueueEvictionInfoPtr>
+{
+    size_t sizeToEvict;
+    size_t elementsToEvict;
+    size_t holdSize;
+    size_t holdElements;
+    HashSet<CacheUsagePtr> keptAliveCacheUsage;
+};
+```
+
+LRU产生一个 queue entry；SLRU可同时产生 probationary/protected entries；Split再合并
+Data/System sub-priorities。`add` / `addOrUpdate`必须按 `QueueID`保留独立 target和 hold，
+同时 aggregate totals。合并时转移 `keptAliveCacheUsage`，保证 raw per-user priority
+pointer在 eviction完成前有效。
+
+不能坍缩成单 `QueueEvictionInfo`，否则无法表达 SLRU/Split多队列 target，也会丢失
+overcommit future support所需的 lifetime pin。
+
+## `collectEvictionInfo`
+
+保留 `isTotalSpaceCleanup`参数及两条不同路径：
+
+```text
+foreground reserve:
+  compute shortage relative to configured max size/elements
+  account existing iterator and held space
+
+background keep-free-space cleanup:
+  sizeToEvict = min(requestedSize, currentSize)
+  elementsToEvict = min(requestedElements, currentElements)
+```
+
+background free-space keeper依赖第二条路径；不能复用 foreground shortage公式。
 
 容器替换按
 [`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)执行：
@@ -345,8 +418,12 @@ SLRU add to probationary
 SLRU second access promotes to protected
 SLRU addForRestore restores protected/probationary
 SplitFileCachePriority routes General/Data to Data and System to System
+SplitFileCachePriority partitions both size and elements
 EvictionInfo add/addOrUpdate/releaseHoldSpace
+EvictionInfo preserves separate QueueID entries and kept-alive usage pins
 EvictionCandidates evict failure records failed candidates and resets state in destructor
+EvictionCandidates removeQueueEntries/restore for dynamic resize
+total-space cleanup uses current live size/elements instead of foreground shortage
 CacheUsagePerUser snapshot/getOrSet/touch/collectIdleClients minimal behavior
 ```
 

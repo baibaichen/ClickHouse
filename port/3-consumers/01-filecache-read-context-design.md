@@ -41,8 +41,8 @@ struct FileCacheReadOptions
     // 启用 filesystem cache 时是否倾向使用更大的远端读 buffer，减少 cache 碎片。
     bool preferBiggerBufferSize = true;
 
-    // 一次读取最多持有的 file segment 数；0 表示不限制。
-    uint64_t segmentsBatchSize = 0;
+    // 一次读取最多持有的 file segment 数。
+    uint64_t segmentsBatchSize = 20;
     // 单次读取覆盖的 boundary alignment override。
     std::optional<uint64_t> boundaryAlignment;
 
@@ -78,6 +78,9 @@ struct FileCacheReadOptions
 - `maxDownloadSizePerQuery` 和 `skipDownloadIfExceedsPerQueryCacheWriteLimit`
   配合 `enableFilesystemQueryCacheLimit` 使用。
 
+`segmentsBatchSize` 默认保持 CH `ReadSettings::segments_batch_size = 20`。改成 0会让大范围
+scan同时 pin全部 segments并阻碍 eviction，不是等价默认值。
+
 ## `FileCacheRequestContext`
 
 `FileCacheRequestContext` 表达单次请求的身份和分类信息。
@@ -108,6 +111,56 @@ FileCacheOriginInfo {
 }
 ```
 
+default Hive Builder mapping：
+
+```text
+queryId   <- ConnectorQueryCtx::queryId
+cacheable <- ReaderOptions::cacheable and FileIoContext::cacheable
+userId    <- FileCacheManager stable commonUserId
+segmentType <- derived from logical file path
+```
+
+`ConnectorQueryCtx` 当前没有 user id，因此不能从 `driverId` / `scanId`伪造用户身份。未来
+宿主提供真实 user mapping时再注入 resolver；在此之前使用与 CH common origin一致的稳定
+Manager identity。
+
+## 文件 identity和 cache key
+
+文件版本信息与 query/user context分离：
+
+```cpp
+struct FileCacheFileIdentity
+{
+    std::string path;
+    std::string etag;
+};
+```
+
+key derivation：
+
+```text
+etag.empty():
+  FileCacheKey::fromPath(path)
+
+etag non-empty:
+  FileCacheKey::fromKey(SipHash128(path + etag))
+```
+
+当前 Gluten接入尚未传 etag，因此先使用 path-only。后续 object-storage plumbing传入 etag
+后自动切换到 versioned key；不能继续复用 path-only entry，否则同路径对象覆盖后可能命中
+旧内容。
+
+Builder接收可注入 resolver：
+
+```cpp
+using FileCacheFileIdentityResolver = std::function<FileCacheFileIdentity(
+    const hive::FileHandle &,
+    const ConnectorQueryCtx &)>;
+```
+
+default resolver使用 `ReadFile::getName` 作为 path并返回空 etag。宿主后续提供 etag时只替换
+resolver，不修改 `FileCacheBufferedInput` 状态机。
+
 ## 配置来源
 
 ### `ReaderOptions`
@@ -126,9 +179,9 @@ FileCacheOriginInfo {
 - `readRangeHint`
 - `tokenProvider`
 - `fileReadOps`
-- `cacheable`
 
-这些字段可以作为 `FileCacheRequestContext` 和 `FileCacheReadOptions` 的补充来源，
+`cacheable` 只来自 `ReaderOptions` / `FileIoContext`，不是 `FileOptions` 字段。这些字段
+可以作为 `FileCacheRequestContext` 和 `FileCacheReadOptions` 的补充来源，
 但不能替代 cache 实例配置。
 
 ## 配置加载接口
@@ -171,6 +224,7 @@ FileCacheManager
 FileCacheBufferedInput
   -> receives FileCacheReadOptions
   -> receives FileCacheRequestContext
+  -> receives FileCacheFileIdentity-derived key
   -> creates FileCacheInputStream
 
 FileCacheInputStream::initializeIfNeeded

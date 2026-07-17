@@ -90,6 +90,32 @@ remote -> FileCache 本地 segment -> AsyncDataCache memory entry
 
 ## 类结构
 
+### Host `BufferedInputBuilder` integration
+
+Velox Hive scan的真实接入点是 process-global
+`hive::BufferedInputBuilder::registerBuilder`。Gluten已经注册
+`cpp/velox/memory/GlutenBufferedInputBuilder.h`，因此不新增平行 Builder；扩展它的
+`create`：
+
+选择顺序：
+
+```text
+if VeloxBackend-owned FileCacheManager is installed and FileCache is enabled:
+  resolve FileCacheFileIdentity(path, etag)
+  derive key: path-only when etag empty; path+etag when non-empty
+  choose cache/default name and origin
+  create FileCacheBufferedInput
+else if ConnectorQueryCtx has AsyncDataCache:
+  create CachedBufferedInput
+else:
+  create GlutenDirectBufferedInput
+```
+
+这样保留 Gluten现有 fallback，并覆盖所有已经调用 Builder的路径：
+`FileSplitReader`、`FileIndexReader`、Iceberg positional/equality delete readers。
+Builder是接入层，通过 `FileCacheManager::getInstance` 使用 non-owning pointer，不拥有
+Manager，也不负责 shutdown。
+
 ### `FileCacheBufferedInput`
 
 ```cpp
@@ -102,6 +128,7 @@ public:
         FileCacheKey cacheKey,
         FileCacheOriginInfo origin,
         FileCacheReadOptions cacheOptions,
+        FileCacheRequestContext requestContext,
         const MetricsLogPtr & metricsLog,
         std::shared_ptr<IoStatistics> ioStatistics,
         std::shared_ptr<velox::IoStats> ioStats,
@@ -120,11 +147,14 @@ public:
 
     bool isBuffered(uint64_t offset, uint64_t length) const override;
 
+    void preload() override;
+    bool preloaded() const override { return false; }
     bool shouldPreload(int32_t numPages = 0) override;
     bool shouldPrefetchStripes() const override;
     std::unique_ptr<BufferedInput> clone() const override;
 
-    bool hasCache() const override { return true; }
+    folly::Executor * executor() const override { return executor_; }
+    bool hasCache() const override { return false; }
 
     FileCache & fileCache() const { return *cache_; }
     const std::shared_ptr<ReadFile> & sourceReadFile() const { return sourceReadFile_; }
@@ -138,16 +168,14 @@ private:
     {
         velox::common::Region region;
         const StreamIdentifier * sid = nullptr;
-        FileCacheInputStream * stream = nullptr;
     };
-
-    FileCacheRequestContext makeCacheContext(const FileIoContext & context) const;
 
     std::shared_ptr<ReadFile> sourceReadFile_;
     FileCachePtr cache_;
     FileCacheKey cacheKey_;
     FileCacheOriginInfo origin_;
     FileCacheReadOptions cacheOptions_;
+    FileCacheRequestContext requestContext_;
     std::shared_ptr<IoStatistics> ioStatistics_;
     std::shared_ptr<velox::IoStats> ioStats_;
     folly::Executor * executor_;
@@ -157,18 +185,52 @@ private:
 };
 ```
 
+constructor必须显式委托有 memory pool的基类：
+
+```cpp
+BufferedInput(
+    readFile,
+    readerOptions.memoryPool(),
+    metricsLog,
+    ioStatistics.get(),
+    ioStats.get(),
+    BufferedInput::kMaxMergeDistance,
+    std::nullopt,
+    fileReadOps,
+    requestContext.cacheable)
+```
+
+`ReaderOptions::memoryPool` 必须 non-null。
+
 `FileCacheBufferedInput` 的职责：
 
 - 在 `enqueue` 里创建 `FileCacheInputStream`；
-- 在 `load` 里处理已经 enqueue 的 regions；
+- 在 `load` 里只处理独立于 stream lifetime的 region planning；
 - 在 `read` 里支持未计划的读取；
-- 在 `isBuffered` 里复用 ClickHouse `isContentCached` 的判断思路；
+- 在 `isBuffered` 里使用不创建 segment的 `FileCache::get`探测；
 - 提供构造 `FileCacheRequestContext` 的统一入口。
 - 暴露 `FileCacheInputStream` 需要的不可变上下文，例如 `FileCache`、cache key、
   origin、settings、file size 和 source `ReadFile`。
 
-第一版 `load` 可以只做轻量 prepare，不强制预下载远端数据。后续再考虑基于
-`executor_` 做异步预下载。
+第一版 `load` 是 no-op planning barrier，不初始化 stream，也不强制预下载远端数据。
+后续若用 `executor_` 预下载，只能基于 copied region/value state，不能保存或解引用
+caller-owned `SeekableInputStream*`。
+
+`hasCache` 返回 false不是说内部未使用 `FileCache`，而是因为 Velox该 API表示
+`CachePin`-compatible backing cache：返回 true后 caller可调用 `cacheRegion` /
+`findCachedRegion`，其 `CachedRegion` 类型无法表示 CH `FileSegment`。FileCache路径的
+mutual exclusion由 Builder selection保证。
+
+确定的 DWIO兼容值：
+
+```text
+preload()              -> no-op; preloaded() remains false
+shouldPreload()        -> false
+shouldPrefetchStripes()-> false
+```
+
+`shouldPrefetchStripes=false` 强制 DWRF走 buffer-copy stripe metadata路径，避免
+`StripeMetadataCache` 把普通 `SeekableInputStream` hard-cast成 `CacheInputStream`。
 
 ### `FileCacheInputStream`
 
@@ -254,6 +316,7 @@ private:
     LogType logType_;
 
     uint64_t position_ = 0;
+    uint64_t outputBufferStart_ = 0;
     BufferPtr outputBuffer_;
     size_t offsetInOutputBuffer_ = 0;
     size_t outputBufferSize_ = 0;
@@ -263,6 +326,17 @@ private:
     bool initialized_ = false;
 };
 ```
+
+`position_` 和 `outputBufferStart_` 都是 **region-relative**。所有 cache/file调用使用：
+
+```text
+absolutePosition = checkedAdd(region.offset, position)
+absoluteReadUntil = checkedAdd(region.offset, region.length)
+```
+
+`ByteCount` / `seekToPosition` / `SkipInt64` 只使用 relative position；`FileCache::get*`、
+`FileSegment` range、remote/local `ReadFile` offset只使用 absolute position。
+`ReadInfo::readUntilPosition` 保存 absolute region end，不等于整个 file size。
 
 `FileCacheInputStream::Next` 对应 ClickHouse
 `CachedOnDiskReadBufferFromFile::nextImplStep`。
@@ -276,31 +350,39 @@ private:
 ```text
 FileCacheBufferedInput::enqueue(region)
   -> stream = FileCacheInputStream(region)
-  -> requests_.push_back({region, sid, stream.get()})
+  -> requests_.push_back({region, sid})
   -> return stream
 ```
 
-这里不要创建 `AsyncDataCache` entry，也不要分配 `CachePin`。
+这里不要创建 `AsyncDataCache` entry，也不要分配 `CachePin`。`requests_` 只保存 copied
+region和 non-owning `StreamIdentifier` metadata，绝不保存 stream pointer。
 
 ### `load`
 
 Velox 调用 `load` 表示之前 enqueue 的 regions 可以被预处理。
 
-第一版建议：
+第一版：
 
 ```text
 load()
-  -> 对每个 request 调 stream->initializeIfNeeded()
-  -> 只获取 FileSegmentsHolder / prepare metadata
-  -> 不主动远端下载
+  -> no-op planning barrier
+  -> clear or retain copied requests according to next planning cycle
+  -> do not dereference any stream
 ```
 
-这样能先保持 ClickHouse 的按需 downloader 语义。后续可以扩展：
+原因：`enqueue` 把 ownership通过 `unique_ptr`交给 caller，接口不保证 stream存活到
+后续 `load`。即使当前 `preload` / DWRF stripe-prefetch override已关闭已知的
+discard-then-load路径，保存 `stream.get()` 并在 `load`调用方法仍违反 ownership
+contract，并会在新 caller丢弃返回值时产生 use-after-free。
+
+实际 `FileSegmentsHolder` 获取只在 `Next` 的 `initializeIfNeeded` 中 lazy执行，保持
+ClickHouse按需 downloader语义。后续可以扩展：
 
 ```text
 load(prefetch)
-  -> 用 executor 触发预下载
+  -> 用 copied region在 executor触发预下载
   -> 但仍然必须走 getOrSetDownloader / reserve / writeCache
+  -> task不得捕获 FileCacheInputStream*
 ```
 
 ### `read`
@@ -392,11 +474,11 @@ fileSegments->completeAndPopFront(...)
 
 | 位置 | `FileCache` 交互 |
 |---|---|
-| 构造函数 | 保存 `FileCachePtr`、`FileCacheKey`、`FileCacheOriginInfo`、`FileCacheReadOptions` |
+| 构造函数 | 保存 `FileCachePtr`、`FileCacheKey`、`FileCacheOriginInfo`、`FileCacheReadOptions`、request context |
 | `enqueue` | 创建 `FileCacheInputStream`；不调用 `FileCache::getOrSet`，避免 enqueue 阶段提前改变 cache 状态 |
-| `load` | 第一版只调用各 stream 的 `initializeIfNeeded`；是否触发实际预下载留到后续 |
+| `load` | 第一版不解引用 stream；保持 lazy `Next` initialization |
 | `read` | 对未计划读取创建新的 `FileCacheInputStream`，仍然走同一套 `FileCache` 状态机 |
-| `isBuffered` | 可选：创建只读探测上下文，复用 `FileCacheInputStream::isRangeCached` 或 ClickHouse `isContentCached` 规则 |
+| `isBuffered` | 调 `FileCache::get` 检查已有 segments；绝不调用 `getOrSet` / reader `initialize` |
 
 ### `FileCacheInputStream`
 
@@ -405,7 +487,7 @@ fileSegments->completeAndPopFront(...)
 
 | 函数 | `FileCache` / `FileSegment` 交互 |
 |---|---|
-| 构造函数或 `initializeIfNeeded` | 调 `owner_->fileCache().getQueryContextHolder`，保持 query cache limit 上下文 |
+| 构造函数 | 调 `owner_->fileCache().getQueryContextHolder`一次，holder保持到 stream析构 |
 | `nextFileSegmentsBatch` | 按设置调用 `getDownloadedContiguousOrEmpty` / `get` / `getOrSet` |
 | `createReadFromFileSegmentState` | 根据 `FileSegment::state` 选择 `ReadType`；必要时调用 `wait`、`getOrSetDownloader`、`resetDownloader` |
 | `getCacheReadBuffer` | 通过 `fileSegment.getPath` 打开本地 cache segment 文件，构造 `ReadBufferFromVeloxReadFile` |
@@ -417,6 +499,10 @@ fileSegments->completeAndPopFront(...)
 | 析构函数 | 如果仍持有未完成 segment 或 downloader，调用 `completePartAndResetDownloader` / `completeAndPopFront` 释放状态 |
 
 ### `ReadBufferFromVeloxReadFile`
+
+`isBuffered` 的 range检查允许读取当前 downloaded prefix，但不能创建 hole/segment或抢
+downloader。ClickHouse `CachedOnDiskReadBufferFromFile::isContentCached` 会 lazy
+initialize并可能走 `getOrSet`，不能直接复用该副作用。
 
 `ReadBufferFromVeloxReadFile` 不直接调用 `FileCache`。它只负责把 Velox `ReadFile`
 包装成 ClickHouse 风格的 buffer：
@@ -447,7 +533,7 @@ FileCacheInputStream
 | ClickHouse 函数 | Velox 目标函数 | 调用方 |
 |---|---|---|
 | `nextFileSegmentsBatch` | `FileCacheInputStream::nextFileSegmentsBatch` | `initializeIfNeeded`；当前 batch 读完后也会再次调用 |
-| `initialize` | `FileCacheInputStream::initializeIfNeeded` | `Next` 第一次读取时调用；`load` 可以提前调用 |
+| `initialize` | `FileCacheInputStream::initializeIfNeeded` | 仅由 `Next` / out-of-buffer seek后首次读取调用 |
 | `createReadFromFileSegmentState` | `FileCacheInputStream::createReadFromFileSegmentState` | `prepareReadFromFileSegmentState` |
 | `prepareReadFromFileSegmentState` | `FileCacheInputStream::prepareReadFromFileSegmentState` | `Next` 首次读当前 segment；`updateReadStateIfNeeded`；切换下一个 segment 后 |
 | `canStartFromCache` | `FileCacheInputStream::canStartFromCache` | `createReadFromFileSegmentState` |
@@ -497,10 +583,10 @@ REMOTE_FS_READ_BYPASS_CACHE:
 |---|---|---|
 | `nextImpl` | `FileCacheInputStream::Next` 外层 try/catch 包装 | Velox format reader |
 | `seek` | `FileCacheInputStream::seekToPosition` | ORC/DWRF position provider |
-| `getPosition` | `FileCacheInputStream::ByteCount` / 内部 `position_` | Velox stream API |
+| `getPosition` | `FileCacheInputStream::ByteCount` / region-relative `position_` | Velox stream API |
 | `setReadUntilPosition` / `setReadUntilEnd` | `FileCacheInputStream` 的 region/window 初始化，不作为 public API 暴露 | `FileCacheBufferedInput::read/enqueue` 创建 stream 时 |
 | `readBigAt` | 不直接迁移；其 positioned-read 结构用于指导 `FileCacheInputStream` 的局部 `ReadInfo` 设计 | 如果未来实现 `CachedReadFile` 兜底，可参考它 |
-| `isContentCached` | `FileCacheBufferedInput::isBuffered` 或 `FileCacheInputStream::isRangeCached` | Velox reader 查询是否已 buffered |
+| `isContentCached` | `FileCacheBufferedInput::isBuffered` 的 no-create `FileCache::get` probe | Velox reader 查询是否已 cached |
 | `isSeekCheap` | 可选；如果 Velox 调用点需要，再映射到内部 helper | 暂不作为第一版必需接口 |
 | `appendFilesystemCacheLog` | 可选迁移为 Velox stats/log hook | `completeCurrentSegmentAndAdvance` / 析构 |
 
@@ -553,14 +639,14 @@ enqueue(region)
   -> remember Request
 
 load(logType)
-  -> for request in requests:
-         request.stream->initializeIfNeeded()
+  -> planning barrier over copied Request values
+  -> no stream dereference
 
 read(offset, length)
   -> new FileCacheInputStream(...)
 
 isBuffered(offset, length)
-  -> optional read-only probe based on FileCacheInputStream::isRangeCached
+  -> FileCache::get no-create probe
 ```
 
 ## 交互图
@@ -666,6 +752,16 @@ WriteBufferFromVeloxWriteFile
 
 `FileCacheInputStream` 是 `SeekableInputStream`，需要处理流式消费语义。
 
+坐标 invariant：
+
+```text
+position_ / ByteCount / seek provider -> region-relative
+absolutePosition()                    -> region.offset + position_
+readInfo_.readUntilPosition           -> region.offset + region.length
+```
+
+所有 addition使用 checked arithmetic，并验证 region不超过 source file size。
+
 ### `BackUp`
 
 只允许回退当前 `outputBuffer_` 内已经返回但还没被上层永久消费的字节：
@@ -694,17 +790,31 @@ BackUp(count)
 ### `seekToPosition`
 
 Velox 的 `seekToPosition` 用于 reader 内部 position provider。它应该重置当前
-stream 的局部状态：
+stream 的局部状态，但先保留 current output buffer内 fast path：
 
 ```text
-position_ = newPosition
-readInfo_.reset()
-state_.reset()
-initialized_ = false
+newPosition = provider.next() // region-relative
+validate newPosition <= region.length
+
+if outputBufferStart <= newPosition
+   && newPosition <= outputBufferStart + outputBufferSize:
+  position_ = newPosition
+  offsetInOutputBuffer_ = newPosition - outputBufferStart
+  keep holder/downloader/state
+else:
+  release downloader if held
+  readInfo_.reset()
+  state_.reset()
+  position_ = newPosition
+  initialized_ = false
 ```
 
-这对应 ClickHouse `CachedOnDiskReadBufferFromFile::seek` 的“reset state for seek”
-行为。
+`queryContextHolder_` 不 reset；它在 constructor创建一次并保持到 stream析构。目标等价于
+CH reader使用 `allow_seeks_after_first_read=true`：buffer内 seek是 O(1)，跨 buffer seek
+才重建当前 segment batch。
+
+ORC/DWRF随机 row-group seek必须增加 correctness和 benchmark coverage，测量 holder重建、
+downloader lease和 remote overread；不能只用顺序 scan证明此路径。
 
 ## 与 `CachedBufferedInput` / `AsyncDataCache` 的关系
 
@@ -734,18 +844,59 @@ initialized_ = false
 但第一阶段可以不实现 `CachedReadFile`。先把 ClickHouse
 `CachedOnDiskReadBufferFromFile` 的状态机迁到 `FileCacheInputStream`，更贴近真实语义。
 
+## 测试要求
+
+### Builder和 identity
+
+```text
+FileCache disabled delegates to existing hive::createBufferedInput
+FileCache enabled suppresses AsyncDataCache path
+FileSplitReader / FileIndexReader / Iceberg delete readers use registered Builder
+empty etag derives FileCacheKey::fromPath(path)
+same path + different non-empty etag derives different keys
+default origin uses stable Manager commonUserId
+```
+
+### BufferedInput contract
+
+```text
+destroy enqueue result before load; load does not dereference freed stream
+load does not create FileSegment
+preload leaves preloaded false
+shouldPrefetchStripes is false
+DWRF stripe metadata uses copied-buffer constructor, not CacheInputStream cast
+executor returns injected executor
+hasCache is false and cacheRegion/findCachedRegion are not advertised
+isBuffered miss does not create cache metadata
+```
+
+### stream coordinates和 seek
+
+```text
+non-zero region offset: ByteCount remains relative
+non-zero region offset: FileCache/ReadFile offsets are absolute
+checked overflow for region.offset + region.length
+BackUp only within last output buffer
+seek within current buffer keeps holder/downloader
+seek outside current buffer releases state but keeps queryContextHolder
+random row-group seek returns correct data
+random seek benchmark reports holder rebuilds, remote reads and cache writes
+```
+
 ## 最小落地步骤
 
-1. 添加 `FileCacheBufferedInput` / `FileCacheInputStream` 空壳，先委托底层
+1. 扩展 Gluten现有 `GlutenBufferedInputBuilder`，FileCache disabled时保持现有
+   `CachedBufferedInput` / `GlutenDirectBufferedInput`选择。
+2. 添加 `FileCacheBufferedInput` / `FileCacheInputStream` 空壳，先委托底层
    `ReadFile` 直接读取，保证 Velox reader 接口可接入。
-2. 加入 `FileCacheReadInfo`、`ReadType`、`ReadFromFileSegmentState`。
-3. 加入 `ReadBufferFromVeloxReadFile`，构造时接收 Velox `ReadFile`，内部自带缓冲区。
-4. 用同一个 `ReadBufferFromVeloxReadFile` 支持远端源文件和本地 cache segment 文件。
-5. 实现 `initializeIfNeeded`：接 `getDownloadedContiguousOrEmpty` / `get` /
+3. 加入 `FileCacheReadInfo`、`ReadType`、`ReadFromFileSegmentState`。
+4. 加入 `ReadBufferFromVeloxReadFile`，构造时接收 Velox `ReadFile`，内部自带缓冲区。
+5. 用同一个 `ReadBufferFromVeloxReadFile` 支持远端源文件和本地 cache segment 文件。
+6. 实现 `initializeIfNeeded`：接 `getDownloadedContiguousOrEmpty` / `get` /
    `getOrSet`。
-6. 实现 `prepareCurrentSegment`：迁移 `createReadFromFileSegmentState`。
-7. 实现 `readFromCurrentSegment`：迁移 `predownloadForFileSegment` /
+7. 实现 `prepareCurrentSegment`：迁移 `createReadFromFileSegmentState`。
+8. 实现 `readFromCurrentSegment`：迁移 `predownloadForFileSegment` /
    `readFromFileSegment`。
-8. 实现 `completeCurrentSegmentAndAdvance` 和析构清理。
-9. 接入 DWIO/scan 创建 `BufferedInput` 的位置。
-10. 禁用同一路径上的 `AsyncDataCache` raw bytes retention。
+9. 实现 `completeCurrentSegmentAndAdvance` 和析构清理。
+10. 实现 region-relative stream API到 absolute FileCache offset转换及 seek fast path。
+11. 禁用同一路径上的 `AsyncDataCache` raw bytes retention。

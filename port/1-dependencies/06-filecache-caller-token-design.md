@@ -260,10 +260,13 @@ FileCacheInputStream synchronous entry
 
 ```text
 FileCacheInputStream::Next
-load/initialize path if it can elect a downloader
+future explicit prefetch task if it can elect a downloader
 seek/reset path if it completes a held segment
 FileCacheInputStream destructor
 ```
+
+第一版 `FileCacheBufferedInput::load` 不解引用 stream且不进入 segment状态机，因此不建立
+query scope。
 
 析构函数必须在 scope 仍然生效时显式 complete/reset holder；不能只依赖成员在析构函数体
 之后自动析构。

@@ -240,11 +240,17 @@ F14 提供跨 rehash 的 iterator 稳定性。
 按[线程池设计](../1-dependencies/04-filecache-thread-pool-design.md)：
 
 ```cpp
-using DownloadThread = ThreadFromGlobalPool;
+struct DownloadThread
+{
+    std::unique_ptr<ThreadFromGlobalPool> thread;
+    bool stopFlag = false;
+};
+
 std::vector<std::shared_ptr<DownloadThread>> download_threads;
 ```
 
-per-worker stop 封装进 `FileCacheWorker`；不再保留外层 `{thread, stop_flag}` struct。
+保留外层 stop state；缩容在 `download_queue` mutex下设置 `stopFlag`，再 notify并 join。
+generic `FileCacheWorker` 不拥有业务 stop token。
 
 ### `LockedKey`
 
@@ -480,7 +486,8 @@ then destroy executor/resources
 download worker 缩容：
 
 ```text
-requestStop selected workers
+under download queue mutex:
+  set selected workers' stopFlag
 notify_all download queue
 join selected workers
 erase selected workers

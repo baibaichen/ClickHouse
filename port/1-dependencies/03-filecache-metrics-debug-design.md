@@ -77,7 +77,15 @@ namespace ProfileEvents
     inline void increment(Event, uint64_t = 1) {}
 }
 
-template <typename Unit>
+enum Time
+{
+    Nanoseconds,
+    Microseconds,
+    Milliseconds,
+    Seconds,
+};
+
+template <Time unit>
 class ProfileEventTimeIncrement
 {
 public:
@@ -85,7 +93,9 @@ public:
 };
 ```
 
-第一版只声明已迁移代码实际用到的 enum。迁移过程中遇到新 event，再补 enum，不做全量搬运。
+第一版只声明已迁移代码实际用到的 enum。`Time` 和 non-type template parameter必须保留，
+因为 `Guards.h` 使用 `ProfileEventTimeIncrement<Microseconds>`；写成
+`template <typename Unit>` 不能编译。迁移过程中遇到新 event，再补 enum，不做全量搬运。
 
 ### `CurrentMetrics`
 

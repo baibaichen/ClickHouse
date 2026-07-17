@@ -44,7 +44,11 @@ velox/ch/Disks/IO/FileCacheBufferedInput*
 velox/ch/Disks/IO/FileCacheInputStream*
 velox/ch/IO/ReadBufferFromVeloxReadFile*
 velox/ch/IO/WriteBufferFromVeloxWriteFile*
+velox/ch/Common/SipHash128*
 velox/ch/Common/FileCacheScheduler*
+velox/ch/Common/ThreadPool*
+velox/ch/Common/FileCacheQueryIdScope*
+velox/ch/Common/StatusFile*
 ```
 
 第一版不拆多个 target，避免 target 间互相依赖过早复杂化。等编译稳定后，如果需要，
@@ -73,8 +77,11 @@ velox/ch/Interpreters/FileCache/
 velox/ch/Common/ClickHouseAliases.h
 velox/ch/Common/FileCacheException.h
 velox/ch/Common/FileCacheMetrics.h
+velox/ch/Common/FileCacheBoundedQueue.h
 velox/ch/Common/SipHash128.h / .cpp
 velox/ch/Common/FileCacheScheduler.h / .cpp
+velox/ch/Common/ThreadPool.h / .cpp
+velox/ch/Common/FileCacheQueryIdScope.h / .cpp
 velox/ch/IO/ReadBufferFromVeloxReadFile.h / .cpp
 velox/ch/IO/WriteBufferFromVeloxWriteFile.h / .cpp
 ```
@@ -412,16 +419,21 @@ FileCacheInputStream::Next
 FileCacheInputStream::BackUp / SkipInt64 / seekToPosition
 ```
 
-### 可以 stub 的内容
+### 确定的第一版行为
 
-- `load` 第一版只初始化，不主动下载。
-- `shouldPreload` 可先 false。
+- `load` 是 no-op planning barrier；不能解引用 `enqueue` 返回的 stream。
+- `preload` 是 no-op，`preloaded` / `shouldPreload` 返回 false。
+- `shouldPrefetchStripes` 返回 false，避免 DWRF要求 `CacheInputStream`。
+- `executor` 返回 constructor-injected executor。
+- `hasCache` 返回 false，因为 `FileSegment` 不满足 `CachePin`-based
+  `cacheRegion` / `findCachedRegion` API。
 
 ### 不能 stub 的内容
 
 - `Next` 的三态 read path。
 - `BackUp` 当前 output buffer 内回退。
-- `seekToPosition` reset state。
+- `seekToPosition` region-relative坐标和 current-buffer fast path。
+- FileCache lookup使用 `region.offset + position` absolute坐标。
 - 不得走 `AsyncDataCache` raw bytes retention。
 
 ### 验证
@@ -432,13 +444,18 @@ cache hit -> local cache read
 bypass mode
 temp cache-only miss
 BackUp / Skip / seek
+enqueue result destroyed before load
+DWRF stripe metadata cache uses non-CacheInputStream path
+random row-group seek correctness/performance
 ```
 
 ## 阶段 7：DWIO/scan builder 接入
 
 ### 目标
 
-找到 Velox 创建 `BufferedInput` 的位置，按配置选择：
+扩展 Gluten已经通过 `hive::BufferedInputBuilder::registerBuilder` 注册的
+`GlutenBufferedInputBuilder`。它覆盖 `FileSplitReader`、`FileIndexReader`以及
+Iceberg positional/equality delete readers，并按配置选择：
 
 ```text
 if FileCache enabled:
@@ -452,8 +469,16 @@ else:
 ### 原则
 
 - `FileCacheBufferedInput` 和 `CachedBufferedInput` 不在同一路径双重缓存 raw bytes。
-- `FileCacheBufferedInput` 需要拿到 `FileCachePtr`、`FileCacheReadOptions`、
-  `FileCacheRequestContext`。
+- Builder从 `FileCacheManager::instance`取得 `FileCachePtr`。
+- Builder需要 `FileCacheReadOptions`、`FileCacheRequestContext`、`FileCacheFileIdentity`。
+- identity resolver当前返回 path + empty etag，key使用 `fromPath`；未来 etag非空时使用
+  `SipHash(path + etag)`。
+- FileCache未启用时保持现有 `CachedBufferedInput` / `GlutenDirectBufferedInput`
+  fallback。
+- Gluten `VeloxBackend` 持有 process-global `shared_ptr<FileCacheManager>`；per-runtime
+  connectors不拥有 Manager。
+- `NativeBackendInitializer` shutdown hook在 Spark Context shutdown之后进入
+  `VeloxBackend::tearDown`，先 shutdown Manager，再销毁 executor和 memory manager。
 
 ### 验证
 
@@ -461,6 +486,11 @@ else:
 ORC/DWRF/Parquet smoke scan
 cache enabled/disabled path selection
 AsyncDataCache disabled on FileCache path
+path-only key while etag is empty
+different non-empty etags produce different keys
+FileSplitReader / FileIndexReader / Iceberg delete-reader path selection
+VeloxRuntime unregister connector does not stop process FileCacheManager
+VeloxBackend tearDown after task barrier shuts Manager before runtime resources
 ```
 
 ## 阶段 8：补充能力

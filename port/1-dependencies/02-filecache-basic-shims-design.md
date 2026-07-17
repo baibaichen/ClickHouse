@@ -334,9 +334,9 @@ private:
 ```text
 open/create fd        -> folly::File(path, O_WRONLY | O_CREAT | O_CLOEXEC)
 LOCK_EX | LOCK_NB     -> folly::File::try_lock
-close                 -> folly::File destructor
 truncate/write        -> use file.fd
-unlink status path    -> StatusFile destructor
+close                 -> explicit folly::File::close in StatusFile destructor
+unlink status path    -> after close attempt, regardless of close result
 ```
 
 `folly::File` 的 `lock` / `try_lock` 底层就是 inter-process `flock`。
@@ -347,9 +347,13 @@ unlink status path    -> StatusFile destructor
 second live process/instance on same cache path fails initialization
 lock held for full FileCache lifetime
 status file contains process diagnostics
-destructor closes lock fd before unlink
+destructor explicitly closes lock fd before unlink
 constructor failure closes fd
 ```
+
+不能依赖 member destruction完成 close：C++ member在 destructor body之后才析构，若在
+body里先 unlink会颠倒上述顺序。destructor必须显式调用 `file.close()`，再删除 status
+path；close/unlink失败按 CH destructor的日志策略处理，不能抛出 destructor。
 
 不能把 `StatusFile` 做成 no-op，也不新增 `FileCacheStatusLock`；它是依赖方的
 CH-compatible wrapper。
@@ -385,6 +389,60 @@ cache state string when caller provides it
 Do not silently ignore remove errors. If deletion is best-effort in CH code, preserve the existing
 log-and-continue behavior explicitly at that call site.
 
+## Finishable bounded queue
+
+`FileCache.cpp` 对 `ConcurrentBoundedQueue` 的依赖不只是 fixed-capacity MPMC：
+
+```text
+capacity 0:
+  nonblocking push always fails
+  listing thread performs work directly
+
+finish:
+  reject new pushes
+  wake every blocked producer and consumer
+  let consumers drain already-enqueued items before returning false
+```
+
+`folly::MPMCQueue` 没有 close/finish，也不能构造 capacity 0。sentinel无法唤醒一个因
+full queue阻塞的 producer。因此不使用 MPMC+sentinel模拟完整语义，而是迁移一个最小
+CH-compatible wrapper：
+
+```cpp
+template <typename T>
+class FileCacheBoundedQueue
+{
+public:
+    explicit FileCacheBoundedQueue(size_t capacity);
+
+    bool push(T value);
+    bool tryPush(T value);
+    bool pop(T & value);
+    void finish();
+
+private:
+    std::mutex mutex_;
+    std::condition_variable producerCv_;
+    std::condition_variable consumerCv_;
+    std::deque<T> queue_;
+    size_t capacity_;
+    bool finished_ = false;
+};
+```
+
+contract：
+
+```text
+push waits for space or finished
+tryPush never waits
+pop waits for data or finished
+pop after finish drains queued data, then returns false
+finish is idempotent and notifies both condition variables
+```
+
+Metadata `DownloadQueue` / `CleanupQueue` 不是 `ConcurrentBoundedQueue`，继续按 CH手写
+queue结构迁移；它们保留 runtime resize、dedup、cancel和自己的 condition variable。
+
 ## First phase files
 
 ```text
@@ -393,6 +451,7 @@ velox/ch/Interpreters/FileCache/Guards.h
 velox/ch/Common/logger_useful.h
 velox/ch/Common/FileCacheFilesystem.h
 velox/ch/Common/StatusFile.h / .cpp
+velox/ch/Common/FileCacheBoundedQueue.h
 ```
 
 `FileCacheFilesystem.h` provides:
@@ -416,6 +475,10 @@ LOG_* macros compile with fmt-style arguments and are no-op
 LOG_TEST does not eagerly format arguments
 fs alias supports path / exists / create_directories / remove_all on a temp directory
 throwFileCacheExceptionFromFilesystemError throws a Velox exception with context text
+capacity-0 tryPush returns false
+finish wakes blocked producer and consumer
+finish drains queued values before pop returns false
+push after finish returns false
 ```
 
 ## Review 状态
@@ -430,4 +493,5 @@ fs:: is std::filesystem for local metadata/cache paths
 Velox FileSystem is not the primary mapping for metadata directory traversal
 Velox FileSystem is used only where the IO path already uses ReadFile / WriteFile
 StatusFile is preserved and backed by folly::File inter-process locking
+ConcurrentBoundedQueue is preserved by FileCacheBoundedQueue, not MPMC sentinels
 ```

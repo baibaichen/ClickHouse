@@ -38,7 +38,7 @@ initialization publication and shutdown order
 FileCacheSettings -> FileCacheConfig
 BackgroundSchedulePool -> FileCacheScheduler
 ThreadFromGlobalPool / ThreadPool -> FileCacheWorker / FileCacheThreadPool
-ConcurrentBoundedQueue -> folly::MPMCQueue with sentinel termination
+ConcurrentBoundedQueue -> FileCacheBoundedQueue with finish/drain semantics
 StatusFile fd ownership -> StatusFile compatibility class backed by folly::File
 ServerUUID/common cache user -> manager-injected stable commonUserId
 OpenedFileCache singleton -> manager-owned opened-file cache
@@ -471,6 +471,30 @@ FileSegment reserved_size update
 key base-directory creation
 ```
 
+fast path精确条件：
+
+```text
+main iterator exists
+AND main eviction is not required
+AND query context is null
+```
+
+query context存在时，即使 global main priority不需要 eviction，也不能提前只增加 main
+iterator；必须继续建立/更新 query-local iterator，否则单 query quota漏记。
+
+创建新的 main entry时，query-local entry遵循：
+
+```text
+queryIterator = queryContext.tryGet(key, offset)
+if queryIterator is null:
+  queryContext.add(keyMetadata, offset, size=0)
+else:
+  reuse queryIterator
+```
+
+不能无条件 `add`：并发 reservation可能已经为同一 query/key/offset建立 record，而
+`QueryContext::add` 对 duplicate执行 rollback后抛 logical exception。
+
 锁和 phase 顺序不能扁平化：
 
 ```text
@@ -529,13 +553,13 @@ collector:
   recompute target with in-flight discount
 ```
 
-两条 queue使用 `folly::MPMCQueue<std::optional<EvictionBatchPtr>>`。详细映射见
-[`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)：
+两条 queue使用
+[`FileCacheBoundedQueue<EvictionBatchPtr>`](../1-dependencies/02-filecache-basic-shims-design.md#finishable-bounded-queue)：
 
 ```text
-std::nullopt is finish sentinel
-input sentinel propagates through all removers
-last remover sends finalization sentinel
+collector finishes input queue after producing all batches
+every remover drains input, then exits
+last remover finishes finalization queue
 collector drains finalization queue before waiting for eviction_pool
 ```
 
@@ -571,15 +595,13 @@ API 是 no-op。不能把该路径宣称为已支持的 per-client eviction。
 [`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)：
 
 ```text
-loadMetadataThreads == 1 / no loading workers:
-  do not construct zero-capacity MPMCQueue
-  listing worker loads directly
+FileCacheBoundedQueue<KeyDirectoryWork>(
+    loading workers == 0 ? 0 : 1000)
 
-loading workers present:
-  folly::MPMCQueue<std::optional<KeyDirectoryWork>>
-  producers use nonblocking write
-  full queue -> producer loads key directly
-  one propagated nullopt sentinel terminates all consumers after drain
+listing producers use tryPush
+capacity 0 or full queue -> producer loads key directly
+last listing worker calls finish
+all listing/loading workers drain until pop returns false
 ```
 
 first exception 必须：
@@ -587,12 +609,12 @@ first exception 必须：
 ```text
 store first exception
 set stop flag
-start sentinel termination exactly once
+call finish exactly once
 join all workers
 rethrow first exception
 ```
 
-不能让 consumer 永久阻塞在 `blockingRead`。
+`finish` 同时唤醒 blocked producers和 consumers，不能让 worker永久阻塞。
 
 ### `loadMetadataForKey`
 
@@ -629,18 +651,11 @@ remove file
 
 load 完成后检查 priority state并 shuffle startup order。
 
-### metadata queues: Folly termination protocol
+### metadata queue termination protocol
 
-`folly::MPMCQueue` 没有 native close。sentinel 是基础设施替换，不改变业务队列元素顺序：
-
-```text
-all real work is enqueued before normal finish sentinel
-consumer that reads sentinel re-enqueues it, then exits
-the sentinel walks through every consumer
-```
-
-异常 close 使用 `std::once_flag` 保证只注入一个 sentinel。work item 已验证满足
-`MPMCQueue` 的 nothrow move/destruct requirements。
+正常路径由最后一个 listing worker调用 `finish`。异常路径使用 `std::once_flag` 保证
+`finish`只触发一次；已经入队的 work仍被 drain，后续 `tryPush`失败并由 producer检查
+stop flag后退出。
 
 ### settings reload
 
@@ -711,7 +726,7 @@ stop/join async metadata main worker
 deactivate and wait scheduled tasks
 wait per-cache eviction_pool
 cancel metadata queues
-requestStop/join background download workers
+set per-download-worker stopFlag under queue mutex, notify, then join
 join metadata cleanup worker
 ```
 
@@ -807,7 +822,9 @@ unbounded set creates one segment
 
 ```text
 existing-entry reserve fast path
+query context disables main-only fast path
 first reserve creates priority iterator
+concurrent same-query reserve reuses tryGet result before add
 query limit and main limit coordination
 foreground eviction releases enough size/elements
 failed deletion finalizes candidate state and propagates
@@ -820,8 +837,8 @@ concurrent reserve cursors make progress
 size-ratio cleanup
 elements-ratio cleanup
 multiple remover workers
-MPMC input sentinel drains all batches
-last remover terminates finalization queue
+finish drains all input batches
+last remover finishes finalization queue
 push timeout still finalizes already removed batches
 schedule failure rolls back running-remover count
 shutdown during collection drains and joins

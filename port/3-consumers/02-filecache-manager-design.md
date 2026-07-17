@@ -605,23 +605,62 @@ alias names共享同一个 underlying stats object，但输出可按 name展示�
 
 ### global pointer lifetime
 
-推荐 owner：
+Gluten中的 process owner确定为：
 
 ```text
-server/connector singleton shared_ptr
+gluten::VeloxBackend
+  -> shared_ptr<FileCacheManager> fileCacheManager_
 ```
 
-shutdown sequence：
+不是 `HiveConnector` / `VeloxRuntime`：
 
 ```text
-stop creation of new query users
-wait existing FileCacheInputStream users
-manager.shutdown
-setInstance(nullptr)
-destroy shared_ptr
+VeloxBackend:
+  one process-global instance per executor JVM
+
+VeloxRuntime:
+  multiple instances
+  owns scoped Hive/Iceberg/Delta connectors and per-runtime executors
+
+HiveConnector:
+  registry object
+  unregister does not wait for active tasks
 ```
 
-仅清 global pointer不能证明无活跃 users；owner必须协调。
+因此 connector和 Builder只使用 `FileCacheManager::getInstance`返回的 non-owning pointer。
+不引入 `ReadLease`；生命周期 barrier沿用 Gluten现有 `AsyncDataCache`模式。
+
+初始化：
+
+```text
+VeloxBackend::init:
+  initialize Velox memory manager
+  register local/remote filesystems
+  create FileCacheManager from backend config
+  FileCacheManager::setInstance(fileCacheManager_.get())
+  existing GlutenBufferedInputBuilder resolves Manager at create time
+```
+
+shutdown：
+
+```text
+Spark Context shutdown stops/cancels tasks
+NativeBackendInitializer lib-unloading hook
+  -> VeloxBackend::tearDown
+       -> fileCacheManager_->shutdown()
+       -> FileCacheManager::setInstance(nullptr)
+       -> fileCacheManager_.reset()
+       -> then reset executors / memory manager / filesystem clients
+```
+
+`NativeBackendInitializer` hook使用
+`SPARK_CONTEXT_SHUTDOWN_PRIORITY - 1`，因此发生在 Spark Context shutdown之后。Manager
+shutdown必须放在 `VeloxBackend::tearDown`资源销毁开头，不能放在 `HiveConnector`
+destructor，也不能等 executor / memory pool销毁后才执行。
+
+`FileCacheBufferedInput` 持有 `FileCachePtr`，但 Manager-owned runtime resources仍依赖上述
+process shutdown barrier。若宿主绕过该 barrier并在 active Velox tasks期间直接调用
+`tearDown`，属于 host lifecycle violation。
 
 ## error handling
 
@@ -701,6 +740,9 @@ instance before install fails
 install/get/uninstall
 replacement of live instance fails
 shutdown idempotent/concurrent
+Gluten VeloxBackend owns Manager for process lifetime
+VeloxRuntime/connector destruction does not shutdown Manager
+NativeBackendInitializer hook shuts down Manager before executors/memory manager
 no callbacks after shutdown
 resource shutdown order
 operation after shutdown fails
