@@ -194,7 +194,7 @@ Priority / eviction 语义详见
 [`13-filecache-priority-eviction-design.md`](13-filecache-priority-eviction-design.md)。
 `OvercommitFileCachePriority` 属于 Cloud / distributed-cache 条件路径，第一阶段后置。
 
-## 阶段 3：中心 SCC 第一组：metadata
+## 阶段 3：中心 SCC 文件 review：metadata
 
 ### 文件
 
@@ -203,23 +203,18 @@ velox/ch/Interpreters/FileCache/FileSegmentInfo.h
 velox/ch/Interpreters/FileCache/Metadata.h / .cpp
 ```
 
-### 功能闭环
+### 文件依赖
 
-一起落：
+逐文件 review，但不能把 `Metadata.cpp` 当成能在 `FileSegment.cpp` 之前独立完成的模块：
 
 ```text
-FileSegmentMetadata
-KeyMetadata
-LockedKey
-CacheMetadata
-CleanupQueue
-DownloadQueue skeleton
+FileSegmentInfo.h -> priority/key/origin leaf types
+Metadata.h       -> FileSegment.h + priority + guards + sharded map
+Metadata.cpp     -> FileSegment.cpp API + FileCache common/internal origins
 ```
 
-### 可以 stub 的内容
-
-- background download 线程可以先建接口，不真正启动。
-- cleanup queue 可以先同步执行或 no-op，但删除路径必须保留。
+实际落地时，`Metadata.cpp`、`FileSegment.cpp` 和必要的 `FileCache` static origin 接口必须在
+同一实现批次内形成可链接闭环。
 
 ### 不能 stub 的内容
 
@@ -228,6 +223,9 @@ DownloadQueue skeleton
 - `LockedKey::removeFileSegment`
 - `getFileSegmentPath`
 - key state transition
+- cleanup queue / cleanup worker
+- download queue / background download worker
+- shutdown / download-worker resize
 
 ### 验证
 
@@ -236,7 +234,11 @@ metadata get/create/remove key
 path layout
 LockedKey prevents mutation while held
 remove empty key
+background queue cancel and resize
 ```
+
+逐文件设计详见
+[`14-filecache-metadata-files-design.md`](14-filecache-metadata-files-design.md)。
 
 ## 阶段 4：中心 SCC 第二组：`FileSegment`
 
