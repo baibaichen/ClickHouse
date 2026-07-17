@@ -10,9 +10,8 @@ Note: build target verification adapted for `VELOX_MONO_LIBRARY=ON` (see
 ## Velox status
 
 ```text
-## main...origin/main
- M velox/CMakeLists.txt
-?? velox/ch/
+## filecache
+9f7652f64 Add initial `velox/ch` FileCache skeleton
 ```
 
 ## Files changed
@@ -23,9 +22,6 @@ velox/ch/CMakeLists.txt
 velox/ch/Common/CMakeLists.txt
 velox/ch/Common/FileCacheSkeleton.cpp
 velox/ch/Common/FileCacheSkeleton.h
-velox/ch/IO/.gitkeep
-velox/ch/Disks/IO/.gitkeep
-velox/ch/Interpreters/FileCache/.gitkeep
 ```
 
 ## Commands run
@@ -87,6 +83,13 @@ standard configure command.
 
 ```text
 None
+```
+
+## Commit
+
+```text
+Velox branch: filecache
+Velox commit: 9f7652f64 Add initial `velox/ch` FileCache skeleton
 ```
 
 ## Recommended next task
