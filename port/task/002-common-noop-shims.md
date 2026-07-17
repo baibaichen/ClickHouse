@@ -6,9 +6,9 @@
 ## Goal
 
 Replace the temporary `FileCacheSkeleton` source with the first real
-`velox/ch/Common` shims from the FileCache port design. These shims are all
-first-phase no-ops and exist only to keep ClickHouse `FileCache` call sites
-compilable during the algorithm port.
+header-only `velox/ch/Common` shims from the FileCache port design. These shims
+are all first-phase no-ops and exist only to keep ClickHouse `FileCache` call
+sites compilable during the algorithm port.
 
 ## Branch and commit policy
 
@@ -59,7 +59,6 @@ Create:
 /home/chang/OpenSource/velox/velox/ch/Common/FailPoint.h
 /home/chang/OpenSource/velox/velox/ch/Common/FilesystemCacheLog.h
 /home/chang/OpenSource/velox/velox/ch/Common/QueryStatus.h
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheNoopShims.cpp
 /home/chang/SourceCode/ClickHouse/port/task/result/002-common-noop-shims-result.md
 ```
 
@@ -267,44 +266,25 @@ using QueryStatusPtr = std::shared_ptr<QueryStatus>;
 } // namespace facebook::velox::ch
 ```
 
-- [ ] **Step 9: Add replacement source**
-
-Create `/home/chang/OpenSource/velox/velox/ch/Common/FileCacheNoopShims.cpp`:
-
-```cpp
-#include "velox/ch/Common/CurrentMetrics.h"
-#include "velox/ch/Common/FailPoint.h"
-#include "velox/ch/Common/FilesystemCacheLog.h"
-#include "velox/ch/Common/OpenTelemetryTraceContext.h"
-#include "velox/ch/Common/ProfileEvents.h"
-#include "velox/ch/Common/QueryStatus.h"
-
-namespace facebook::velox::ch {
-
-bool fileCacheNoopShimsLinked() {
-  return true;
-}
-
-} // namespace facebook::velox::ch
-```
-
-- [ ] **Step 10: Update CMake source**
+- [ ] **Step 9: Update CMake target**
 
 Modify `/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt` to:
 
 ```cmake
 velox_add_library(
   velox_ch_filecache
-  FileCacheNoopShims.cpp
-)
-
-velox_link_libraries(
-  velox_ch_filecache
-  velox_exception
+  INTERFACE
+  HEADERS
+    CurrentMetrics.h
+    FailPoint.h
+    FilesystemCacheLog.h
+    OpenTelemetryTraceContext.h
+    ProfileEvents.h
+    QueryStatus.h
 )
 ```
 
-- [ ] **Step 11: Reconfigure CMake**
+- [ ] **Step 10: Reconfigure CMake**
 
 Run:
 
@@ -326,25 +306,32 @@ Exit code 0.
 The log ends with "Build files have been written to".
 ```
 
-- [ ] **Step 12: Build the new source object**
+- [ ] **Step 11: Verify target/header registration**
 
-Because `VELOX_MONO_LIBRARY=ON`, build the source object directly:
+Because these shims are header-only and `VELOX_MONO_LIBRARY=ON`, there is no source
+object to compile in this task. Verify CMake registered the target/header set:
 
 ```bash
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  velox/buffer/CMakeFiles/velox.dir/__/ch/Common/FileCacheNoopShims.cpp.o \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_002_common_noop_shims.log 2>&1
+  -t targets \
+  | grep 'velox_ch_filecache' \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/target_task_002_velox_ch_filecache.txt || true
+
+grep -R "ProfileEvents.h" /home/chang/OpenSource/velox/cmake-build-debug-gcc13/CMakeFiles \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/headers_task_002_common_noop_shims.txt || true
 ```
 
 Expected:
 
 ```text
-Exit code 0.
-The object file compiles.
+Configure succeeded.
+No FileCacheNoopShims.cpp object is needed.
+target_task_002_velox_ch_filecache.txt may be empty under VELOX_MONO_LIBRARY=ON;
+headers_task_002_common_noop_shims.txt should show ProfileEvents.h registered in generated CMake metadata.
 ```
 
-- [ ] **Step 13: Confirm skeleton is gone**
+- [ ] **Step 12: Confirm skeleton and replacement source are absent**
 
 Run:
 
@@ -352,6 +339,7 @@ Run:
 cd /home/chang/OpenSource/velox
 test ! -e velox/ch/Common/FileCacheSkeleton.cpp
 test ! -e velox/ch/Common/FileCacheSkeleton.h
+test ! -e velox/ch/Common/FileCacheNoopShims.cpp
 git --no-pager status --short --branch
 ```
 
@@ -359,10 +347,11 @@ Expected:
 
 ```text
 No FileCacheSkeleton files remain.
+No FileCacheNoopShims.cpp file is added.
 No .gitkeep files are added.
 ```
 
-- [ ] **Step 14: Amend Velox skeleton commit**
+- [ ] **Step 13: Amend Velox skeleton commit**
 
 Run:
 
@@ -375,8 +364,7 @@ git add \
   velox/ch/Common/OpenTelemetryTraceContext.h \
   velox/ch/Common/FailPoint.h \
   velox/ch/Common/FilesystemCacheLog.h \
-  velox/ch/Common/QueryStatus.h \
-  velox/ch/Common/FileCacheNoopShims.cpp
+  velox/ch/Common/QueryStatus.h
 
 git add -u velox/ch/Common/FileCacheSkeleton.cpp velox/ch/Common/FileCacheSkeleton.h
 
@@ -390,7 +378,7 @@ The previous Velox skeleton commit is amended.
 The branch remains filecache.
 ```
 
-- [ ] **Step 15: Write result file**
+- [ ] **Step 14: Write result file**
 
 Create the result directory:
 
@@ -418,7 +406,6 @@ status: success
 
 ```text
 velox/ch/Common/CMakeLists.txt
-velox/ch/Common/FileCacheNoopShims.cpp
 velox/ch/Common/ProfileEvents.h
 velox/ch/Common/CurrentMetrics.h
 velox/ch/Common/OpenTelemetryTraceContext.h
@@ -439,13 +426,14 @@ deleted: velox/ch/Common/FileCacheSkeleton.h
 
 ```text
 /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_002_common_noop_shims.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_002_common_noop_shims.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/target_task_002_velox_ch_filecache.txt
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/headers_task_002_common_noop_shims.txt
 ```
 
 ## Build result
 
 ```text
-<paste one-line build result>
+<paste configure result and header registration result>
 ```
 
 ## Blocking errors
@@ -464,7 +452,7 @@ Add basic Common shims for SharedMutex/logger/filesystem, or start FileCache lea
 If the task is blocked or failed, set `status: blocked` or `status: failed`, replace `None`
 under `Blocking errors` with the first actionable error, and still write the result file.
 
-- [ ] **Step 16: Return result path**
+- [ ] **Step 15: Return result path**
 
 Return a short message with:
 
