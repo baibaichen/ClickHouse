@@ -18,7 +18,18 @@ velox/ch/Interpreters/FileCache/FileSegmentKeyType.cpp
 velox/ch/Interpreters/FileCache/FileCacheOriginInfo.h
 ```
 
-除基础类型和 include 路径外，语义应保持与 ClickHouse 一致。
+This batch is an exact data-model and semantics port, not a source-level copy or redesign.
+
+这里的 exact 指 behavioral equivalence，不要求逐行复制源码。除基础类型、include
+路径和 enum-to-string 实现外，以下行为都不能改变：
+
+```text
+FileSegmentKeyType values and order
+General empty path prefix
+FileCacheOriginInfo field layout and defaults
+FileCacheOriginInfo equality compares only user_id
+OriginPoolKey equality/hash behavior
+```
 
 ## `FileSegmentKeyType.h`
 

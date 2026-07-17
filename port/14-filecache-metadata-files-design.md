@@ -20,12 +20,14 @@ velox/ch/Interpreters/FileCache/Metadata.cpp
 
 三个文件的算法和生命周期语义都直接迁移。只允许替换已经 review 的基础设施：
 
-本批次是算法和生命周期语义的精确迁移，不是重新设计。只允许下文列出的、已经 review
-的基础设施替换和依赖注入调整。`FileSegmentInfo` snapshot、metadata key/segment
-状态转换、文件路径布局、cleanup/download queues 和 workers、iterator locking 以及
-`LockedKey` 生命周期的行为都不能改变。`Metadata.cpp`、`FileSegment.cpp` 和
-`FileCache.cpp` 必需的 origin API 构成同一个实现 SCC，因此本批次不允许用 placeholder
-接口拆开它们。
+This batch is an exact algorithm and lifecycle-semantics port, not a source-level copy or redesign.
+
+这里的 exact 指 behavioral equivalence，不要求逐行复制源码。只允许下文列出的、已经
+review 的基础设施替换和依赖注入调整。`FileSegmentInfo` snapshot、metadata
+key/segment 状态转换、文件路径布局、cleanup/download queues 和 workers、iterator
+locking 以及 `LockedKey` 生命周期的行为都不能改变。`Metadata.cpp`、
+`FileSegment.cpp` 和 `FileCache.cpp` 必需的 origin API 构成同一个实现 SCC，因此
+本批次不允许用 placeholder 接口拆开它们。
 
 ```text
 CH basic aliases -> ClickHouseAliases.h

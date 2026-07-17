@@ -45,6 +45,7 @@ write-through cache
 | 12 | [`12-filecache-origin-segment-type-design.md`](12-filecache-origin-segment-type-design.md) | `FileSegmentKeyType` / `FileCacheOriginInfo` 设计 |
 | 13 | [`13-filecache-priority-eviction-design.md`](13-filecache-priority-eviction-design.md) | priority / eviction 文件迁移设计 |
 | 14 | [`14-filecache-metadata-files-design.md`](14-filecache-metadata-files-design.md) | `FileSegmentInfo.h` / `Metadata.h` / `Metadata.cpp` 文件迁移设计 |
+| 15 | [`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md) | `FileSegment.h` / `FileSegment.cpp` 文件迁移设计 |
 
 ## 核心决策
 
@@ -154,7 +155,7 @@ cache，不是内存页 cache。
 | 使用方 | `CachedOnDiskReadBufferFromFile` | `FileCacheBufferedInput` / `FileCacheInputStream`，详见 `01` | 已 review |
 | 使用方 | `Settings` / `ReadSettings` / `FilesystemCacheSettings` | `FileCacheConfig` / `FileCacheReadOptions` / `FileCacheRequestContext`，详见 `02` | 已 review |
 | 使用方 | cache 获取和生命周期 | `FileCacheManager`，详见 `03` | 已 review |
-| 使用方 | `getThreadId` / `getCallerId` | `FileCacheCallerToken`，显式表达 downloader ownership；详见 `08` | 已 review |
+| 使用方 | `getThreadId` / `getCallerId` | `FileCacheQueryIdScope` + 当前 OS TID，保持 physical-thread downloader ownership；详见 `08` | 已 review |
 | 依赖方 | `ReadBufferFromFileBase` | `ReadBufferFromVeloxReadFile`，接受 Velox `ReadFile`，内部自带 `BufferPtr` | 已 review |
 | 依赖方 | `WriteBufferFromFile` | `WriteBufferFromVeloxWriteFile`，接受 Velox `WriteFile`，内部自带 `BufferPtr` | 已 review |
 | 依赖方 | `WriteBufferToFileSegment` | 只服务 `TemporaryDataOnDisk` 写 `Ephemeral` segment；第一阶段不迁移 | 已确认后置 |
@@ -168,6 +169,7 @@ cache，不是内存页 cache。
 | `FileCache` 本体 | `FileSegmentKeyType` / `FileCacheOriginInfo` | 直接迁移 CH 语义；详见 `12` | 已 review |
 | `FileCache` 本体 | priority / eviction 文件 | LRU / SLRU / Split / eviction 直接迁移；overcommit 后置；详见 `13` | 待 review |
 | `FileCache` 本体 | `FileSegmentInfo.h` / `Metadata.h` / `Metadata.cpp` | 按文件精确迁移；与 `FileSegment` / `FileCache` 同属中心 SCC；详见 `14` | 待 review |
+| `FileCache` 本体 | `FileSegment.h` / `FileSegment.cpp` | 按文件精确迁移；保留 state/downloader/write/complete/holder 语义；详见 `15` | 待 review |
 | 依赖方 | CH locks / `std::shared_mutex` | CH-compatible guard classes + `folly::SharedMutex` / `std::mutex`；详见 `11` | 待 review |
 | 依赖方 | `LOG_*` / `logger_useful` / `fs::` | logging and filesystem compat shims；详见 `11` | 待 review |
 | 依赖方 | `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；详见 `10` | 待 review |

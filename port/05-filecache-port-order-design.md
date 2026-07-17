@@ -290,6 +290,9 @@ wrong offset write fails
 holder destructor completes/removes
 ```
 
+逐文件设计详见
+[`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md)。
+
 ## 阶段 5：中心 SCC 第三组：`FileCache`
 
 ### 文件
@@ -454,7 +457,7 @@ write-through cache
 FileCacheKey / FileSegmentKeyType / OriginInfo
 SipHash128 helper
 FileCacheScheduler
-FileCacheCallerToken
+FileCacheQueryIdScope
 FileCacheThreadPool / FileCacheWorker + CH-compatible using aliases
 ProfileEvents / CurrentMetrics / OpenTelemetry / FailPoint no-op shims
 Guards / logger / fs compatibility shims

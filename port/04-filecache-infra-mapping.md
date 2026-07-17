@@ -25,7 +25,7 @@
 | `absl::flat_hash_map` / `absl::flat_hash_set` | 默认用 `folly::F14FastMap` / `folly::F14FastSet`；需要 value 地址稳定时再用 `F14NodeMap` / `F14NodeSet` | 直接替换，详见 `06` 和 `13` | 已 review |
 | `std::shared_mutex` / CH 锁 | CH-compatible guard classes，内部用 `folly::SharedMutex` / `std::mutex`；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
 | `LOG_*` / `logger_useful` | CH-compatible logging macros，内部用 `LOG` / `VLOG`；详见 `11-filecache-basic-shims-design.md` | compat shim | 需要 review |
-| `getThreadId` / `getCallerId` | `FileCacheCallerToken`，由 `ConnectorQueryCtx::queryId`、`scanId` / `driverId` 和 `FileCacheInputStream` 本地 token 组成，详见 `08-filecache-caller-token-design.md` | wrapper：显式传递 downloader ownership | 已 review |
+| `getThreadId` / `getCallerId` | `FileCacheQueryIdScope` 提供 query id，`folly::getOSThreadID` 提供当前物理线程 identity；详见 `08-filecache-caller-token-design.md` | compat scope：保留 CH execution ownership | 已 review |
 | `ProfileEvents` / `CurrentMetrics` | no-op shim，保留 CH 调用点；后续再接 `RuntimeMetric` / `IoStats` / `StatsReporter`，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
 | `OpenTelemetry` | no-op `OpenTelemetry::SpanHolder` shim，详见 `10-filecache-metrics-debug-design.md` | using/compat shim | 需要 review |
 | `QueryStatus::throwIfKilled` | no-op `QueryStatus` shim；后续接 `ConnectorQueryCtx::cancellationToken`，详见 `10-filecache-metrics-debug-design.md` | compat shim，后续补语义 | 需要 review |
@@ -170,9 +170,13 @@ next()
 struct DownloadState
 {
     std::shared_ptr<ReadBufferFromVeloxReadFile> remoteReader;
-    std::unique_ptr<WriteBufferFromVeloxWriteFile> cacheWriter;
+    std::shared_ptr<WriteBufferFromVeloxWriteFile> cacheWriter;
 };
 ```
+
+这里的 `shared_ptr` 管理 writer wrapper，保持 ClickHouse `LocalCacheWriterPtr` 的
+ownership 和 `getLocalCacheWriter` 接口。`WriteBufferFromVeloxWriteFile` 内部的
+`std::unique_ptr<WriteFile> file_` 不变，底层 file handle 仍然只有一个 owner。
 
 `FileSegment::write` 中的调用保持和 CH 现有逻辑一致：
 
@@ -189,6 +193,41 @@ downloadedSize += size
 `WriteFile` 实现没有显式 fsync 语义，第一版只映射到 `flush`。`cancel` 用于写失败：
 标记 canceled，释放 writer，后续由 `FileSegment::setDownloadFailed` 处理 segment
 状态和残留文件。
+
+#### short write
+
+CH `WriteBufferFromFileDescriptor::nextImpl` 会循环处理 short write。Velox
+`LocalWriteFile::append` 当前只调用一次 `::write`，返回长度小于请求长度时直接抛异常，
+且内部 size 不记录已经写入的部分。
+
+例如：
+
+```text
+requested: 1 MiB
+written:   256 KiB
+then:      ENOSPC / EDQUOT / I/O failure
+```
+
+此时文件已经增长 256 KiB，但 `FileSegment::downloaded_size` 尚未更新。wrapper 不能直接
+采用一次 `append` 的失败语义，否则 metadata 与实际文件大小会分叉。
+
+`WriteBufferFromVeloxWriteFile` 使用自己的 in-memory `writtenBytes` 记录正常进度。正常
+路径只调用 `WriteFile::append` 并更新计数，不增加 `stat` / `file_size` syscall。
+
+只有 `append` 抛异常时：
+
+```text
+read actual on-disk file size
+if the write made progress:
+  continue with the unwritten suffix
+if no further progress is possible:
+  expose the actual size to FileSegment
+  mark download failed
+  propagate the exception
+```
+
+禁止解析 Velox exception message 中的 errno，也不能把失败伪装成成功。详细的 segment
+bookkeeping 见 [`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md)。
 
 这个类覆盖读路径 miss 后填充本地 cache segment 所需能力；不实现
 `cache_on_write_operations`。
@@ -260,21 +299,14 @@ ClickHouse 当前实现把 caller id 写成 `queryId:threadId`。这说明同一
 内的并发读线程需要区分，但不代表 segment 永久只能由某个线程处理。downloader
 reset/complete 后，另一个线程或 background downloader 可以重新抢到 lease。
 
-Velox 可以取得 `ConnectorQueryCtx::queryId`，也可以在调用点读取当前 OS thread id。
-但是 Velox `driverId` 与 OS `threadId` 不是等价物：同一 `driverId` 同一时刻只会
-on-thread 在一个线程上执行，但下一次 resume 可能换到另一个 executor thread。
+Velox 可以取得 `ConnectorQueryCtx::queryId`，并通过 `folly::getOSThreadID` 取得当前
+OS thread id。`driverId` 与 `threadId` 不等价：driver 下一次 resume 可以换 executor
+thread，而 CH downloader lease 必须在当前同步调用结束前释放。
 
-因此迁移设计不声称 `driverId == threadId`。建议引入显式的 `FileCacheCallerToken`：
-
-```text
-queryId
-scanId / driverId
-file path + split range
-FileCacheInputStream-local sequence
-```
-
-它表达的是“当前读流 / 下载 continuation 拥有这个 segment 的填充权”，用于
-`FileSegment::getOrSetDownloader` / `isDownloader` / `write` / `complete`。详细设计见
+迁移使用 `FileCacheQueryIdScope` 在同步 `FileCacheInputStream` 入口设置 query id，
+`FileSegment::getCallerId` 保持静态无参 API并组合 query id 与当前 TID。background
+download 使用自己的 worker TID。这样保持 `FileSegmentsHolder` 的异常清理和 CH
+physical-thread execution ownership，不把 lease 扩大到 driver/stream 生命周期。详细设计见
 [`08-filecache-caller-token-design.md`](08-filecache-caller-token-design.md)。
 
 ### A 类后置项

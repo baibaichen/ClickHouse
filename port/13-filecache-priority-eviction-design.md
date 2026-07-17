@@ -5,7 +5,10 @@
 priority / eviction 是 `FileCache` 本体的第一批算法文件。第一阶段按文件直接迁移
 ClickHouse OSS 中存在的实现，不引入 Velox `AsyncDataCache` / `SsdCache` eviction 语义：
 
-本批次是算法的精确迁移，不是重新设计。只允许替换已经 review 的基础设施。
+This batch is an exact algorithm and lifecycle-semantics port, not a source-level copy or redesign.
+
+这里的 exact 指 behavioral equivalence，不要求逐行复制源码。本批次精确迁移算法和
+生命周期语义，只允许替换已经 review 的基础设施。
 `LRUFileCachePriority`、`SLRUFileCachePriority`、`SplitFileCachePriority`、
 `EvictionCandidates` 和 `CacheUsage` 的行为都不能改变。
 当前 OSS checkout 中不存在 `OvercommitFileCachePriority` 的实现，因此本批次不包含
