@@ -603,7 +603,7 @@ StatusFile::~StatusFile()
     // Explicitly close before unlink so the flock is released before the path
     // disappears.  folly::File::close sets the fd to -1, preventing the member
     // destructor from double-closing.
-    file_.close();
+    file_.closeNoThrow();
 
     // Best-effort removal; ignore errors (destructor must not throw).
     (void)::unlink(path_.c_str());
