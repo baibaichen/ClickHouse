@@ -48,6 +48,7 @@ write-through cache
 | 15 | [`15-filecache-file-segment-design.md`](15-filecache-file-segment-design.md) | `FileSegment.h` / `FileSegment.cpp` 文件迁移设计 |
 | 16 | [`16-filecache-core-files-design.md`](16-filecache-core-files-design.md) | `FileCache.h` / `FileCache.cpp` 文件迁移设计 |
 | 17 | [`17-filecache-query-limit-design.md`](17-filecache-query-limit-design.md) | `QueryLimit.h` / `QueryLimit.cpp` 文件迁移设计 |
+| 18 | [`18-filecache-fwd-design.md`](18-filecache-fwd-design.md) | `FileCache_fwd.h` 文件迁移设计 |
 
 ## 核心决策
 
