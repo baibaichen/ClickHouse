@@ -68,7 +68,7 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after the post-Task-008 source-contract review:
+Current verified snapshot after the Task 003 dependency preflight:
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
@@ -101,23 +101,34 @@ Current verified snapshot after the post-Task-008 source-contract review:
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
 - Task 009 and Task 011 task contracts passed the read-only audit, but no Worker
   may start while the documentation repair is under user review.
+- The Task 003 dependency preflight is complete. The user approved:
+   exact CH timed/non-blocking queue and move-or-copy behavior;
+   direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
+   Velox-style filesystem exceptions without structured errno;
+   a non-null name-only logger;
+   ordinary-Release `chassert` non-evaluation of both expression and message;
+   and deferring non-empty current-exception formatting to Task 017.
 
 Current task:
 
-- Task 008 was accepted and is now reopened by contract audit.
+- Task 003 is the first reopened corrective task.
 - Velox is clean at `4b14de7f1`.
 - Task 009 is `not_started`.
-- Execution is paused for design/task-document review. Do not modify Velox source
-  or dispatch a Worker until the user approves the revised documents.
+- The canonical Task 003 dependency design, corrective task, and Task 017
+  exception-formatting deliverable have been revised but are not yet accepted.
+- Execution is paused for user review of those documents. Do not modify Velox
+  source or dispatch a Worker until the user approves them.
 - Persistent Task 008 logs belong under:
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task008-nonmono/
 
 Resume procedure:
 
-1. Stay paused until the user approves the revised design/task documents.
-2. On approval, repair reopened Tasks 003, 004, 006, 007, and 008 with new
-   corrective commits; do not rewrite existing commits or receipt history.
+1. Stay paused until the user approves the revised Task 003 design/task
+   documents and Task 017 deferred exception-formatting contract.
+2. On approval, implement corrected Task 003 first. Then repair reopened Tasks
+   004, 006, 007, and 008 with new corrective commits; do not rewrite existing
+   commits or receipt history.
 3. Run the accumulated Task 003-008 regression and complete Controller review.
 4. Only then dispatch Task 009.
 5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.

@@ -22,10 +22,10 @@ held across a cancellation check point.
 
 Specific deliverables:
 
-1. **`logger_useful.h`** — replace no-op macros with VLOG wrappers that are
-   conditionally compiled; the `getLogger` factory returns a named Velox
-   logger tag; `tryLogCurrentException` logs the current exception message
-   via `LOG(WARNING)`.
+1. **`logger_useful.h`** — preserve the non-null name-only logger API from
+   corrected Task 003; replace no-op macros with lazy VLOG wrappers; implement
+   non-empty current-exception formatting; and make
+   `tryLogCurrentException` log that text via `LOG(WARNING)`.
 
 2. **`CurrentMetrics.h`** — replace `add/sub/Increment` no-ops with
    `std::atomic<int64_t>` per metric; reset on process exit is acceptable.
@@ -74,6 +74,7 @@ Read before editing:
 
 ```text
 /home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
+/home/chang/SourceCode/ClickHouse/port/1-dependencies/02-filecache-basic-shims-design.md
 /home/chang/SourceCode/ClickHouse/port/1-dependencies/03-filecache-metrics-debug-design.md
 /home/chang/SourceCode/ClickHouse/port/1-dependencies/06-filecache-caller-token-design.md
 /home/chang/SourceCode/ClickHouse/port/3-consumers/03-filecache-buffered-input-design.md
@@ -89,6 +90,8 @@ copy CH-specific infrastructure:
 /home/chang/SourceCode/ClickHouse/src/Common/logger_useful.h
 /home/chang/SourceCode/ClickHouse/src/Common/CurrentMetrics.h
 /home/chang/SourceCode/ClickHouse/src/Common/ProfileEvents.h
+/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/EvictionCandidates.cpp
+/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/SLRUFileCachePriority.cpp
 ```
 
 ## File scope
@@ -214,6 +217,18 @@ TEST(QueryStatusTest, DefaultConstructedIsNeverCancelled) {
 }
 
 TEST(LoggerUsefulTest, GetLoggerReturnsNonNullPtr) {
+    GTEST_SKIP() << "implement";
+}
+
+TEST(LoggerUsefulTest, CurrentExceptionMessageIsEmptyOutsideCatch) {
+    GTEST_SKIP() << "implement";
+}
+
+TEST(LoggerUsefulTest, CurrentExceptionMessageFormatsStdException) {
+    GTEST_SKIP() << "implement";
+}
+
+TEST(LoggerUsefulTest, CurrentExceptionMessageFormatsVeloxException) {
     GTEST_SKIP() << "implement";
 }
 
@@ -540,81 +555,71 @@ private:
 
 Add `ProfileEvents.cpp` with the array storage (analogous to `CurrentMetrics.cpp`).
 
-- [ ] **Step 5: Replace `logger_useful.h` with VLOG wrappers**
+- [ ] **Step 5: Add real logging and current-exception formatting**
 
-Replace the body of `velox/ch/Common/logger_useful.h` with:
+Preserve the corrected Task 003 `FileCacheLogger`, `LoggerPtr`, `getLogger`, and
+`name()` public shapes. Do not change the logger back to a public `name` field,
+and never return null.
+
+Add Folly's verified exception-string API:
 
 ```cpp
-#pragma once
-
-#include <glog/logging.h>
+#include <folly/ExceptionString.h>
 #include <fmt/format.h>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <string_view>
+#include <glog/logging.h>
 
-namespace facebook::velox::ch
+inline std::string getCurrentExceptionMessage(bool = false)
 {
+    const auto exception = std::current_exception();
+    if (!exception)
+        return {};
 
-struct FileCacheLogger
-{
-    std::string name;
-};
-
-using LoggerPtr = std::shared_ptr<FileCacheLogger>;
-
-inline LoggerPtr getLogger(std::string_view name)
-{
-    return std::make_shared<FileCacheLogger>(std::string{name});
+    const auto message = folly::exceptionStr(exception);
+    return std::string(message.data(), message.size());
 }
+```
 
-inline std::string getCurrentExceptionMessage(bool withStackTrace = false)
-{
-    try
-    {
-        throw;
-    }
-    catch (const std::exception & e)
-    {
-        return e.what();
-    }
-    catch (...)
-    {
-        return "(unknown exception)";
-    }
-}
+`folly::exceptionStr(std::exception_ptr)` handles standard, Velox, nested, and
+non-standard exceptions without a rethrow/catch ladder. The
+`withStackTrace` parameter remains for CH call-shape compatibility. Do not
+synthesize a second stack trace: a `VeloxException` string already includes its
+Velox-managed stack-trace state when enabled.
 
+Implement `tryLogCurrentException` without allowing a logging failure to replace
+the active exception:
+
+```cpp
 inline void tryLogCurrentException(const LoggerPtr & logger, ...) noexcept
 {
     try
     {
         const auto msg = getCurrentExceptionMessage();
         if (logger)
-            LOG(WARNING) << "[" << logger->name << "] exception: " << msg;
+            LOG(WARNING) << "[" << logger->name() << "] exception: " << msg;
         else
             LOG(WARNING) << "exception: " << msg;
     }
     catch (...)
     {
+        // This diagnostic helper must not replace the exception being handled.
     }
 }
+```
 
-} // namespace facebook::velox::ch
+Replace the no-op production macros with lazy formatting. Evaluate the logger
+expression once per enabled log call and use `name()` for the tag:
 
-// Logging macros for FileCache internals.
-// The logger pointer arg is only used for the logger name tag; it is not
-// dereferenced beyond its ->name field.
-
+```cpp
 #define FILECACHE_LOG_IMPL(level, logger_ptr, ...)            \
     do                                                         \
     {                                                          \
         if (VLOG_IS_ON(level))                                 \
         {                                                      \
+            const auto & _fc_logger = (logger_ptr);            \
             const std::string _fc_msg =                        \
                 fmt::format(__VA_ARGS__);                      \
-            if ((logger_ptr) != nullptr)                       \
-                VLOG(level) << "[" << (logger_ptr)->name       \
+            if (_fc_logger != nullptr)                         \
+                VLOG(level) << "[" << _fc_logger->name()       \
                             << "] " << _fc_msg;                \
             else                                               \
                 VLOG(level) << _fc_msg;                        \
@@ -631,8 +636,8 @@ inline void tryLogCurrentException(const LoggerPtr & logger, ...) noexcept
 #define LOG_TEST(...) do {} while (false)
 ```
 
-Verify that existing calls to `LOG_TEST` in `BasicShimsTest.cpp` still
-compile (the macro now explicitly discards its arguments).
+`LOG_TEST` remains no-op and must not evaluate its arguments. Verify that its
+existing Task 003 non-evaluation test still passes.
 
 - [ ] **Step 6: Replace `QueryStatus.h` with a `folly::CancellationToken` wrapper**
 
@@ -808,7 +813,23 @@ Replace each `GTEST_SKIP()` in
 **`LoggerUsefulTest.GetLoggerReturnsNonNullPtr`:**
 1. `auto log = getLogger("filecache.test")`.
 2. Assert `log != nullptr`.
-3. Assert `log->name == "filecache.test"`.
+3. Assert `log->name() == "filecache.test"`.
+
+**`LoggerUsefulTest.CurrentExceptionMessageIsEmptyOutsideCatch`:**
+1. Call `getCurrentExceptionMessage(true)` with no active exception.
+2. Assert the result is empty.
+
+**`LoggerUsefulTest.CurrentExceptionMessageFormatsStdException`:**
+1. Throw `std::runtime_error("std sentinel")`.
+2. In the catch block, call `getCurrentExceptionMessage(true)`.
+3. Assert the result is non-empty and contains `std sentinel`.
+
+**`LoggerUsefulTest.CurrentExceptionMessageFormatsVeloxException`:**
+1. Throw `VELOX_FAIL("velox sentinel")`.
+2. In the catch block, call `getCurrentExceptionMessage(true)`.
+3. Assert the result is non-empty and contains `velox sentinel`.
+4. Do not assert a fixed stack-trace string; Velox stack capture is
+   configuration-dependent.
 
 **`LoggerUsefulTest.TryLogCurrentExceptionNoThrow`:**
 1. Wrap in try/catch: throw a `std::runtime_error("test error")`.
@@ -1003,6 +1024,7 @@ velox_ch_observability_test: <N> tests, 0 failed
 velox_ch_cancellation_test:  <N> tests, 0 failed
 velox_ch_common_test:        <N> tests, 0 failed (regression)
 velox_ch_filecache_e2e_test: <N> tests, 0 failed (regression)
+getCurrentExceptionMessage:  std and Velox exception text preserved
 ```
 
 ## Verification

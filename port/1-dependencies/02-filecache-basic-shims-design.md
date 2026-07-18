@@ -7,10 +7,10 @@ locks、logging、filesystem 是 `FileCache` 算法迁移时会高频出现的�
 
 | ClickHouse | Velox port first phase |
 |---|---|
-| `chassert` | 独立 `ClickHouseAssert.h` compatibility shim；Debug/sanitizer abort，普通 Release 不求值 |
+| `chassert` | 独立 `ClickHouseAssert.h` compatibility shim；Debug/sanitizer abort，普通 Release 的 expression 和 diagnostic message 都不求值 |
 | `SharedMutex` | `using SharedMutex = folly::SharedMutex`，功能接口覆盖；性能不声明等价 |
 | `CachePriorityGuard` / `CacheStateGuard` / `CacheMetadataGuard` / `KeyGuard` / `FileSegmentGuard` | 直接迁移 CH `Guards.h` 结构；只替换 `SharedMutex` 底层 |
-| `LoggerPtr` / `getLogger` / `LOG_*` | 第一阶段全 no-op，后续再考虑真实日志移植 |
+| `LoggerPtr` / `getLogger` / `LOG_*` | 第一阶段 non-null name-only logger + no-op macros；真实日志和 exception formatting 后置到 Task 017 |
 | `LOG_TEST` | 第一阶段 no-op，禁止 eager formatting |
 | `fs::` | `namespace fs = std::filesystem`，直接迁移本地 metadata/path 操作 |
 | local file read/write | 已由 `ReadBufferFromVeloxReadFile` / `WriteBufferFromVeloxWriteFile` 覆盖 |
@@ -44,7 +44,7 @@ velox/ch/Common/ClickHouseAssert.h
   abort the process
 
 ordinary Release:
-  do not evaluate expression
+  do not evaluate expression or diagnostic message
   keep compile-time type checking through sizeof
 ```
 
@@ -67,7 +67,7 @@ Debug: false expression causes death and includes the expression text
 Debug: custom message causes death and includes the custom message
 Debug: true expression is evaluated exactly once
 sanitizer: same death behavior remains enabled even with NDEBUG
-ordinary Release probe: expression is not evaluated
+ordinary Release probe: neither expression nor custom message is evaluated
 ```
 
 Task 003 在同一个 Debug CMake build 中增加两个独立 target 来覆盖预处理分支：
@@ -255,20 +255,27 @@ tryLogCurrentException
 getCurrentExceptionMessage
 ```
 
-Logging is not on the migration main path. First phase keeps these names in a small no-op shim
-only so the `FileCache` algorithm can be ported without log-system work:
+Logging is not on the migration main path. First phase keeps these names in a
+small compatibility shim so the `FileCache` algorithm can be ported without
+log-system work. The macros and current-exception helpers remain no-op, but the
+logger object itself cannot be null: `FileCache` uses `log->name()` outside the
+logging macros when naming its background schedule task.
 
 ```cpp
-using LoggerPtr = std::shared_ptr<Logger>;
-
-class Logger
+class FileCacheLogger
 {
 public:
-    explicit Logger(std::string name);
+    explicit FileCacheLogger(std::string name);
+    const std::string & name() const;
+
+private:
+    std::string name_;
 };
 
-LoggerPtr getLogger(std::string name);
-std::string getCurrentExceptionMessage(bool withStackTrace);
+using LoggerPtr = std::shared_ptr<FileCacheLogger>;
+
+LoggerPtr getLogger(std::string_view name); // Always non-null.
+std::string getCurrentExceptionMessage(bool withStackTrace); // First phase: empty.
 void tryLogCurrentException(std::string_view context);
 ```
 
@@ -283,7 +290,8 @@ Macro mapping:
 #define LOG_ERROR(logger, ...) do {} while (false)
 ```
 
-This intentionally avoids eager formatting. A mapping like:
+This intentionally avoids eager formatting while preserving non-logging uses of
+the logger name. A mapping like:
 
 ```cpp
 #define LOG_TEST(logger, ...) VLOG(1) << fmt::format(__VA_ARGS__)
@@ -291,8 +299,13 @@ This intentionally avoids eager formatting. A mapping like:
 
 is not allowed in the first phase because `fmt::format` runs even when `VLOG(1)` is disabled.
 
-Real logging is a follow-up task after the algorithm port is stable. At that point,
-debug/trace/test logs must use lazy formatting:
+Returning an empty string from `getCurrentExceptionMessage` loses diagnostic
+content at callers that store or rethrow the text, such as eviction failure
+reports. The user explicitly accepted that first-phase limitation. Task 017
+owns both real logging and non-empty current-exception formatting; no earlier
+task may partially implement either behavior.
+
+At Task 017, debug/trace/test logs must use lazy formatting:
 
 ```text
 check log level first
@@ -441,7 +454,26 @@ First phase helper:
     std::string_view context);
 ```
 
-Implementation can use `VELOX_FAIL` / `VELOX_USER_FAIL`, but should include:
+The helper uses `VELOX_FAIL` and is a runtime-error adapter only. It is not a
+replacement for all `DB::Exception` values:
+
+```text
+ErrorCodes::BAD_ARGUMENTS  -> VELOX_USER_FAIL
+ErrorCodes::LOGICAL_ERROR -> VELOX_FAIL
+```
+
+Migration tasks make this choice directly at each CH throw site. They must not
+send `BAD_ARGUMENTS` through `throwFileCacheException`.
+
+Filesystem errors follow Velox local-filesystem behavior: keep the numeric code,
+path, and message in diagnostic text, but do not introduce a structured errno
+exception. `WriteFile::append` does not expose errno; the approved Task 007
+contract reconciles every local append exception against physical file size and
+then propagates the original exception. If a future caller needs an errno value
+for control flow outside that approved path, the unreviewed-dependency gate
+fires before implementation.
+
+The filesystem helper should include:
 
 ```text
 operation context
@@ -480,8 +512,11 @@ public:
     explicit FileCacheBoundedQueue(size_t capacity);
 
     bool push(T value);
-    bool tryPush(T value);
+    bool tryPush(const T & value, uint64_t timeoutMilliseconds = 0);
+    bool tryPush(T && value, uint64_t timeoutMilliseconds = 0);
     bool pop(T & value);
+    bool tryPop(T & value);
+    bool tryPop(T & value, uint64_t timeoutMilliseconds);
     void finish();
 
 private:
@@ -497,12 +532,50 @@ private:
 contract：
 
 ```text
-push waits for space or finished
-tryPush never waits
-pop waits for data or finished
-pop after finish drains queued data, then returns false
-finish is idempotent and notifies both condition variables
+push:
+  wait for space or finish
+
+tryPush(value, 0):
+  never wait
+  return false when full or finished
+
+tryPush(value, timeout > 0):
+  wait up to timeout for capacity
+  wake on pop or finish
+  return false on timeout or finish
+
+pop:
+  wait for data or finish
+  after finish, drain queued values before returning false
+
+tryPop(value):
+  never wait
+  return false when empty
+
+tryPop(value, timeout):
+  wait up to timeout for data
+  wake on push or finish
+  after finish, drain queued values before returning false
+
+finish:
+  idempotent
+  reject new pushes
+  notify every blocked producer and consumer
 ```
+
+CH uses `detail::moveOrCopyIfThrow` when assigning a popped value. The Velox
+wrapper reproduces that rule locally rather than importing the CH helper:
+
+```text
+if T has noexcept move-assignment:
+  move from the queue element
+otherwise:
+  copy from the queue element
+```
+
+Do not add a move-only fallback that performs a potentially-throwing move.
+That broadens the accepted type set but weakens CH exception safety: a failed
+move can damage the element that must remain in the queue.
 
 Metadata `DownloadQueue` / `CleanupQueue` 不是 `ConcurrentBoundedQueue`，继续按 CH手写
 queue结构迁移；它们保留 runtime resize、dedup、cancel和自己的 condition variable。
@@ -543,6 +616,12 @@ capacity-0 tryPush returns false
 finish wakes blocked producer and consumer
 finish drains queued values before pop returns false
 push after finish returns false
+timed tryPush succeeds after pop and returns false on timeout
+non-blocking tryPop returns immediately on an empty queue
+timed tryPop wakes on push and finish
+pop uses move only when move-assignment is noexcept, otherwise copy
+getLogger returns a non-null object whose name matches the requested name
+all LOG_* macros and first-phase exception helpers remain no-op
 ```
 
 ## Review 状态
@@ -552,10 +631,15 @@ push after finish returns false
 ```text
 lock guard class names are preserved
 Guards.h structure is directly migrated from ClickHouse
-logging is not mainline; Logger and LOG_* are no-op compat shims in first phase
+logging is not mainline; LOG_* and exception formatting remain no-op in first phase
+LoggerPtr is a non-null name-only placeholder because FileCache dereferences log->name()
+real logging and getCurrentExceptionMessage are owned by Task 017
 fs:: is std::filesystem for local metadata/cache paths
+BAD_ARGUMENTS maps directly to VELOX_USER_FAIL; LOGICAL_ERROR maps to VELOX_FAIL
+filesystem errors follow Velox message-based errno handling; no structured errno exception is added
 Velox FileSystem is not the primary mapping for metadata directory traversal
 Velox FileSystem is used only where the IO path already uses ReadFile / WriteFile
 StatusFile is preserved and backed by folly::File inter-process locking
 ConcurrentBoundedQueue is preserved by FileCacheBoundedQueue, not MPMC sentinels
+FileCacheBoundedQueue includes timed/non-blocking tryPush/tryPop and exact CH move-or-copy behavior
 ```
