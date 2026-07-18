@@ -119,38 +119,35 @@ Current task:
 - Reopened Task 004 dependency preflight is complete and blocked before coding.
 - Task 009 is `not_started`.
 - The Task 004 guards contract is clear and needs no corrective change.
-- The Task 004 `StatusFile::writeFullInfo` contract exposed four items requiring
-  user review:
-    Velox has no existing real build-revision source;
-    CH writes current local wall-clock time at `StatusFile` construction, while
-    the task says process-start time and does not define the format;
-    the raw-fd fill adapter does not define CH-equivalent complete-write/error
-    propagation;
-    and the existing exclusion test is same-process, despite the task calling
-    it cross-process coverage.
-- Execution is paused before Task 004 design or code changes. Resume only after
-  the user reviews these mappings and the decisions are written into the
-  canonical design and corrective task.
+- The user approved all Task 004 `StatusFile::writeFullInfo` dependency
+  decisions:
+    generate a private revision header from explicit `VELOX_BUILD_REVISION` or
+    full configure-time Git HEAD and fail when neither is available;
+    follow CH construction-time local `YYYY-MM-DD HH:MM:SS`;
+    use `folly::writeFull` for both fills and propagate failures;
+    and retain same-process coverage plus add `fork`/`waitpid` cross-process
+    coverage.
+- The canonical shim design and the sole corrective Task 004 contract now
+  contain those decisions. Execution is paused for user review of the revised
+  documents; do not modify Velox code before approval.
 - Persistent Task 003 corrective logs belong under:
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
 
 Resume procedure:
 
-1. Obtain user decisions for Task 004 revision generation, timestamp semantics
-   and format, complete-write error handling, and real cross-process coverage.
-2. Update the canonical design and Task 004 corrective contract, then stop for
-   user review of those documents.
-3. After approval, repair Task 004 with a new corrective commit.
-4. Continue with reopened Tasks 006, 007, and 008 under the same dependency gate;
+1. Stay paused until the user approves the revised Task 004 design/task
+   documents.
+2. After approval, repair Task 004 with a new corrective commit.
+3. Continue with reopened Tasks 006, 007, and 008 under the same dependency gate;
    do not rewrite existing commits or receipt history.
-3. Run the accumulated Task 003-008 regression and complete Controller review.
-4. Only then dispatch Task 009.
-5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
-6. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
+4. Run the accumulated Task 003-008 regression and complete Controller review.
+5. Only then dispatch Task 009.
+6. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
+7. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: Task 004 `StatusFile::writeFullInfo` dependency review.
+- Current stop condition: user review of revised Task 004 documents.
 - Corrected Task 003 is accepted. Repair reopened Tasks 004, 006, 007, and 008
   before starting Task 009.
 - For every task:

@@ -1,124 +1,263 @@
-# Task 004: Add `StatusFile` and `Guards.h`
+# Task 004: Correct `StatusFile` Diagnostics
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
-> result file under this ClickHouse checkout. Do not modify any ClickHouse source
-> files outside `port/task/result/`. Do not commit or stage either repository.
+> modifies the Velox checkout under `/home/chang/OpenSource/velox` and appends
+> corrective evidence to one result file under this ClickHouse checkout. Do not
+> modify ClickHouse source files. Do not commit or stage either repository.
 
-## Post-acceptance source-contract audit — task reopened
+## Status and authority
 
-The original Task 004 acceptance remains in the receipt. The guards and exclusive
-lock lifecycle remain accepted; only the `StatusFile` diagnostic surface is reopened.
+The original Task 004 implementation was accepted, then reopened by the
+post-acceptance source-contract audit. This document is the only executable
+Task 004 plan. The original receipt preserves the implementation and review
+history.
 
-CH `FileCache::initialize` constructs the status file with
-`StatusFile::write_full_info`, not PID-only output. Add a CH-compatible
-`writeFullInfo` fill function that writes exactly three newline-terminated fields:
+The existing `Guards.h`, lock lifecycle, mono/non-mono header registration,
+non-throwing destructor, and close-before-unlink behavior remain accepted.
+Corrective work is limited to the `StatusFile` diagnostic content and the
+build-time revision dependency it requires.
 
-```text
-PID: <process id>
-Started at: <local process start timestamp>
-Revision: <Velox build revision>
+If implementation exposes another dependency or mapping not explicitly covered
+below, stop the entire pipeline under `EXECUTION_PROTOCOL.md` and wait for user
+review.
+
+## Approved corrective contract
+
+### Full diagnostic fill
+
+Add:
+
+```cpp
+static FillFunction writeFullInfo();
 ```
 
-The API remains a reusable `StatusFile::FillFunction`; `FileCache` must not format
-these fields itself. The `Revision` value is an allowed infrastructure adaptation:
-use the repository's real build-revision source. If no real build-revision source is
-available, stop as `blocked` and ask for a product decision; do not invent a constant
-or silently omit the field.
+`FileCache` will use this reusable fill function; callers must not format these
+fields themselves. When the fill runs during `StatusFile` construction, it
+writes exactly:
 
-Add focused RED tests that verify all three labels and newline boundaries, while
-retaining the existing cross-process exclusion, non-throwing destructor, unlink,
-and close-failure coverage.
+```text
+PID: <decimal process id>\n
+Started at: <local YYYY-MM-DD HH:MM:SS>\n
+Revision: <full Velox source revision>\n
+```
+
+There are exactly three lines and three trailing newline characters, with no
+extra prefix, suffix, or blank line.
+
+### Timestamp semantics
+
+Follow CH source, not the old task wording. CH uses
+`LocalDateTime(time(nullptr))`, so `Started at` means local wall-clock time when
+the `StatusFile` fill executes during construction. It is not a separately
+tracked process-start timestamp.
+
+Use the existing Velox/POSIX pattern:
+
+```text
+std::chrono::system_clock::now
+std::chrono::system_clock::to_time_t
+localtime_r
+strftime("%Y-%m-%d %H:%M:%S")
+```
+
+If `localtime_r` returns null or `strftime` returns zero, throw
+`VeloxRuntimeError` through `VELOX_FAIL`. Do not return a default, UTC value, or
+partially formatted timestamp.
+
+### Build revision
+
+Velox has no existing build-revision API. Add a generated private header:
+
+```text
+template:
+  velox/ch/Common/VeloxBuildRevision.h.in
+
+generated:
+  <build>/velox/ch/Common/VeloxBuildRevision.h
+```
+
+The template defines:
+
+```cpp
+namespace facebook::velox::ch::detail
+{
+inline constexpr std::string_view kVeloxBuildRevision =
+    "@VELOX_BUILD_REVISION_VALUE@";
+}
+```
+
+`velox/ch/Common/CMakeLists.txt` selects the value:
+
+```text
+1. Read the CMake cache string VELOX_BUILD_REVISION.
+2. Strip surrounding whitespace.
+3. If non-empty, use it.
+4. Otherwise find Git and run `git rev-parse HEAD` at configure time with
+   PROJECT_SOURCE_DIR as the working directory.
+5. Require a non-empty hexadecimal result whose length is 40 (SHA-1) or 64
+   (SHA-256); this rejects shortened or descriptive values.
+6. If no explicit value and Git cannot provide one, fail configure and explain
+   `-DVELOX_BUILD_REVISION=<full-source-revision>`.
+```
+
+Do not cache the Git fallback as `VELOX_BUILD_REVISION`; otherwise a later
+checkout can silently retain a stale SHA in the build directory. Store the
+selected value in the local configure variable
+`VELOX_BUILD_REVISION_VALUE`.
+
+The header records HEAD at the last CMake configure. A checkout change by
+itself is not a CMake input, so rerun configure before building after HEAD
+changes.
+
+Do not hardcode a revision, use `unknown`, use `PYVELOX_VERSION`, omit the
+field, call Git at runtime, or expose the generated header as an installed
+public API.
+
+After `configure_file`, use:
+
+```cmake
+velox_include_directories(
+  velox_ch_filecache
+  PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+```
+
+This existing helper selects the real underlying target in both mono and
+non-mono builds instead of applying target properties to an alias.
+
+### Complete writes and errors
+
+The current `writePid` ignores the result of raw `write`, which is weaker than
+CH's finalized `WriteBuffer` contract. Add one private helper used by both
+`writePid` and `writeFullInfo`:
+
+```cpp
+void writeAll(int fd, std::string_view contents)
+{
+    if (folly::writeFull(fd, contents.data(), contents.size()) == -1)
+    {
+        const int error = errno;
+        VELOX_FAIL(
+            "Cannot write StatusFile contents: error code {} ({})",
+            error,
+            std::strerror(error));
+    }
+}
+```
+
+`folly::writeFull` owns EINTR and partial-write handling. Do not add another
+retry loop, ignore failure, parse an exception message, or add structured errno
+control flow.
+
+An exception from a fill propagates from the constructor. Existing
+`folly::File` ownership closes the fd during unwinding.
+
+### Exclusion evidence
+
+Retain the existing same-process double-open test and add a real cross-process
+test:
+
+```text
+parent constructs StatusFile and holds the lock
+parent calls fork
+child independently constructs StatusFile on the same path
+child exits 0 only when construction throws VeloxRuntimeError
+child exits nonzero for unexpected success or exception
+parent calls waitpid and requires normal exit status 0
+```
+
+The child must call `_exit`, so it does not run destructors for the parent's
+inherited objects. Do not describe the same-process test as cross-process
+coverage.
 
 ## Goal
 
-Implement `StatusFile.h/.cpp` — the per-cache-directory exclusive-ownership
-guard — and `Guards.h` — the full five-guard lock-order contract for
-`FileCache`. Both depend only on Task 003 shims plus `folly::File`.
+Correct `StatusFile` so its ownership guard retains the accepted lifecycle and
+its content matches the CH `FileCache` diagnostic contract:
 
-Deliverables:
-- `velox/ch/Common/StatusFile.h` / `StatusFile.cpp`
-- `velox/ch/Interpreters/FileCache/Guards.h`
-- An expanded `velox_ch_filecache` CMake target that compiles `StatusFile.cpp`
-- A focused test executable `velox_ch_guards_test`
+```text
+real full source revision
+construction-time local timestamp
+complete write/error propagation
+same-process and cross-process exclusion evidence
+```
+
+The existing `velox_ch_guards_test` remains the focused test executable.
 
 ## Starting point
 
 ```text
 Velox repository: /home/chang/OpenSource/velox
 Required branch:  filecache
-Expected HEAD:    Task 003 completed (bf379041f or a direct descendant)
+Expected HEAD:    c755512a8 Task 003: Correct FileCache common shims
 ```
 
-Do not require a clean worktree but do not overwrite unrelated changes. Stop
-if the branch is not `filecache`.
+Do not require a clean worktree, but record and preserve every pre-existing
+dirty file. Stop if the branch is not `filecache`.
 
-## Design references
+## Sources of truth
 
 Read before editing:
 
 ```text
 /home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/01-filecache-infra-mapping.md
+/home/chang/SourceCode/ClickHouse/port/task/EXECUTION_PROTOCOL.md
 /home/chang/SourceCode/ClickHouse/port/1-dependencies/02-filecache-basic-shims-design.md
 /home/chang/SourceCode/ClickHouse/port/task/result/003-filecache-basic-common-shims-result.md
-```
-
-Use the ClickHouse implementations only as behavioral references:
-
-```text
+/home/chang/SourceCode/ClickHouse/port/task/result/004-filecache-status-and-guards-result.md
 /home/chang/SourceCode/ClickHouse/src/Common/StatusFile.h
 /home/chang/SourceCode/ClickHouse/src/Common/StatusFile.cpp
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/Guards.h
+/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCache.cpp
+```
+
+Verified Velox infrastructure:
+
+```text
+/usr/local/include/folly/FileUtil.h
+  folly::writeFull retries EINTR/partial writes and returns -1 on error.
+
+/home/chang/OpenSource/velox/velox/common/process/Profiler.cpp
+  existing localtime_r + strftime local-time pattern.
+
+/home/chang/OpenSource/velox/CMake/VeloxUtils.cmake
+  velox_include_directories handles mono and non-mono targets.
 ```
 
 ## File scope
 
-Modify:
+Modify in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/CMakeLists.txt
 /home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Common/ProfileEvents.h
-```
-
-Create:
-
-```text
 /home/chang/OpenSource/velox/velox/ch/Common/StatusFile.h
 /home/chang/OpenSource/velox/velox/ch/Common/StatusFile.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/Guards.h
 /home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
 /home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/StatusFileAndGuardsTest.cpp
+```
+
+Create in the Velox checkout:
+
+```text
+/home/chang/OpenSource/velox/velox/ch/Common/VeloxBuildRevision.h.in
+```
+
+The generated header under the build directory is an artifact, not a tracked
+source file.
+
+Append corrective evidence in the ClickHouse checkout:
+
+```text
 /home/chang/SourceCode/ClickHouse/port/task/result/004-filecache-status-and-guards-result.md
 ```
 
-Every new Velox C++ and CMake file must begin with this license header:
+Do not modify `Guards.h`, `ProfileEvents.h`, `velox/ch/CMakeLists.txt`, or
+`velox/ch/Interpreters/FileCache/CMakeLists.txt`; their accepted contracts are
+unchanged.
 
-```text
-Copyright (c) Facebook, Inc. and its affiliates.
+## Corrective steps
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
-
-Use the repository's existing comment form around that text (`/* ... */` for
-C++, `#` for CMake).
-
-## Steps
-
-- [ ] **Step 1: Confirm the Velox baseline**
+- [ ] **Step 1: Confirm the baseline**
 
 Run:
 
@@ -128,302 +267,41 @@ git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
 
-Expected:
+Record the exact HEAD and pre-existing dirty files in the receipt.
 
-```text
-Branch is filecache.
-HEAD is the Task 003 commit or a direct descendant.
-Record all pre-existing dirty files in the result file.
-```
+- [ ] **Step 2: Add focused RED tests**
 
-- [ ] **Step 2: Add a failing focused test**
+Extend `StatusFileAndGuardsTest.cpp`:
 
-Create `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt`:
+| Test | Required proof |
+|---|---|
+| `WriteFullInfoHasExactThreeLineContract` | while `StatusFile` is alive, read the file; require exactly three newline-terminated lines, exact labels/order, decimal current PID, timestamp regex `[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}`, and revision equal to `detail::kVeloxBuildRevision` |
+| `WritePidPropagatesWriteFailure` | fill closes its fd, then invokes `StatusFile::writePid`; construction throws `VeloxRuntimeError` rather than succeeding |
+| `WriteFullInfoPropagatesWriteFailure` | same closed-fd setup with `writeFullInfo`; construction throws `VeloxRuntimeError` |
+| `SecondProcessOnSamePathThrows` | parent holds the file; forked child attempts a second open; child reports `VeloxRuntimeError` through exit status; parent verifies with `waitpid` |
+
+Retain and run every existing `StatusFileTest` and `GuardsTest`, including
+same-process exclusion, close-failure, unlink, all guard lock types, timed lock,
+and non-interchangeability.
+
+The test may include the generated private header. Add the Common build
+directory to `velox_ch_guards_test` with:
 
 ```cmake
-# Copyright (c) Facebook, Inc. and its affiliates.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-add_executable(velox_ch_guards_test StatusFileAndGuardsTest.cpp)
-add_test(velox_ch_guards_test velox_ch_guards_test)
-
-target_link_libraries(
+target_include_directories(
   velox_ch_guards_test
   PRIVATE
-    velox_ch_filecache
-    velox_test_util
-    velox_exception
-    Folly::folly
-    fmt::fmt
-    GTest::gtest
-    GTest::gtest_main
+    ${PROJECT_BINARY_DIR}/velox/ch/Common
 )
 ```
 
-Create `velox/ch/Interpreters/FileCache/tests/StatusFileAndGuardsTest.cpp`:
+Do not make the generated header public.
 
-```cpp
-/*
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+No test may use `sleep`, `GTEST_SKIP`, or `DISABLED_`.
 
-#include "velox/ch/Common/StatusFile.h"
-#include "velox/ch/Interpreters/FileCache/Guards.h"
-#include "velox/common/base/Exceptions.h"
-#include "velox/common/testutil/TempDirectoryPath.h"
+- [ ] **Step 3: Prove RED**
 
-#include <gtest/gtest.h>
-
-#include <chrono>
-#include <future>
-#include <memory>
-#include <mutex>
-#include <shared_mutex>
-#include <type_traits>
-
-namespace facebook::velox::ch
-{
-namespace
-{
-
-using common::testutil::TempDirectoryPath;
-using namespace std::chrono_literals;
-
-// ---------------------------------------------------------------------------
-// StatusFile tests
-// ---------------------------------------------------------------------------
-
-TEST(StatusFileTest, WritePidFillFunctionDoesNotThrow)
-{
-    auto directory = TempDirectoryPath::create();
-    const std::string path = directory->getPath() + "/status";
-    EXPECT_NO_THROW(StatusFile file(path, StatusFile::writePid()));
-    // After destruction the path is removed.
-    EXPECT_FALSE(fs::exists(path));
-}
-
-TEST(StatusFileTest, EmptyFillFunctionDoesNotThrow)
-{
-    auto directory = TempDirectoryPath::create();
-    const std::string path = directory->getPath() + "/status";
-    EXPECT_NO_THROW(StatusFile file(path, nullptr));
-    EXPECT_FALSE(fs::exists(path));
-}
-
-TEST(StatusFileTest, SecondInstanceOnSamePathThrows)
-{
-    auto directory = TempDirectoryPath::create();
-    const std::string path = directory->getPath() + "/status";
-
-    StatusFile first(path, StatusFile::writePid());
-
-    // A second StatusFile on the same path must fail because the first
-    // holds the exclusive flock.
-    EXPECT_THROW(StatusFile second(path, StatusFile::writePid()), VeloxRuntimeError);
-}
-
-TEST(StatusFileTest, DestructorUnlinksPath)
-{
-    auto directory = TempDirectoryPath::create();
-    const std::string path = directory->getPath() + "/status";
-    {
-        StatusFile file(path, StatusFile::writePid());
-        EXPECT_TRUE(fs::exists(path));
-    }
-    EXPECT_FALSE(fs::exists(path));
-}
-
-TEST(StatusFileTest, AfterDestructionNewInstanceSucceeds)
-{
-    auto directory = TempDirectoryPath::create();
-    const std::string path = directory->getPath() + "/status";
-    {
-        StatusFile first(path, StatusFile::writePid());
-    }
-    // Previous destructor closed and unlinked; a fresh instance must succeed.
-    EXPECT_NO_THROW(StatusFile second(path, StatusFile::writePid()));
-}
-
-// ---------------------------------------------------------------------------
-// Guards tests
-// ---------------------------------------------------------------------------
-
-// CachePriorityGuard locks compile and are the correct lock types.
-TEST(GuardsTest, CachePriorityGuardLockTypes)
-{
-    CachePriorityGuard guard;
-
-    CachePriorityGuard::ReadLock readLock = guard.readLock();
-    static_assert(
-        std::is_same_v<
-            CachePriorityGuard::ReadLock,
-            std::shared_lock<SharedMutex>>);
-
-    readLock.unlock();
-
-    CachePriorityGuard::WriteLock writeLock = guard.writeLock();
-    static_assert(
-        std::is_same_v<
-            CachePriorityGuard::WriteLock,
-            std::unique_lock<SharedMutex>>);
-}
-
-// tryReadLock / tryWriteLock return an unowned lock when they fail.
-TEST(GuardsTest, CachePriorityGuardTryLockMayFail)
-{
-    CachePriorityGuard guard;
-
-    // Hold write lock, then try to take another read lock (should fail).
-    auto writeLock = guard.writeLock();
-
-    auto tryRead = guard.tryReadLock();
-    EXPECT_FALSE(tryRead.owns_lock());
-
-    auto tryWrite = guard.tryWriteLock();
-    EXPECT_FALSE(tryWrite.owns_lock());
-}
-
-// CacheStateGuard::tryLockFor compiles and returns within the timeout.
-TEST(GuardsTest, CacheStateGuardTryLockFor)
-{
-    CacheStateGuard guard;
-    CacheStateGuard::Lock lock = guard.tryLockFor(1ms);
-    EXPECT_TRUE(lock.owns_lock());
-}
-
-// CacheStateGuard::tryLockFor with zero timeout on a held lock returns unowned.
-TEST(GuardsTest, CacheStateGuardTryLockForFailsWhenHeld)
-{
-    CacheStateGuard guard;
-    auto held = guard.lock();
-    auto result = std::async(std::launch::async, [&guard]
-    {
-        return guard.tryLockFor(0ms).owns_lock();
-    });
-    EXPECT_FALSE(result.get());
-}
-
-// KeyGuard and FileSegmentGuard lock types are not interchangeable with
-// CachePriorityGuard lock types — they are distinct struct::Lock types.
-TEST(GuardsTest, LockTypesAreNotInterchangeable)
-{
-    static_assert(
-        !std::is_same_v<KeyGuard::Lock, CachePriorityGuard::WriteLock>,
-        "KeyGuard::Lock must differ from CachePriorityGuard::WriteLock");
-    static_assert(
-        !std::is_same_v<FileSegmentGuard::Lock, KeyGuard::Lock>,
-        "FileSegmentGuard::Lock must differ from KeyGuard::Lock");
-    static_assert(
-        !std::is_same_v<CacheMetadataGuard::Lock, KeyGuard::Lock>,
-        "CacheMetadataGuard::Lock must differ from KeyGuard::Lock");
-}
-
-// Each guard's lock() acquires and owns.
-TEST(GuardsTest, AllGuardsLockSuccessfully)
-{
-    {
-        CacheMetadataGuard g;
-        auto lock = g.lock();
-        EXPECT_TRUE(lock.owns_lock());
-    }
-    {
-        KeyGuard g;
-        auto lock = g.lock();
-        EXPECT_TRUE(lock.owns_lock());
-    }
-    {
-        FileSegmentGuard g;
-        auto lock = g.lock();
-        EXPECT_TRUE(lock.owns_lock());
-    }
-}
-
-} // namespace
-} // namespace facebook::velox::ch
-```
-
-Create `velox/ch/Interpreters/FileCache/CMakeLists.txt`:
-
-```cmake
-# Copyright (c) Facebook, Inc. and its affiliates.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# Guards.h is a header-only addition to velox_ch_filecache.
-# With VELOX_MONO_LIBRARY=ON the global include_directories(.) from the root
-# CMakeLists already makes it findable; we register the FILE_SET only in
-# non-mono builds so IDE navigation and install work there too.
-if(NOT VELOX_MONO_LIBRARY)
-  target_sources(
-    velox_ch_filecache
-    INTERFACE
-    FILE_SET HEADERS
-    BASE_DIRS ${PROJECT_SOURCE_DIR}
-    FILES ${CMAKE_CURRENT_SOURCE_DIR}/Guards.h
-  )
-endif()
-
-if(${VELOX_BUILD_TESTING} OR ${VELOX_BUILD_TEST_UTILS})
-  add_subdirectory(tests)
-endif()
-```
-
-Create `velox/ch/Interpreters/CMakeLists.txt`:
-
-```cmake
-# Copyright (c) Facebook, Inc. and its affiliates.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-add_subdirectory(FileCache)
-```
-
-- [ ] **Step 3: Verify the test fails before implementation**
-
-Reconfigure:
+Reconfigure the default build and build `velox_ch_guards_test`:
 
 ```bash
 /usr/bin/cmake \
@@ -431,599 +309,237 @@ Reconfigure:
   -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -DVELOX_ENABLE_BENCHMARKS=ON \
   -DVELOX_BUILD_TESTING=ON \
+  -UVELOX_BUILD_REVISION \
   -G Ninja \
   -S /home/chang/OpenSource/velox \
   -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_guards.log 2>&1
-```
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_corrective.log 2>&1
 
-Then try to build:
-
-```bash
-if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_guards_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_red.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_corrective_red.log 2>&1
+```
+
+Require failure caused by the missing `writeFullInfo` or generated revision
+header. If the build succeeds, run only the four new tests and require at least
+one contract failure. Record the first relevant diagnostic and log.
+
+- [ ] **Step 4: Generate the build revision**
+
+In `velox/ch/Common/CMakeLists.txt`:
+
+1. Define `VELOX_BUILD_REVISION` as a cache string without forcing a value.
+2. Copy and strip it into local `VELOX_BUILD_REVISION_VALUE`.
+3. When empty, `find_package(Git QUIET)` and run `${GIT_EXECUTABLE} rev-parse
+   HEAD` in `${PROJECT_SOURCE_DIR}`.
+4. Fail configure if Git is unavailable, the command fails, or output is empty.
+5. Fail configure unless the selected value is 40 or 64 hexadecimal
+   characters.
+6. Run `configure_file` with `@ONLY`.
+7. Add `${CMAKE_CURRENT_BINARY_DIR}` through
+   `velox_include_directories`.
+
+Create `VeloxBuildRevision.h.in` with the namespace/value shown in the approved
+contract. Do not add the template or generated header to the public `HEADERS`
+file set.
+
+- [ ] **Step 5: Implement exact fills**
+
+In `StatusFile.h`, add only `writeFullInfo`.
+
+In `StatusFile.cpp`:
+
+1. Include the generated header, `folly/FileUtil.h`, and required standard
+   headers.
+2. Add private `writeAll` exactly once and use it from both fills.
+3. Add private local-time formatter using the approved clock and format.
+4. Keep `writePid` output byte-compatible with CH: decimal PID without newline.
+5. Implement `writeFullInfo` with exact labels/order/newlines and
+   `detail::kVeloxBuildRevision`.
+6. Leave constructor lock/truncate/seek/fill ordering and destructor unchanged.
+
+- [ ] **Step 6: Verify revision selection paths**
+
+First reconfigure the default build after adding the CMake/header
+implementation:
+
+```bash
+/usr/bin/cmake \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+  -DVELOX_ENABLE_BENCHMARKS=ON \
+  -DVELOX_BUILD_TESTING=ON \
+  -UVELOX_BUILD_REVISION \
+  -G Ninja \
+  -S /home/chang/OpenSource/velox \
+  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_corrective_green.log 2>&1
+```
+
+Then verify the default checkout fallback:
+
+```bash
+git -C /home/chang/OpenSource/velox rev-parse HEAD
+grep -A1 'kVeloxBuildRevision' \
+  /home/chang/OpenSource/velox/cmake-build-debug-gcc13/velox/ch/Common/VeloxBuildRevision.h
+```
+
+Require the generated value to equal the full Git HEAD.
+
+Explicit override: configure a non-mono build with a known 40-character
+hexadecimal revision:
+
+```bash
+mkdir -p /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono
+
+/usr/bin/cmake \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+  -DVELOX_ENABLE_BENCHMARKS=ON \
+  -DVELOX_BUILD_TESTING=ON \
+  -DVELOX_MONO_LIBRARY=OFF \
+  -DVELOX_BUILD_REVISION=0123456789abcdef0123456789abcdef01234567 \
+  -G Ninja \
+  -S /home/chang/OpenSource/velox \
+  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/configure_task_004_corrective.log 2>&1
+```
+
+Require the generated header to contain exactly the explicit value.
+
+Invalid explicit value: configure a separate probe build with
+`-DVELOX_BUILD_REVISION=not-a-revision` and require configure to fail:
+
+```bash
+mkdir -p /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision
+
+if /usr/bin/cmake \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+  -DVELOX_ENABLE_BENCHMARKS=ON \
+  -DVELOX_BUILD_TESTING=ON \
+  -DVELOX_BUILD_REVISION=not-a-revision \
+  -G Ninja \
+  -S /home/chang/OpenSource/velox \
+  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision/configure_task_004_invalid_revision.log 2>&1
 then
-  echo "ERROR: red build unexpectedly succeeded"
+  echo "ERROR: invalid revision unexpectedly configured"
   exit 1
 fi
 ```
 
-Expected:
+Require the log to contain the revision validation diagnostic.
 
-```text
-Configure succeeds.
-Build fails because StatusFile.h, StatusFile.cpp, and Guards.h do not yet exist.
-```
+- [ ] **Step 7: Build and run both gates**
 
-- [ ] **Step 4: Extend `ProfileEvents.h` with guard-related events**
-
-Add the three missing events to the `ProfileEvents::Event` enum inside
-`velox/ch/Common/ProfileEvents.h`:
-
-```cpp
-FilesystemCacheStateLockMicroseconds,
-FilesystemCachePriorityWriteLockMicroseconds,
-FilesystemCachePriorityReadLockMicroseconds,
-```
-
-These complete the no-op `ProfileEventTimeIncrement` calls already used by the
-guard implementations. Do not alter any other enumerator.
-
-- [ ] **Step 5: Implement `StatusFile.h`**
-
-Create `velox/ch/Common/StatusFile.h`:
-
-```cpp
-/*
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#pragma once
-
-#include "velox/ch/Common/FileCacheFilesystem.h"
-
-#include <folly/File.h>
-
-#include <functional>
-#include <string>
-
-namespace facebook::velox::ch
-{
-
-/// Provides that no more than one cache instance uses the same cache directory.
-///
-/// On construction it opens or creates the status file at `path`, acquires an
-/// exclusive inter-process `flock` (non-blocking), truncates the file, and
-/// writes diagnostic information via `fill`.  The lock is held until the
-/// destructor runs.  The destructor explicitly closes the `folly::File` before
-/// calling `unlink`, preserving the invariant that the lock is released before
-/// the path disappears from the filesystem.
-///
-/// Constructor throws `VeloxRuntimeError` if the lock cannot be acquired
-/// (another instance is running) or if any syscall fails.
-/// Destructor ignores close and unlink errors (cannot throw).
-class StatusFile
-{
-public:
-    /// Callback writing diagnostic content directly to the open file descriptor.
-    /// May be nullptr, in which case the file is created but left empty.
-    using FillFunction = std::function<void(int fd)>;
-
-    StatusFile(std::string path, FillFunction fill);
-    ~StatusFile();
-
-    StatusFile(const StatusFile &) = delete;
-    StatusFile & operator=(const StatusFile &) = delete;
-
-    /// Returns a FillFunction that writes the current PID as a decimal string.
-    static FillFunction writePid();
-
-private:
-    const std::string path_;
-    folly::File file_;
-};
-
-} // namespace facebook::velox::ch
-```
-
-- [ ] **Step 6: Implement `StatusFile.cpp`**
-
-Create `velox/ch/Common/StatusFile.cpp`:
-
-```cpp
-/*
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#include "velox/ch/Common/StatusFile.h"
-#include "velox/ch/Common/FileCacheException.h"
-
-#include <fcntl.h>
-#include <unistd.h>
-
-#include <cerrno>
-#include <cstring>
-#include <string>
-
-namespace facebook::velox::ch
-{
-
-StatusFile::FillFunction StatusFile::writePid()
-{
-    return [](int fd)
-    {
-        const std::string pid = std::to_string(static_cast<long>(::getpid()));
-        (void)::write(fd, pid.data(), pid.size());
-    };
-}
-
-StatusFile::StatusFile(std::string path, FillFunction fill)
-    : path_(std::move(path))
-{
-    // Open or create the status file.
-    const int rawFd = ::open(
-        path_.c_str(),
-        O_WRONLY | O_CREAT | O_CLOEXEC,
-        0666);
-
-    if (rawFd == -1)
-        throwFileCacheException(
-            "StatusFile: cannot open '{}': {}",
-            path_,
-            std::strerror(errno));
-
-    // Transfer ownership to folly::File so the fd is closed on any exception.
-    file_ = folly::File(rawFd, /*ownsFd=*/true);
-
-    // Acquire exclusive flock (non-blocking).  Two separate open() calls in the
-    // same or different processes each get a distinct open-file-description; the
-    // kernel will deny the second try_lock.
-    if (!file_.try_lock())
-        throwFileCacheException(
-            "StatusFile: cannot lock '{}'. "
-            "Another cache instance using the same path is already running.",
-            path_);
-
-    // Truncate and seek to the beginning before writing content.
-    if (::ftruncate(file_.fd(), 0) != 0)
-        throwFileCacheException(
-            "StatusFile: cannot truncate '{}': {}", path_, std::strerror(errno));
-
-    if (::lseek(file_.fd(), 0, SEEK_SET) == static_cast<off_t>(-1))
-        throwFileCacheException(
-            "StatusFile: cannot seek '{}': {}", path_, std::strerror(errno));
-
-    if (fill)
-        fill(file_.fd());
-}
-
-StatusFile::~StatusFile()
-{
-    // Explicitly close before unlink so the flock is released before the path
-    // disappears.  folly::File::close sets the fd to -1, preventing the member
-    // destructor from double-closing.
-    file_.closeNoThrow();
-
-    // Best-effort removal; ignore errors (destructor must not throw).
-    (void)::unlink(path_.c_str());
-}
-
-} // namespace facebook::velox::ch
-```
-
-- [ ] **Step 7: Implement `Guards.h`**
-
-Create `velox/ch/Interpreters/FileCache/Guards.h`:
-
-```cpp
-/*
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
-#pragma once
-
-#include "velox/ch/Common/ProfileEvents.h"
-#include "velox/ch/Common/SharedMutex.h"
-
-#include <chrono>
-#include <mutex>
-#include <shared_mutex>
-
-namespace facebook::velox::ch
-{
-
-/**
- * Lock ordering (outermost to innermost):
- *
- *   CachePriorityGuard
- *     > CacheMetadataGuard
- *       > KeyGuard
- *         > FileSegmentGuard
- *
- * CacheStateGuard (total size / element counters) is independent of the
- * priority chain; it is taken after CachePriorityGuard when both are needed.
- *
- * Nested Lock types are intentionally distinct structs so that a
- * KeyGuard::Lock cannot be passed where a FileSegmentGuard::Lock is expected,
- * enforcing the ordering contract at compile time.
- */
-
-/// Priority queue guard.
-/// WriteLock for structural mutations; ReadLock for read-only iteration.
-struct CachePriorityGuard
-{
-    using WriteLock = std::unique_lock<SharedMutex>;
-    using ReadLock = std::shared_lock<SharedMutex>;
-
-    ReadLock tryReadLock()
-    {
-        return ReadLock(mutex, std::try_to_lock);
-    }
-
-    WriteLock tryWriteLock()
-    {
-        return WriteLock(mutex, std::try_to_lock);
-    }
-
-    ReadLock readLock()
-    {
-        ProfileEventTimeIncrement<Microseconds> watch(
-            ProfileEvents::FilesystemCachePriorityReadLockMicroseconds);
-        return ReadLock(mutex);
-    }
-
-    WriteLock writeLock()
-    {
-        ProfileEventTimeIncrement<Microseconds> watch(
-            ProfileEvents::FilesystemCachePriorityWriteLockMicroseconds);
-        return WriteLock(mutex);
-    }
-
-    CachePriorityGuard() = default;
-    CachePriorityGuard(const CachePriorityGuard &) = delete;
-    CachePriorityGuard & operator=(const CachePriorityGuard &) = delete;
-
-private:
-    SharedMutex mutex;
-};
-
-/// State guard protecting total-size / element counters.
-struct CacheStateGuard
-{
-    using Mutex = std::timed_mutex;
-
-    struct Lock : public std::unique_lock<Mutex>
-    {
-        using Base = std::unique_lock<Mutex>;
-        using Base::Base;
-    };
-
-    Lock tryLock()
-    {
-        return Lock(mutex, std::try_to_lock);
-    }
-
-    Lock lock()
-    {
-        ProfileEventTimeIncrement<Microseconds> watch(
-            ProfileEvents::FilesystemCacheStateLockMicroseconds);
-        return Lock(mutex);
-    }
-
-    Lock tryLockFor(const std::chrono::milliseconds & acquireTimeout)
-    {
-        ProfileEventTimeIncrement<Microseconds> watch(
-            ProfileEvents::FilesystemCacheStateLockMicroseconds);
-        return Lock(mutex, acquireTimeout);
-    }
-
-    CacheStateGuard() = default;
-    CacheStateGuard(const CacheStateGuard &) = delete;
-    CacheStateGuard & operator=(const CacheStateGuard &) = delete;
-
-private:
-    Mutex mutex;
-};
-
-/// Metadata guard.  One instance per CacheMetadata object.
-struct CacheMetadataGuard
-{
-    struct Lock : public std::unique_lock<std::mutex>
-    {
-        explicit Lock(std::mutex & m) : std::unique_lock<std::mutex>(m) {}
-    };
-
-    Lock lock()
-    {
-        return Lock(mutex);
-    }
-
-    CacheMetadataGuard() = default;
-    CacheMetadataGuard(const CacheMetadataGuard &) = delete;
-    CacheMetadataGuard & operator=(const CacheMetadataGuard &) = delete;
-
-    std::mutex mutex;
-};
-
-/// Key guard.  One instance per cache key entry.
-struct KeyGuard
-{
-    struct Lock : public std::unique_lock<std::mutex>
-    {
-        explicit Lock(std::mutex & m) : std::unique_lock<std::mutex>(m) {}
-    };
-
-    Lock lock()
-    {
-        return Lock(mutex);
-    }
-
-    KeyGuard() = default;
-    KeyGuard(const KeyGuard &) = delete;
-    KeyGuard & operator=(const KeyGuard &) = delete;
-
-    std::mutex mutex;
-};
-
-/// File-segment guard.  One instance per FileSegment.
-struct FileSegmentGuard
-{
-    struct Lock : public std::unique_lock<std::mutex>
-    {
-        explicit Lock(std::mutex & m) : std::unique_lock<std::mutex>(m) {}
-    };
-
-    Lock lock()
-    {
-        return Lock(mutex);
-    }
-
-    FileSegmentGuard() = default;
-    FileSegmentGuard(const FileSegmentGuard &) = delete;
-    FileSegmentGuard & operator=(const FileSegmentGuard &) = delete;
-
-    std::mutex mutex;
-};
-
-} // namespace facebook::velox::ch
-```
-
-- [ ] **Step 8: Update `CMakeLists.txt` files**
-
-Replace `velox/ch/Common/CMakeLists.txt` with:
-
-```cmake
-# Copyright (c) Facebook, Inc. and its affiliates.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-velox_add_library(
-  velox_ch_filecache
-  StatusFile.cpp
-  HEADERS
-    ClickHouseAliases.h
-    CurrentMetrics.h
-    FailPoint.h
-    FileCacheBoundedQueue.h
-    FileCacheException.h
-    FileCacheFilesystem.h
-    FilesystemCacheLog.h
-    logger_useful.h
-    OpenTelemetryTraceContext.h
-    ProfileEvents.h
-    QueryStatus.h
-    SharedMutex.h
-    StatusFile.h
-)
-
-# In non-mono builds velox_ch_filecache is a real library; link its direct deps.
-if(NOT VELOX_MONO_LIBRARY)
-  target_link_libraries(velox_ch_filecache PRIVATE Folly::folly)
-endif()
-
-if(${VELOX_BUILD_TESTING} OR ${VELOX_BUILD_TEST_UTILS})
-  add_subdirectory(tests)
-endif()
-```
-
-Append to `velox/ch/CMakeLists.txt` (add after the existing `add_subdirectory(Common)` line):
-
-```cmake
-add_subdirectory(Interpreters)
-```
-
-- [ ] **Step 9: Build the focused test**
-
-Reconfigure using the same command as Step 3, then build:
+Default mono build:
 
 ```bash
 /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   velox_ch_guards_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_guards.log 2>&1
-```
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_corrective.log 2>&1
 
-Expected:
-
-```text
-Exit code 0.
-```
-
-Do not add `-j`.
-
-- [ ] **Step 10: Run the focused test**
-
-```bash
 ctest \
   --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
   -R '^velox_ch_guards_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_004_guards.log 2>&1
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_004_corrective.log 2>&1
 ```
 
-Expected:
-
-```text
-100% tests passed, 0 tests failed.
-```
-
-- [ ] **Step 11: Inspect only task-owned changes**
+Non-mono explicit-revision build:
 
 ```bash
-cd /home/chang/OpenSource/velox
-git --no-pager diff --check
-git --no-pager status --short
-git --no-pager diff -- \
-  velox/ch/CMakeLists.txt \
-  velox/ch/Common/CMakeLists.txt \
-  velox/ch/Common/ProfileEvents.h \
-  velox/ch/Common/StatusFile.h \
-  velox/ch/Common/StatusFile.cpp \
-  velox/ch/Interpreters/CMakeLists.txt \
-  velox/ch/Interpreters/FileCache/CMakeLists.txt \
-  velox/ch/Interpreters/FileCache/Guards.h \
-  velox/ch/Interpreters/FileCache/tests/CMakeLists.txt \
-  velox/ch/Interpreters/FileCache/tests/StatusFileAndGuardsTest.cpp
+/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
+  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono \
+  velox_ch_guards_test \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/build_task_004_corrective.log 2>&1
+
+ctest \
+  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono \
+  -R '^velox_ch_guards_test$' \
+  --output-on-failure \
+  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/test_task_004_corrective.log 2>&1
 ```
 
-Expected:
+Do not pass `-j`. Every command must exit 0 and every test must pass with no
+skips. Use a log-analysis subagent for every build/test log.
 
-```text
-No whitespace errors.
-No files outside the declared scope were changed by this task.
-Changes remain unstaged and uncommitted.
-```
+- [ ] **Step 8: Inspect scope**
 
-- [ ] **Step 12: Write the result handoff**
+Run `git diff --check`, `git status --short`, and inspect only the six declared
+source files. Require no unrelated, staged, or committed changes.
 
-Create:
+- [ ] **Step 9: Append the corrective receipt**
 
-```text
-/home/chang/SourceCode/ClickHouse/port/task/result/004-filecache-status-and-guards-result.md
-```
+Append, do not overwrite, these sections:
 
-Use exactly this structure:
-
-````markdown
-# Task 004 Result: Add `StatusFile` and `Guards.h`
-
-## Status
+```markdown
+## Corrective diagnostic contract
 
 status: success
 
-## Velox status
+## Corrective baseline and scope
 
-```text
-<paste branch, HEAD, and final `git status --short`>
-```
+<branch, starting HEAD, pre-existing dirty files, task-owned files>
 
-## Files changed
+## Corrective RED evidence
 
-```text
-<list only task-owned files>
-```
+<first expected failure and log>
 
-## Commands run
+## Revision evidence
 
-```text
-<paste configure, build, test, and verification commands>
-```
+<Git fallback value, explicit override value, generated-header checks>
 
-## Generated logs
+## Corrective test results
 
-```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_guards.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_guards.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_004_guards.log
-```
+<one result for every new and retained test; mono and non-mono totals>
 
-## Verification
+## Corrective review
 
-```text
-Red build failed because StatusFile.h/Guards.h were absent.
-Final build exit code:
-Focused test result:
-git diff --check result:
-```
+<independent self-review findings and resolutions>
 
 ## Blocking errors
 
-```text
 None
 ```
 
-## Recommended next task
+If blocked or failed, record that status, first actionable error, and log path,
+then stop without claiming success.
+
+## Acceptance gate
+
+Task 004 is corrected only when:
 
 ```text
-Task 005: implement FileCacheWorkerPool, FileCacheWorker, FileCacheThreadPool.
+writeFullInfo emits exactly the CH three-line format
+Started at is construction-time local YYYY-MM-DD HH:MM:SS
+Revision is explicit or full configure-time Git HEAD
+missing/invalid revision never degrades to a fallback value
+writePid and writeFullInfo use complete writes and propagate failure
+same-process and forked cross-process exclusion tests pass
+all accepted lock/destructor/unlink/guard tests still pass
+default mono and explicit-revision non-mono gates both pass
+no Guards.h or unrelated code changed
+the receipt contains RED, revision, test, and review evidence
 ```
-````
-
-If blocked or failed, set the status accordingly, include the first actionable
-error and log path, and do not claim success.
 
 ## Explicit exclusions
 
-Do not implement in this task:
+Do not implement:
 
 ```text
-FileCacheScheduler / BackgroundSchedulePool
-FileCacheWorkerPool / FileCacheThreadPool / FileCacheWorker
-FileCacheQueryIdScope
-ThreadPool.h / ThreadPool.cpp
-ReadBufferFromVeloxReadFile / WriteBufferFromVeloxWriteFile
-FileCache leaf types or algorithms (FileSegment, Metadata, etc.)
-SipHash128
+changes to Guards.h or lock ordering
+real logging
+structured errno exceptions
+process-start timestamp tracking
+runtime Git invocation
+public Velox version API
+FileCache production caller wiring
+FileCache algorithms
 Gluten integration
 ```
 
-These belong to later tasks.
+Production caller wiring remains part of the later `FileCache` migration.

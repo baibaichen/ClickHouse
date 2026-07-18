@@ -397,12 +397,17 @@ Velox 直接迁移 `StatusFile` 小类，内部 fd RAII 使用 `folly::File`：
 class StatusFile
 {
 public:
+    using FillFunction = std::function<void(int fd)>;
+
     StatusFile(std::string path, FillFunction fill);
     ~StatusFile();
 
+    static FillFunction writePid();
+    static FillFunction writeFullInfo();
+
 private:
-    const std::string path;
-    folly::File file;
+    const std::string path_;
+    folly::File file_;
 };
 ```
 
@@ -412,11 +417,10 @@ private:
 open/create fd        -> folly::File(path, O_WRONLY | O_CREAT | O_CLOEXEC)
 LOCK_EX | LOCK_NB     -> folly::File::try_lock
 truncate/write        -> use file.fd
-close                 -> explicit folly::File::close in StatusFile destructor
+complete write        -> folly::writeFull; propagate failure with VELOX_FAIL
+close                 -> explicit folly::File::closeNoThrow in StatusFile destructor
 unlink status path    -> after close attempt, regardless of close result
 ```
-
-`folly::File` 的 `lock` / `try_lock` 底层就是 inter-process `flock`。
 
 必须保持：
 
@@ -428,9 +432,90 @@ destructor explicitly closes lock fd before unlink
 constructor failure closes fd
 ```
 
+`FileCache` 使用 `writeFullInfo`，不能降级为 PID-only 内容。它在 fill
+执行时生成以下精确的三行，每行都以 `\n` 结束：
+
+```text
+PID: <decimal process id>
+Started at: <local YYYY-MM-DD HH:MM:SS at StatusFile construction>
+Revision: <full Velox source revision>
+```
+
+这里的 `Started at` 严格跟随 CH 的实际行为：
+`LocalDateTime(time(nullptr))` 是构造 `StatusFile` 时的本地 wall-clock，
+不是独立维护的进程启动时间。Velox 使用已有平台先例：
+
+```text
+std::chrono::system_clock::now
+  -> std::chrono::system_clock::to_time_t
+  -> localtime_r
+  -> strftime("%Y-%m-%d %H:%M:%S")
+```
+
+`localtime_r` 或 `strftime` 失败时直接 `VELOX_FAIL`，不返回默认时间。
+
+Velox 当前没有现成 build-revision API。为避免常量、`unknown` 或运行时
+调用 Git，Task 004 增加 build-time generated header：
+
+```text
+source template:
+  velox/ch/Common/VeloxBuildRevision.h.in
+
+generated private header:
+  <build>/velox/ch/Common/VeloxBuildRevision.h
+
+revision selection:
+  1. use non-empty CMake cache value VELOX_BUILD_REVISION
+  2. otherwise use full `git rev-parse HEAD` during CMake configure
+  3. if neither produces a revision, fail CMake configure with instructions to
+     pass -DVELOX_BUILD_REVISION=<full-source-revision>
+```
+
+The generated value must be 40 or 64 hexadecimal characters, so shortened or
+descriptive values are rejected. `StatusFile.cpp` includes it privately; it is
+not a public installed header and does not expand the `StatusFile` API. Use
+`velox_include_directories(velox_ch_filecache PRIVATE
+${CMAKE_CURRENT_BINARY_DIR})` so mono and non-mono builds target the real
+underlying library rather than a CMake alias.
+
+The generated revision describes the source HEAD at the last CMake configure.
+After changing checkout HEAD, rerun CMake configure before building; the Git
+fallback is deliberately not persisted in the cache, but a normal Ninja build
+does not independently watch `.git/HEAD`.
+
+Both `writePid` and `writeFullInfo` share one complete-write helper:
+
+```text
+folly::writeFull(fd, data, size)
+  success: returns exactly size
+  failure: returns -1; snapshot errno and VELOX_FAIL with numeric code/message
+```
+
+This restores the CH `WriteBuffer` complete-write/error-propagation guarantee.
+Do not keep best-effort raw `write`, retry independently, parse error text, or
+silently truncate the status content.
+
+`folly::File` 的 `lock` / `try_lock` 底层就是 inter-process `flock`。
+
 不能依赖 member destruction完成 close：C++ member在 destructor body之后才析构，若在
-body里先 unlink会颠倒上述顺序。destructor必须显式调用 `file.close()`，再删除 status
-path；close/unlink失败按 CH destructor的日志策略处理，不能抛出 destructor。
+body里先 unlink会颠倒上述顺序。destructor必须显式调用
+`file.closeNoThrow()`，再删除 status path；close/unlink失败不能逃出 destructor。
+
+排他锁测试必须同时覆盖：
+
+```text
+same process:
+  two independent opens of the same status path; second StatusFile fails
+
+cross process:
+  parent holds StatusFile
+  forked child independently opens the same path
+  child reports success only when construction throws VeloxRuntimeError
+  parent verifies child exit status with waitpid
+```
+
+子进程使用 `_exit`，不运行继承自 parent 的 `StatusFile` destructor。不能把
+same-process double-open test 描述为 cross-process evidence。
 
 不能把 `StatusFile` 做成 no-op，也不新增 `FileCacheStatusLock`；它是依赖方的
 CH-compatible wrapper。
@@ -612,6 +697,12 @@ LOG_* macros compile with fmt-style arguments and are no-op
 LOG_TEST does not eagerly format arguments
 fs alias supports path / exists / create_directories / remove_all on a temp directory
 throwFileCacheExceptionFromFilesystemError throws a Velox exception with context text
+StatusFile writePid and writeFullInfo perform complete writes and propagate failures
+StatusFile writeFullInfo has exactly three newline-terminated diagnostic fields
+StatusFile Started at uses construction-time local YYYY-MM-DD HH:MM:SS
+StatusFile Revision uses the configured/generated full Velox source revision
+StatusFile excludes a second same-process and forked cross-process owner
+StatusFile destruction remains non-throwing and closes before unlink
 capacity-0 tryPush returns false
 finish wakes blocked producer and consumer
 finish drains queued values before pop returns false
@@ -640,6 +731,10 @@ filesystem errors follow Velox message-based errno handling; no structured errno
 Velox FileSystem is not the primary mapping for metadata directory traversal
 Velox FileSystem is used only where the IO path already uses ReadFile / WriteFile
 StatusFile is preserved and backed by folly::File inter-process locking
+StatusFile full diagnostics use construction-time local time, not process-start time
+VELOX_BUILD_REVISION is explicit or generated from full Git HEAD; missing revision fails configure
+StatusFile writePid/writeFullInfo use folly::writeFull and propagate failures
+StatusFile exclusion is tested both same-process and with fork/waitpid
 ConcurrentBoundedQueue is preserved by FileCacheBoundedQueue, not MPMC sentinels
 FileCacheBoundedQueue includes timed/non-blocking tryPush/tryPop and exact CH move-or-copy behavior
 ```
