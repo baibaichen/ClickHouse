@@ -56,15 +56,15 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after Task 007 acceptance:
+Current verified snapshot after Task 008 acceptance:
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    Task 007 receipt commit containing this handoff update; resolve with
+    Task 008 receipt commit containing this handoff update; resolve with
     `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    711a84850 Task 007: Add `FileCache` IO adapters
+    4b14de7f1 Task 008: Add `FileCache` leaf types
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -80,37 +80,39 @@ Current verified snapshot after Task 007 acceptance:
       ClickHouse: 5af6ab908fe
     Task 007
       Velox:      711a84850
-      ClickHouse: this Task 007 receipt commit
-- Tasks 004-007 required Controller amendments. Their committed task files and
+     ClickHouse: c9a5c35be06
+   Task 008
+     Velox:      4b14de7f1
+     ClickHouse: this Task 008 receipt commit
+- Tasks 004-008 required Controller amendments. Their committed task files and
   receipts contain the final authoritative contracts. Do not restore the
   original literal snippets.
 
 Current task:
 
-- Task 007 is accepted.
-- Task 008 is `not_started`.
-- Velox is expected to be clean at `711a84850`.
-- After the Task 007 receipt commit, ClickHouse is expected to be clean.
-- Persistent Task 007 logs are under:
+- Task 008 is accepted.
+- Velox is clean at `4b14de7f1`.
+- Task 009 is `not_started`.
+- Execution is paused by explicit user instruction after the Task 008
+  implementation and receipt commits. Do not dispatch Task 009 until the user
+  explicitly resumes.
+- Persistent Task 008 logs belong under:
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
+    /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task008-nonmono/
 
 Resume procedure:
 
-1. Dispatch a fresh Worker for exactly Task 008.
-2. It must read the accepted Task 007 receipt and preserve all committed IO
-   adapter behavior.
-3. It must execute the current Task 008 contract, run every gate, launch exactly
-   one read-only review subagent, write the Task 008 receipt, and stop.
-4. It must not stage, commit, amend, rebase, push, create a PR, create another
-   worktree, or start Task 008.
-5. After the Worker stops, perform the Controller review defined by
-   EXECUTION_PROTOCOL.md. Do not accept the Worker's summary without reading
-   the complete diff and logs.
+1. Stay paused until the user explicitly resumes execution.
+2. On resume, verify both repositories are clean at the accepted heads above.
+3. Read Task 009, every accepted prerequisite receipt, and applicable design
+   files, then dispatch one fresh Worker for Task 009 only.
+4. The Worker must not stage, commit, amend, rebase, push, create a PR, create
+   another worktree, or start Task 010.
 
 Continuous execution target:
 
-- Complete Tasks 007 through 014 in numeric order without pausing for routine
-  confirmation.
+- Current stop condition: user-requested pause after accepted Task 008.
+- After explicit resume, continue through Task 014 using the protocol below.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
@@ -128,11 +130,12 @@ Continuous execution target:
        handoff update together in ClickHouse.
     f. Confirm affected repositories are clean before dispatching the next
        task.
-- Stop only when:
+- After resume, stop only when:
     a. Task 014 is accepted and both implementation and receipt commits exist;
     b. a Worker writes `blocked` and the Controller cannot resolve it from
-       repository evidence; or
-    c. a real product/architecture decision requires the user.
+       repository evidence;
+    c. a real product/architecture decision requires the user; or
+    d. the user explicitly requests another pause.
 
 Special task rules:
 

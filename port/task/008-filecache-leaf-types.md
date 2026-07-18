@@ -29,6 +29,121 @@ golden SipHash128 vector derived from the CH implementation.
 Note: `Guards.h` was ported in Task 004 and must already exist. This task does
 not recreate it.
 
+## Controller amendment before Worker attempt 1
+
+### Mono-safe `FileCache` source registration
+
+This amendment overrides the literal `target_sources(PRIVATE ...)` call in
+Step 14. In the default mono build, `velox_ch_filecache` is an alias and cannot
+be passed to `target_sources`.
+
+Register `FileSegmentKeyType.cpp` and `FileCacheKey.cpp` through the existing
+`velox_sources` helper so both mono and non-mono builds receive the compiled
+sources. In non-mono builds only, extend the existing public `HEADERS` file set
+with all Task 008 public headers under `velox/ch/Interpreters/FileCache/`:
+
+```text
+FileSegmentKeyType.h
+FileCacheOriginInfo.h
+FileCache_fwd.h
+FileCache_fwd_internal.h
+FileCacheKey.h
+FileCacheUtils.h
+```
+
+Keep the existing `Guards.h` registration and `add_subdirectory(tests)` block.
+Do not call `target_sources` on the alias in mono mode.
+
+## Controller amendment after Worker attempt 1
+
+### `FileCacheKey` default construction
+
+This amendment overrides the factory-only `FileCacheKey` declaration in
+Step 10. Add a public default constructor:
+
+```cpp
+FileCacheKey() = default;
+```
+
+The default key must have numeric value zero through the existing `key{}`
+initializer. This preserves the ClickHouse API and is required by declared
+downstream structures in Task 012 (`FileSegmentInfo`, `DownloadInfo`) and the
+Task 015 benchmark state, which default-construct `FileCacheKey` members.
+
+Add focused compile/runtime coverage proving:
+
+```text
+std::is_default_constructible_v<FileCacheKey>
+FileCacheKey{}.key == 0
+FileCacheKey{}.toString() == "00000000000000000000000000000000"
+```
+
+### Direct non-mono link dependencies
+
+Step 13 requires `velox_ch_filecache` to carry the direct dependencies used by
+`FileCacheKey.cpp` and its public headers. Extend the existing non-mono
+`target_link_libraries` block in `velox/ch/Common/CMakeLists.txt` to include:
+
+```text
+velox_exception
+Folly::folly
+fmt::fmt
+```
+
+Do not rely on each consumer or focused test to link `fmt` and
+`velox_exception` separately.
+
+### Hex parser rejection evidence
+
+Add a focused test that passes a 32-character string containing a non-hex
+character to `fromKeyString` and proves it throws. The implementation already
+contains this validation, but attempt 1 did not exercise it even though the
+review receipt claimed the branch was verified.
+
+## Controller amendment after Worker attempt 2
+
+### Preserve public dependency scope
+
+This clarifies the "Direct non-mono link dependencies" amendment above. In the
+non-mono `target_link_libraries` block, the dependency scope must be `PUBLIC`,
+as required by the original Step 13:
+
+```cmake
+if(NOT VELOX_MONO_LIBRARY)
+  target_link_libraries(
+    velox_ch_filecache
+    PUBLIC
+      velox_exception
+      Folly::folly
+      fmt::fmt
+  )
+endif()
+```
+
+`FileCacheKey.h` publicly includes fmt and Folly headers. `PRIVATE` dependencies
+of a static library can reach consumers as link-only dependencies, but do not
+carry their compile usage requirements. Therefore `PRIVATE` does not satisfy
+the public-header contract.
+
+### Remove the focused-test dependency mask
+
+The Task 008 focused test must not list `velox_exception`, `Folly::folly`, or
+`fmt::fmt` directly. Link it only to:
+
+```cmake
+velox_ch_filecache
+GTest::gtest
+GTest::gtest_main
+```
+
+This makes the test a real consumer of the `velox_ch_filecache` interface rather
+than masking missing transitive dependencies.
+
+In addition to the normal mono gates, configure a separate non-mono build with
+`-DVELOX_MONO_LIBRARY=OFF` and build and run `velox_ch_leaf_types_test`. Keep its
+configure/build/test logs in that separate build directory. This is the focused
+proof for the CMake mode changed by this amendment.
+
 ## Starting point
 
 ```text
