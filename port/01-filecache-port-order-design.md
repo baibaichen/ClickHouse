@@ -12,6 +12,33 @@
 - `FileCache` 算法不重写，只替换基础设施。
 - 当前阶段不支持 `cache_on_write_operations` / write-through cache。
 - 每一阶段都要有可编译目标。
+- 每个 task 的合同必须从 CH production source 和真实调用点推导，task literal snippet
+  不能覆盖或削弱 source contract。
+- Task 010 和 Task 014 是强制整体 review checkpoint；review 有 finding 时停止，
+  零 unresolved findings 且用户批准后才继续。
+
+## Source-contract review checkpoints
+
+### Task 010 后
+
+Task 010 验收后暂停所有 Worker，整体复审 Tasks 003–010：
+
+```text
+CH source + real callers
+  -> approved design
+  -> numbered task
+  -> accumulated Velox implementation
+  -> focused tests and failure paths
+```
+
+任何 API、状态、异常、ownership、concurrency、persistence 或 false-green finding
+都会 reopen 对应 task。只有零 unresolved findings 且用户明确批准，才能开始 Task 011。
+
+### Task 014 后
+
+Task 014 验收后再次暂停，整体复审 Tasks 003–014。重点覆盖中心 SCC、Factory/Manager、
+reader handoff、cache miss/hit、seek、异常释放和 shutdown。任何 finding 都停止推进；
+只有零 unresolved findings 且用户明确批准，才能开始 Task 015。
 
 ## Review 分层
 

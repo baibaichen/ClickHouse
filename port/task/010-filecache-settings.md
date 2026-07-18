@@ -5,6 +5,45 @@
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
+## Pre-execution source-contract amendment
+
+This section supersedes the three-iterator `std::mismatch` path-containment snippet
+later in this file.
+
+After both paths are normalized/canonicalized according to the settings design,
+compare path components without ever advancing past either range:
+
+```text
+rootIt = allowedRoot.begin
+pathIt = resolvedPath.begin
+
+while rootIt != allowedRoot.end:
+  if pathIt == resolvedPath.end: reject
+  if *rootIt != *pathIt: reject
+  increment both
+
+accept
+```
+
+This is a component-prefix check, not a string-prefix check. Required RED tests:
+
+1. exact root is accepted;
+2. a descendant is accepted;
+3. a shorter resolved path is rejected without invalid iterator access;
+4. sibling `/cache-other` is rejected for root `/cache`;
+5. `..` escape is rejected after normalization;
+6. symlink/canonicalization behavior follows the approved settings design and does
+   not bypass the allowed root.
+
+Do not execute Task 010 with the old `std::mismatch(root.begin(), root.end(),
+resolved.begin())` snippet.
+
+### Mandatory review checkpoint
+
+After Task 010 is accepted, stop. Run a whole-port source-contract review of
+Tasks 003-010. Any finding reopens the affected task and stops execution. Task 011
+may start only with zero unresolved findings and explicit user approval.
+
 ## Goal
 
 Port `FileCacheSettings.h` and `FileCacheSettings.cpp` from ClickHouse to Velox

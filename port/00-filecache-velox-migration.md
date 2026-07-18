@@ -34,6 +34,7 @@ write-through cache
 |---|---|---|
 | 00 | `00-filecache-velox-migration.md` | 总览、范围和核心决策 |
 | 01 | [`01-filecache-port-order-design.md`](01-filecache-port-order-design.md) | 跨分类实现顺序、SCC 切片和阶段计划 |
+| design | [Reader handoff 与 IO compatibility](design/filecache-reader-handoff-and-contract-recovery.html) | Q1/Q2 接力场景、CH 源码映射、Task 007 修复方案和整体 review gate |
 
 ### 1. 依赖
 
@@ -108,15 +109,21 @@ FileCacheInputStream   : SeekableInputStream
 
 ### 3. Buffer adapter
 
-保留两个最小 CH-style adapter：
+保留 `FileCache` 实际使用的 CH-compatible reader/writer contract：
 
 ```text
-ReadBufferFromVeloxReadFile
+ch::ReadBufferFromFileBase compatibility contract
+  -> ReadBufferFromVeloxReadFile
+       -> Velox ReadFile
+
 WriteBufferFromVeloxWriteFile
+  -> Velox WriteFile
 ```
 
-它们分别接受 Velox `ReadFile` / `WriteFile`，内部用 `BufferPtr` /
-`AlignedBuffer` 持有固定 IO buffer，并提供 CH reader/writer 路径需要的最小接口。
+公开 API、buffer 状态、异常和 handoff 行为与 CH `FileCache` 使用方式一致；
+内部不移植完整五层通用 IO hierarchy，而是 flatten 后使用 Velox `ReadFile` /
+`WriteFile`、`MemoryPool` 和 aligned memory。完整合同见
+[reader handoff 与 IO compatibility 设计](design/filecache-reader-handoff-and-contract-recovery.html)。
 
 ### 4. `FileCache` 算法
 
@@ -165,9 +172,14 @@ shutdown；`NativeBackendInitializer` 在 Spark Context停止后调用
 
 ## Review 状态
 
-当前范围内的依赖、`FileCache` 文件和使用方均已完成设计 review。每类文档按实现顺序放在
-对应目录；跨分类的实际落地顺序统一由
-[`01-filecache-port-order-design.md`](01-filecache-port-order-design.md)维护。
+2026-07-18 的 source-contract review 发现部分已验收 task 和未执行 task 丢失了 CH
+source of truth。Tasks 003、004、006、007、008 已 reopen；Tasks 010、012、013、014
+必须在执行前修订。Task 005、009、011 当前审计未发现确定 blocker。
+
+跨分类的实际落地顺序统一由
+[`01-filecache-port-order-design.md`](01-filecache-port-order-design.md)维护。任何
+`accepted` 状态都可以被后续 source-contract review reopen；旧 receipt 保持 append-only，
+不删除历史结论。
 
 已确认后置或排除：
 

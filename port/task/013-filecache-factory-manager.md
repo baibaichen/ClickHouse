@@ -5,6 +5,47 @@
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
+## Pre-execution source-contract amendment
+
+The comment-only `FileCacheFactoryManagerTest.cpp` skeleton later in this file is
+invalid and must not be copied. Every listed test must execute production code and
+contain assertions. The fixture must return a real initialized Manager/Factory, not
+null or a fake registry.
+
+Required executable coverage:
+
+```text
+Factory:
+  create/get/missing behavior
+  same-name equal/different settings
+  same-path alias dedup and different-settings rejection
+  existing-name create rejection
+  alias enumeration and remove-all-aliases
+  name-rebind conflict preserves the original binding
+
+Manager:
+  worker budget grows once per unique cache
+  initialize and shutdown run once per unique cache
+  explicit global install/get/uninstall and live replacement rejection
+  equal reload is a no-op
+  reload deduplicates aliases and rejects path changes
+  applySettingsIfPossible runs outside the registry lock
+  clear deactivates outside the registry lock and leaves Manager reusable
+  shutdown is idempotent and later operations fail
+  resource shutdown order is cache workers -> timers -> physical pool -> handles
+```
+
+Lock-order tests must use barriers, callbacks, or try-lock instrumentation; do not use
+sleep. Each regression must have a behavioral RED that reaches the relevant
+production path.
+
+Reuse `checkedAdd` from `FileCacheUtils.h`; do not define a private Manager-only
+overflow helper.
+
+Controller acceptance requires reading every test body and mapping each promised
+contract to at least one assertion. A green executable containing empty/comment-only
+tests is an automatic `changes_requested`.
+
 ## Goal
 
 Implement the real `FileCacheFactory` (sole registry/name/path aliasing) and
@@ -135,178 +176,10 @@ target_link_libraries(
 
 Create `velox/ch/Interpreters/FileCache/tests/FileCacheFactoryManagerTest.cpp`:
 
-```cpp
-#include "velox/ch/Interpreters/FileCache/FileCacheFactory.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-#include "velox/common/testutil/TempDirectoryPath.h"
-#include <gtest/gtest.h>
-
-namespace facebook::velox::ch
-{
-namespace
-{
-
-using common::testutil::TempDirectoryPath;
-
-// ── Registry tests ──────────────────────────────────────────────────────────
-
-TEST(FileCacheFactoryTest, GetOrCreateOneCache)
-{
-    auto dir = TempDirectoryPath::create();
-    // Setup: create a Manager with a valid filesystem, memory pool, etc.
-    // Then call factory.getOrCreate and factory.get.
-}
-
-TEST(FileCacheFactoryTest, MissingGetFails)
-{
-    // factory.get("nonexistent") throws.
-}
-
-TEST(FileCacheFactoryTest, SameNameEqualSettingsReturnsExisting)
-{
-    // getOrCreate(name, settings) twice with equal settings returns the same
-    // FileCachePtr.
-}
-
-TEST(FileCacheFactoryTest, SameNameDifferentSettingsRejected)
-{
-    // getOrCreate(name, settings1), then getOrCreate(name, settings2) throws.
-}
-
-TEST(FileCacheFactoryTest, DifferentNamesSamePathAliasOneSCC)
-{
-    // "A" -> /cache/path, then "B" -> same path / same settings
-    // -> both names return the same FileCachePtr (aliased FileCacheData).
-    // getUniqueInstances() returns one entry.
-}
-
-TEST(FileCacheFactoryTest, SamePathDifferentSettingsRejected)
-{
-    // getOrCreate("A", path, settings1)
-    // getOrCreate("B", same path, settings2) throws.
-}
-
-TEST(FileCacheFactoryTest, CreateRejectsExistingName)
-{
-    // factory.create(name, ...) when name already exists throws.
-}
-
-TEST(FileCacheFactoryTest, GetAllIncludesAliases)
-{
-    // Two names aliasing one cache -> getAll().size() == 2.
-    // getUniqueInstances().size() == 1.
-}
-
-TEST(FileCacheFactoryTest, RemoveErasesAllAliases)
-{
-    // After remove(cache), neither "A" nor "B" can be found via get().
-}
-
-// ── Conflict regression ──────────────────────────────────────────────────────
-
-TEST(FileCacheFactoryTest, NameRebindConflictRegression)
-{
-    // CH bug: getOrCreate("A", /new) when "A" -> /old silently returned /new
-    // but left registry pointing to /old for get("A").
-    // Target behavior: getOrCreate("A", /new) must throw.
-    // After the failed call, get("A") must still return the original /old cache.
-}
-
-// ── Lifecycle / resources ────────────────────────────────────────────────────
-
-TEST(FileCacheManagerTest, NewUniqueCacheGrowsWorkerBudgetOnce)
-{
-    // Creating a new unique cache increases worker pool max by the formula.
-    // Creating a name alias for the same cache does not increase the max.
-}
-
-TEST(FileCacheManagerTest, InitializationRunsOncePerUniqueCache)
-{
-    // manager->initialize() calls cache->initialize() once per unique instance.
-    // A second manager->initialize() is a no-op.
-}
-
-TEST(FileCacheManagerTest, ShutdownProcessesEachCacheOnce)
-{
-    // shutdown() deactivates each unique cache exactly once.
-    // No cache destruction happens under registry lock.
-}
-
-TEST(FileCacheManagerTest, GlobalInstanceRequiresExplicitInstall)
-{
-    // FileCacheManager::instance() before setInstance throws.
-    EXPECT_THROW(FileCacheManager::instance(), VeloxRuntimeError);
-}
-
-TEST(FileCacheManagerTest, InstallGetUninstall)
-{
-    // setInstance(manager), instance() returns manager, setInstance(nullptr)
-    // clears both Manager and Factory global pointers.
-}
-
-TEST(FileCacheManagerTest, ReplacementOfLiveInstanceFails)
-{
-    // setInstance(manager1), setInstance(manager2) while manager1 is live throws.
-}
-
-// ── Reload ───────────────────────────────────────────────────────────────────
-
-TEST(FileCacheManagerTest, ReloadEqualConfigIsNoOp)
-{
-    // applyConfigs with identical NamedFileCacheConfig does not resize workers.
-}
-
-TEST(FileCacheManagerTest, ReloadOnlyUniqueInstances)
-{
-    // "A" and "B" alias the same cache; applyConfigs calls
-    // applySettingsIfPossible once.
-}
-
-TEST(FileCacheManagerTest, ReloadPathChangeRejected)
-{
-    // NamedFileCacheConfig with path differing from registered path throws.
-}
-
-TEST(FileCacheManagerTest, ReloadDoesNotHoldRegistryMutexDuringApply)
-{
-    // applySettingsIfPossible must be called outside registry lock.
-    // Verified via deadlock detection if tryReserve is called concurrently.
-}
-
-// ── Clear / remove ───────────────────────────────────────────────────────────
-
-TEST(FileCacheManagerTest, ClearDeactivatesOutsideRegistryLock)
-{
-    // clear() deactivates caches and clears registry, but deactivation happens
-    // outside the registry lock.
-}
-
-TEST(FileCacheManagerTest, ClearKeepsManagerReusable)
-{
-    // After clear(), getOrCreate(...) can register a new cache.
-    // Worker max returns to 1 after clear.
-}
-
-TEST(FileCacheManagerTest, ShutdownIdempotent)
-{
-    // Calling shutdown() twice must not hang or throw.
-}
-
-TEST(FileCacheManagerTest, OperationAfterShutdownFails)
-{
-    // getOrCreate after shutdown throws.
-}
-
-TEST(FileCacheManagerTest, ResourceShutdownOrder)
-{
-    // Verify sequence: cache workers stop -> timer chains cancel ->
-    // physical pool stops -> opened handles clear.
-    // (Use spy callbacks injected via test helpers.)
-}
-
-} // namespace
-} // namespace facebook::velox::ch
-```
+Implement the complete executable test matrix from the pre-execution amendment.
+Do not create test declarations until their fixture and assertions are complete.
+The RED revision must compile and fail through production behavior; after recording
+that evidence, implement Factory/Manager until the same tests pass.
 
 - [ ] **Step 3: Verify the red build**
 

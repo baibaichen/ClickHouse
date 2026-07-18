@@ -5,6 +5,40 @@
 > result file under this ClickHouse checkout. Do not modify any ClickHouse source
 > files outside `port/task/result/`. Do not commit or stage either repository.
 
+## Post-acceptance source-contract audit — task reopened
+
+The original Task 006 lifetime fixes remain required. This amendment corrects one
+additional scheduling-priority divergence.
+
+CH `BackgroundSchedulePoolTaskInfo::scheduleAfter` never replaces an already
+scheduled immediate run with a delayed run. Immediate work has priority:
+
+```text
+state == Running and pendingImmediate == true:
+  scheduleAfter(delay) returns false
+  pendingImmediate remains true
+  no delayed request replaces it
+
+state == Running and pendingImmediate == false:
+  scheduleAfter(delay) records or overwrites one delayed next run
+
+schedule while a delayed next run is pending:
+  cancel the delayed request
+  record one immediate next run
+```
+
+The corrective Worker must add a deterministic RED test:
+
+1. enter the callback and keep it running with a barrier;
+2. call `schedule` from another thread;
+3. allow the callback to call `scheduleAfter`;
+4. release the callback;
+5. prove the next callback runs immediately without advancing the manual clock;
+6. prove `scheduleAfter` reported that it did not replace the immediate request.
+
+Retain all attempt-2 weak-ownership, generation, holder-destruction, and
+`deactivate` guarantees.
+
 ## Goal
 
 Implement two independent `FileCache` infrastructure components:

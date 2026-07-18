@@ -31,3 +31,104 @@
 | `OpenTelemetry` | no-op `OpenTelemetry::SpanHolder`；详见[metrics/debug设计](03-filecache-metrics-debug-design.md) | compat shim |
 | `QueryStatus::throwIfKilled` | no-op shim；后续接 `ConnectorQueryCtx::cancellationToken`；详见[metrics/debug设计](03-filecache-metrics-debug-design.md) | compat shim |
 | `FailPoint` / `assertCacheCorrectness*` | no-op shims；详见[metrics/debug设计](03-filecache-metrics-debug-design.md) | using/compat shim |
+
+## IO compatibility contract
+
+完整场景、ownership 图和 CH 源码映射见
+[reader handoff 与 IO compatibility 设计](../design/filecache-reader-handoff-and-contract-recovery.html)。
+
+这里的 “wrapper” 只允许替换内部实现，不允许重新定义 reader/writer 行为：
+
+```text
+CH FileCache state machine
+  -> ch::ReadBufferFromFileBase compatibility contract
+       -> ReadBufferFromVeloxReadFile
+            -> shared_ptr<ReadFile> + MemoryPool
+
+FileSegment::write
+  -> WriteBufferFromVeloxWriteFile
+       -> WriteFile
+```
+
+`ReadBufferFromFileBase` compatibility contract 必须保留：
+
+```text
+internal buffer / working buffer / mutable position
+offset / available / hasPendingData / count
+set(ptr, size) / set(nullptr, 0)
+next / eof / cancel
+seek / getPosition / getFileOffsetOfBufferEnd
+setReadUntilPosition / setReadUntilEnd
+supportsExternalBufferMode / supportsRightBoundedReads
+getFileName / tryGetFileSize
+```
+
+`next`、`eof` 和异常状态转换以 CH `ReadBuffer` 为准：
+
+```text
+next:
+  require no pending data
+  settle bytes += offset
+  call nextImpl
+  on exception: cancel, then rethrow
+  on false: publish an empty working buffer
+  on true: reset position to working-buffer begin
+
+eof:
+  return !hasPendingData && !next
+```
+
+External buffer 在显式 `set` 或 null/zero detach 前保持有效；成功读取不能自动把下一次
+read target 切回 owned buffer。handoff 前必须满足：
+
+```text
+reader.available() == 0
+reader.getFileOffsetOfBufferEnd() == FileSegment::getCurrentWriteOffset()
+reader no longer references the caller-owned output buffer
+```
+
+Owned IO memory 必须由 Velox `MemoryPool` 分配。构造 reader 时调用
+`ReadFile::directIo` 获取 alignment；direct IO 模式下 owned buffer 必须满足 alignment，
+caller-provided external buffer 不满足时必须显式拒绝，不允许静默 fallback。
+
+`WriteBufferFromVeloxWriteFile` 必须支持 CH `FileSegment::write` 使用的零复制 attach/flush：
+
+```text
+construct with buffer size 0
+set(from, size, offset=size)
+next                         # append offset bytes
+set(nullptr, 0)              # detach
+finalize                     # idempotent
+cancel                       # noexcept and idempotent
+```
+
+Writer 同时提供 `sync` 和 `getFileName`。不得用强制 memcpy 到 writer-owned buffer 的
+实现替代这条 hot path，除非后续设计明确批准该行为和性能变化。
+
+Reader/writer 可以 composition 复用一个内部 `FileCacheBufferState`：
+
+```text
+optional BufferPtr ownedBuffer
+working begin/end
+mutable position
+settled bytes
+set / offset / available / count
+swapWorkingState
+```
+
+Owned memory 必须是 `BufferPtr` / `AlignedBuffer` 并由 `MemoryPool` 计费；raw pointer
+只表示 caller-owned memory 的同步 non-owning view。
+
+Writer 的 Velox mapping 不得混淆普通 write 与 durability：
+
+```text
+nextImpl  -> WriteFile::append
+sync      -> next + WriteFile::flush
+finalize  -> next + WriteFile::close
+cancel    -> no append/flush; discard pending state and release the owned WriteFile
+```
+
+`FileSegment::DownloadState` 持有 shared writer wrapper；wrapper 独占一个
+`unique_ptr<WriteFile>`。当前 remote-miss 路径和后置 `WriteBufferToFileSegment`
+都借用同一块 caller-owned `BufferPtr` 完成 append，不经过 writer staging copy。
+这里的 zero-copy 只承诺没有用户态中间 memcpy，不承诺 kernel zero-copy。

@@ -56,7 +56,7 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after Task 008 acceptance:
+Current verified snapshot after the post-Task-008 source-contract review:
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
@@ -84,35 +84,38 @@ Current verified snapshot after Task 008 acceptance:
    Task 008
      Velox:      4b14de7f1
      ClickHouse: this Task 008 receipt commit
-- Tasks 004-008 required Controller amendments. Their committed task files and
-  receipts contain the final authoritative contracts. Do not restore the
-  original literal snippets.
+- The original acceptance history remains in the receipts, but Tasks 003, 004,
+  006, 007, and 008 are reopened by the source-contract review.
+- Task 005 remains accepted with no confirmed defect in its current consumer path.
+- Task 009 and Task 011 task contracts passed the read-only audit, but no Worker
+  may start while the documentation repair is under user review.
 
 Current task:
 
-- Task 008 is accepted.
+- Task 008 was accepted and is now reopened by contract audit.
 - Velox is clean at `4b14de7f1`.
 - Task 009 is `not_started`.
-- Execution is paused by explicit user instruction after the Task 008
-  implementation and receipt commits. Do not dispatch Task 009 until the user
-  explicitly resumes.
+- Execution is paused for design/task-document review. Do not modify Velox source
+  or dispatch a Worker until the user approves the revised documents.
 - Persistent Task 008 logs belong under:
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task008-nonmono/
 
 Resume procedure:
 
-1. Stay paused until the user explicitly resumes execution.
-2. On resume, verify both repositories are clean at the accepted heads above.
-3. Read Task 009, every accepted prerequisite receipt, and applicable design
-   files, then dispatch one fresh Worker for Task 009 only.
-4. The Worker must not stage, commit, amend, rebase, push, create a PR, create
-   another worktree, or start Task 010.
+1. Stay paused until the user approves the revised design/task documents.
+2. On approval, repair reopened Tasks 003, 004, 006, 007, and 008 with new
+   corrective commits; do not rewrite existing commits or receipt history.
+3. Run the accumulated Task 003-008 regression and complete Controller review.
+4. Only then dispatch Task 009.
+5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
+6. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: user-requested pause after accepted Task 008.
-- After explicit resume, continue through Task 014 using the protocol below.
+- Current stop condition: documentation review before any corrective coding.
+- After user approval, repair reopened Tasks 003, 004, 006, 007, and 008 before
+  starting Task 009.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
@@ -130,21 +133,25 @@ Continuous execution target:
        handoff update together in ClickHouse.
     f. Confirm affected repositories are clean before dispatching the next
        task.
-- After resume, stop only when:
-    a. Task 014 is accepted and both implementation and receipt commits exist;
-    b. a Worker writes `blocked` and the Controller cannot resolve it from
+- After resume, stop when:
+    a. Task 010 is accepted, for the mandatory Tasks 003-010 review;
+    b. Task 014 is accepted, for the mandatory Tasks 003-014 review;
+    c. either review has any finding;
+    d. a Worker writes `blocked` and the Controller cannot resolve it from
        repository evidence;
-    c. a real product/architecture decision requires the user; or
-    d. the user explicitly requests another pause.
+    e. a real product/architecture decision requires the user; or
+    f. the user explicitly requests another pause.
 
 Special task rules:
 
 - Task 011 and Task 012 are one atomic SCC migration stage.
+- Do not start Task 011 until the Task 010 whole-port review has zero unresolved
+  findings and the user explicitly approves.
 - Task 011 intentionally has no green build gate. Accept it only if its exact
   migration-only contract is satisfied, then immediately start Task 012.
 - Task 012 must restore the full compile/link/test closure before proceeding.
-- Do not start Task 015 in this handoff. The requested stopping point is
-  accepted Task 014.
+- Do not start Task 015 until the Task 014 whole-port review has zero unresolved
+  findings and the user explicitly approves.
 
 Controller review requirements:
 

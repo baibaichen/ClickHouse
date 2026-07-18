@@ -6,6 +6,71 @@
 > files. **Do not modify any Gluten file.** Do not commit or stage either
 > repository.
 
+## Pre-execution source-contract amendment
+
+This section supersedes the placeholder fixture/tests and every Task 007 assumption
+later in this file. Canonical reader/handoff design:
+
+```text
+port/design/filecache-reader-handoff-and-contract-recovery.html
+```
+
+### Exact handoff data flow
+
+`FileCacheInputStream::outputBuffer_` is the outer query-owned buffer, equivalent to
+the internal buffer of CH `CachedOnDiskReadBufferFromFile`. It must not become a
+second staging copy:
+
+```text
+reader.set(outputBuffer mutable memory)
+reader.next / reader.eof
+FileSegment::write(reader.buffer begin, reader.buffer size)
+publish outputBuffer to the Velox caller
+reader.set(nullptr, 0)
+assert reader.available == 0
+assert reader.getFileOffsetOfBufferEnd == segment.currentWriteOffset
+release downloader; FileSegment retains the reader
+```
+
+On any read/write/reserve exception, do not return the canceled reader to
+`FileSegment`. Release downloader and holder state in CH order, then propagate the
+exception. Do not retry the same canceled reader.
+
+Use `checkedAdd` from `FileCacheUtils.h` for region-relative to absolute conversion.
+No private duplicate helper or unchecked addition is allowed.
+
+### Placeholder tests are forbidden
+
+The later `makeInput` implementation that returns null and all comment-only
+`TEST_F` bodies are invalid examples and must be replaced, not copied. The test
+fixture must construct a real `FileCacheManager`, `FileCache`, source `ReadFile`,
+`FileCacheBufferedInput`, and temporary cache directory.
+
+Mandatory executable tests:
+
+| Area | Required observable behavior |
+|---|---|
+| enqueue/load lifetime | destroy enqueue result before load; load touches no dead stream and creates no segment |
+| DWIO contract | preload/stripe-prefetch/cache flags return the approved values |
+| no-create probe | cold `isBuffered` returns false without metadata/downloader/reservation |
+| coordinates | non-zero region keeps `ByteCount` relative while all file/cache offsets are absolute |
+| overflow | region offset + length and position conversion throw before wrap |
+| backup/seek | in-buffer operations preserve holder/downloader; out-of-buffer seek releases them but keeps query holder |
+| miss/hit | first stream reads remote and fills cache; second stream reads cache with no remote read |
+| bypass | miss reads remote without creating cache metadata |
+| handoff | Q1 writes one chunk, detaches reader, Q2 reuses it from `currentWriteOffset` |
+| exception | remote read, reserve, cache write, and output publication failures leave no leaked downloader or caller-buffer pointer |
+| direct IO | aligned buffers work; misaligned external buffer is rejected |
+
+Each material test requires behavioral RED evidence. Missing-header compile failure
+is not sufficient.
+
+### Mandatory review checkpoint
+
+After Task 014 is accepted, stop. Run a whole-port source-contract review of
+Tasks 003-014. Any finding reopens the affected task and stops execution. Task 015
+may start only with zero unresolved findings and explicit user approval.
+
 ## Goal
 
 Implement the Velox scan read path for the ClickHouse `FileCache`:
@@ -257,167 +322,11 @@ target_link_libraries(
 Create
 `velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp`:
 
-```cpp
-#include "velox/ch/Disks/IO/FileCacheBufferedInput.h"
-#include "velox/ch/Disks/IO/FileCacheInputStream.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheReadOptions.h"
-#include "velox/ch/Disks/IO/FileCacheRequestContext.h"
-#include "velox/ch/Disks/IO/FileCacheFileIdentity.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-#include "velox/ch/Interpreters/FileCache/FileCache.h"
-#include "velox/common/testutil/TempDirectoryPath.h"
-#include "velox/dwio/common/BufferedInput.h"
-#include <gtest/gtest.h>
-#include <memory>
-#include <string>
-
-namespace facebook::velox::ch
-{
-namespace
-{
-
-using common::testutil::TempDirectoryPath;
-
-// ── Identity helpers ─────────────────────────────────────────────────────────
-
-TEST(FileCacheFileIdentityTest, EmptyEtagUsesPathKey)
-{
-    FileCacheFileIdentity id{"/some/path/data.orc", ""};
-    auto key = FileCacheFileIdentity::deriveKey(id);
-    EXPECT_EQ(key, FileCacheKey::fromPath("/some/path/data.orc"));
-}
-
-TEST(FileCacheFileIdentityTest, NonEmptyEtagUsesSipHashKey)
-{
-    FileCacheFileIdentity id{"/some/path/data.orc", "etag-v1"};
-    auto key1 = FileCacheFileIdentity::deriveKey(id);
-    EXPECT_NE(key1, FileCacheKey::fromPath("/some/path/data.orc"));
-
-    FileCacheFileIdentity id2{"/some/path/data.orc", "etag-v2"};
-    auto key2 = FileCacheFileIdentity::deriveKey(id2);
-    EXPECT_NE(key1, key2);
-}
-
-// ── BufferedInput contract ────────────────────────────────────────────────────
-
-class FileCacheBufferedInputTest : public ::testing::Test
-{
-protected:
-    // Create a minimal in-process cache backed by a temp directory.
-    std::shared_ptr<FileCacheBufferedInput> makeInput(
-        std::shared_ptr<ReadFile> readFile,
-        uint64_t fileSize)
-    {
-        // setup: create FileCacheManager, get default cache, build input
-        // omitted for brevity; see design doc for full constructor
-        (void)readFile;
-        (void)fileSize;
-        return nullptr; // replace with real construction
-    }
-};
-
-TEST_F(FileCacheBufferedInputTest, DiscardEnqueueResultBeforeLoad)
-{
-    // enqueue returns a unique_ptr; discard it immediately.
-    // load() must not access the freed stream.
-    // This test verifies no use-after-free or assertion failure.
-    auto dir = TempDirectoryPath::create();
-    // (construct a FileCacheBufferedInput backed by a mock ReadFile)
-    // auto input = makeInput(...);
-    // velox::common::Region region{0, 4096};
-    // { auto stream = input->enqueue(region); }  // stream destroyed here
-    // EXPECT_NO_THROW(input->load(dwio::common::LogType::FOOTER));
-}
-
-TEST_F(FileCacheBufferedInputTest, LoadDoesNotCreateFileSegment)
-{
-    // After enqueue + discard + load, the cache must contain no metadata
-    // for the requested region.
-}
-
-TEST_F(FileCacheBufferedInputTest, PreloadLeavesPreloadedFalse)
-{
-    // preload() is a no-op; preloaded() remains false.
-    // auto input = makeInput(...);
-    // input->preload();
-    // EXPECT_FALSE(input->preloaded());
-}
-
-TEST_F(FileCacheBufferedInputTest, ShouldPrefetchStripesFalse)
-{
-    // shouldPrefetchStripes() must return false.
-    // EXPECT_FALSE(input->shouldPrefetchStripes());
-}
-
-TEST_F(FileCacheBufferedInputTest, HasCacheFalse)
-{
-    // hasCache() must return false.
-    // EXPECT_FALSE(input->hasCache());
-}
-
-TEST_F(FileCacheBufferedInputTest, ExecutorReturnsInjected)
-{
-    // executor() must return the executor passed to the constructor.
-}
-
-TEST_F(FileCacheBufferedInputTest, IsBufferedMissDoesNotCreateMetadata)
-{
-    // isBuffered(offset, length) on a cold cache must return false
-    // and must not create any FileSegment metadata.
-}
-
-// ── Stream coordinates and seek ──────────────────────────────────────────────
-
-TEST_F(FileCacheBufferedInputTest, NonZeroRegionOffsetBytecountRelative)
-{
-    // region.offset = 1024; ByteCount() returns region-relative position.
-    // FileCache calls use region.offset + position as absolute offset.
-}
-
-TEST_F(FileCacheBufferedInputTest, BackUpWithinOutputBuffer)
-{
-    // BackUp(n) where n <= offsetInOutputBuffer_ succeeds.
-    // BackUp beyond the last Next buffer is undefined and must not be called.
-}
-
-TEST_F(FileCacheBufferedInputTest, SeekWithinCurrentBufferFastPath)
-{
-    // seekToPosition to a position inside the current output buffer:
-    // position_ updated, holder and downloader NOT reset.
-}
-
-TEST_F(FileCacheBufferedInputTest, SeekOutsideBufferResetsState)
-{
-    // seekToPosition to a position outside the current output buffer:
-    // ReadInfo and state_ reset, initialized_ = false.
-    // queryContextHolder_ is NOT reset.
-}
-
-TEST_F(FileCacheBufferedInputTest, RandomRowGroupSeekCorrectness)
-{
-    // Simulate an ORC/Parquet reader seeking to non-sequential row groups.
-    // After each seek, the next Next() must return the correct bytes at
-    // the absolute offset corresponding to the seeked region-relative position.
-}
-
-// ── Cache miss -> remote read -> cache write -> later hit ────────────────────
-
-TEST_F(FileCacheBufferedInputTest, CacheMissThenHit)
-{
-    // First scan: cache miss -> remote read -> data written to cache.
-    // Second scan with a new FileCacheInputStream on same region:
-    // -> cache hit -> no remote read.
-}
-
-TEST_F(FileCacheBufferedInputTest, BypassMode)
-{
-    // FileCacheReadOptions::readIfExistsOtherwiseBypass = true.
-    // On miss, Next() reads remote directly without creating a segment.
-}
-
-} // namespace
-} // namespace facebook::velox::ch
-```
+Implement the complete executable matrix from the pre-execution amendment. The
+fixture must return a real initialized input and expose counters/state probes needed
+by the assertions. Do not declare a test until its setup, production call, and
+observable assertion are present. Capture behavioral RED before implementing the
+production classes.
 
 - [ ] **Step 3: Verify the red build**
 

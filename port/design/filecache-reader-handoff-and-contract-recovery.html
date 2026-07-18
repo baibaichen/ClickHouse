@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FileCache remote reader handoff 与 IO compatibility 设计</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fa;
+      --panel: #ffffff;
+      --panel-2: #f3f6fa;
+      --text: #24292f;
+      --muted: #57606a;
+      --line: #d0d7de;
+      --blue: #315fbe;
+      --green: #147d64;
+      --orange: #9a5b00;
+      --red: #b42318;
+      --purple: #6f42c1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 42px 24px 80px; }
+    h1 { margin: 0 0 12px; font-size: clamp(30px, 5vw, 48px); line-height: 1.15; }
+    h2 { margin-top: 0; color: #111827; }
+    h3 { margin: 0 0 8px; color: #111827; }
+    p { margin: 8px 0 12px; }
+    code {
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: rgba(9,30,66,.07);
+      color: #172b4d;
+    }
+    pre {
+      overflow-x: auto;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f6f8fa;
+      color: #24292f;
+      white-space: pre-wrap;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 11px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: rgba(49,95,190,.10); }
+    .subtitle { max-width: 880px; color: var(--muted); font-size: 17px; }
+    .section {
+      margin-top: 28px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+    }
+    .hero {
+      padding: 28px;
+      border: 1px solid rgba(126,162,255,.42);
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(49,95,190,.10), rgba(20,125,100,.08));
+    }
+    .hero strong { color: #111827; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+    .good { border-color: rgba(88,214,173,.52); }
+    .warn { border-color: rgba(255,193,107,.52); }
+    .bad { border-color: rgba(255,128,128,.52); }
+    .blue { color: var(--blue); }
+    .green { color: var(--green); }
+    .orange { color: var(--orange); }
+    .red { color: var(--red); }
+    .lanes {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 10px 16px;
+      align-items: center;
+    }
+    .actor {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      text-align: center;
+      font-weight: 700;
+      background: #f8fafc;
+    }
+    .bytes {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      min-height: 46px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+    }
+    .bytes span {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px solid var(--line);
+    }
+    .bytes span:last-child { border-right: 0; }
+    .cached { background: rgba(20,125,100,.18); }
+    .q1 { background: rgba(49,95,190,.18); }
+    .q2 { background: rgba(111,66,193,.16); }
+    .missing { background: rgba(154,91,0,.10); }
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .step {
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+    .step .n {
+      display: inline-flex;
+      width: 28px;
+      height: 28px;
+      margin-bottom: 8px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(126,162,255,.22);
+      color: var(--blue);
+      font-weight: 800;
+    }
+    .stack {
+      display: grid;
+      grid-template-columns: 1fr 42px 1fr 42px 1fr;
+      align-items: center;
+      gap: 10px;
+    }
+    .arrow { text-align: center; color: var(--blue); font-size: 28px; }
+    .invariant {
+      padding: 14px;
+      border-left: 4px solid var(--green);
+      background: rgba(88,214,173,.08);
+    }
+    .source {
+      display: grid;
+      grid-template-columns: 175px 1fr;
+      gap: 14px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .source:last-child { border-bottom: 0; }
+    .source .where { color: var(--blue); font-family: ui-monospace, monospace; }
+    .decision {
+      padding: 20px;
+      border: 2px solid rgba(88,214,173,.58);
+      border-radius: 14px;
+      background: rgba(88,214,173,.08);
+    }
+    .status-stop { color: var(--red); font-weight: 800; }
+    .status-go { color: var(--green); font-weight: 800; }
+    @media (max-width: 850px) {
+      .grid, .grid.three, .timeline { grid-template-columns: 1fr; }
+      .stack { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); }
+      .lanes { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1><code>FileCache</code> remote reader handoff 与 IO compatibility 设计</h1>
+  <p class="subtitle">
+    这份文档是 reader/writer compatibility 的 canonical source of truth。
+    它保留 Q1/Q2 接力场景、ClickHouse 源码映射、Task 007 偏差分析，以及最终采用的
+    “公开语义精确、内部 flatten、底层使用 Velox primitive”方案。
+  </p>
+
+  <div class="hero">
+    <h2>先说结论</h2>
+    <p>
+      <strong>目标不是重新设计 <code>FileCache</code> reader 协议。</strong>
+      目标是保留 ClickHouse <code>FileCache</code> 实际依赖的
+      <code>ReadBufferFromFileBase</code> / <code>WriteBufferFromFile</code> 合同，
+      只把继承结构、内存分配和底层文件 IO 换成适合 Velox 的实现。
+    </p>
+    <p>
+      允许改变：内部类层级、<code>MemoryPool</code> 分配、<code>ReadFile::pread</code>、
+      <code>WriteFile::append</code>、Velox exception 类型。
+    </p>
+    <p>
+      不允许改变：buffer 状态、cursor 结算、<code>next</code>/<code>eof</code>/<code>cancel</code>、
+      external buffer attach/detach、right bound、reader handoff 和 writer teardown 语义。
+    </p>
+  </div>
+
+  <section class="section">
+    <h2>1. 为什么需要 remote reader handoff</h2>
+    <p>
+      大白话：多个查询可以接力下载同一个 cache segment。前一个查询下载一个 buffer chunk
+      后让出 downloader，后一个查询从 cache 当前写入位置继续，并复用同一个 remote reader
+      的 cursor、连接和可能的预读状态。
+    </p>
+    <div class="lanes">
+      <div class="actor blue">查询 Q1<br>读取 <code>[0, 6)</code></div>
+      <div class="bytes">
+        <span class="q1">0</span><span class="q1">1</span><span class="q1">2</span><span class="q1">3</span>
+        <span class="missing">4</span><span class="missing">5</span><span class="missing">6</span><span class="missing">7</span>
+      </div>
+      <div class="actor green"><code>FileCache</code></div>
+      <div class="bytes">
+        <span class="cached">0</span><span class="cached">1</span><span class="cached">2</span><span class="cached">3</span>
+        <span class="missing">4</span><span class="missing">5</span><span class="missing">6</span><span class="missing">7</span>
+      </div>
+      <div class="actor" style="color:var(--purple)">查询 Q2<br>读取 <code>[2, 8)</code></div>
+      <div class="bytes">
+        <span></span><span></span><span class="cached">2</span><span class="cached">3</span>
+        <span class="q2">4</span><span class="q2">5</span><span class="q2">6</span><span class="q2">7</span>
+      </div>
+    </div>
+    <p>
+      Q1 已经把 <code>[0, 4)</code> 写入 cache。Q2 先命中 <code>[2, 4)</code>，随后取得
+      Q1 留在 <code>FileSegment</code> 中的 reader，从 offset 4 继续下载
+      <code>[4, 8)</code>。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>2. 一个 buffer chunk 内发生什么</h2>
+    <div class="timeline">
+      <div class="step">
+        <span class="n">1</span>
+        <h3>取得 reader</h3>
+        <p><code>FileSegment</code> 交出 reader。此时：</p>
+        <pre>available == 0
+bufferEndOffset == currentWriteOffset</pre>
+      </div>
+      <div class="step">
+        <span class="n">2</span>
+        <h3>借用查询 buffer</h3>
+        <p>reader 临时借用查询拥有的输出 buffer <code>B</code>：</p>
+        <pre>reader.set(B, capacity)
+reader.next()</pre>
+      </div>
+      <div class="step">
+        <span class="n">3</span>
+        <h3>同一份 bytes 两用</h3>
+        <p>远端 bytes 直接落在 <code>B</code>，随后：</p>
+        <pre>FileSegment::write(B)
+Next returns B</pre>
+      </div>
+      <div class="step">
+        <span class="n">4</span>
+        <h3>先 detach，再 handoff</h3>
+        <pre>reader.set(nullptr, 0)
+FileSegment owns reader
+query still owns B</pre>
+        <p>交接后两边不再互相引用。</p>
+      </div>
+    </div>
+    <div class="invariant">
+      <strong>核心 ownership invariant：</strong>
+      <code>FileCacheInputStream</code> 继续拥有并向上层暴露 <code>B</code>；
+      <code>FileSegment</code> 接管 remote reader；handoff 前 reader 必须完全解除对
+      <code>B</code> 的引用。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>3. ClickHouse source of truth</h2>
+    <p>
+      下面的 sequence diagram 把分散在 <code>FileSegment</code>、
+      <code>CachedOnDiskReadBufferFromFile</code>、<code>ReadBuffer</code> 和 cache writer
+      中的代码串成一次完整的 remote read-and-cache handoff。
+    </p>
+    <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Stream as CachedOnDiskReadBufferFromFile
+  participant Segment as FileSegment
+  participant Reader as remote ReadBufferFromFileBase
+  participant Remote as remote source
+  participant Writer as local cache writer
+
+  Note over Stream,Segment: Cached...cpp:500-528<br/>每个 downloader 只处理一个 buffer chunk
+  Stream->>Segment: getRemoteFileReader()
+  alt reader 不存在
+    Stream->>Reader: create remote reader
+    Stream->>Segment: setRemoteFileReader(reader)
+  else reader 已存在
+    Segment-->>Stream: reader
+    Note over Stream,Reader: assert bufferEndOffset == currentWriteOffset
+  end
+
+  Note over Stream,Reader: Cached...cpp:785-850
+  Stream->>Reader: setReadUntilPosition(segment.right + 1)
+  Stream->>Reader: seek(currentWriteOffset / requestedOffset)
+
+  Note over Stream,Reader: Cached...cpp:1435-1462
+  Stream->>Reader: set(query output buffer B)
+  Stream->>Reader: eof / next
+  Reader->>Remote: read next remote bytes
+  Remote-->>Reader: bytes written directly into B
+
+  Note over Stream,Segment: Cached...cpp:1616-1642
+  Stream->>Segment: reserve(B.size)
+  Stream->>Segment: write(B, fileOffset)
+  Segment->>Writer: set(B, size, offset=size)
+  Segment->>Writer: next
+  Segment->>Writer: set(nullptr, 0)
+  Writer-->>Segment: cache write complete
+
+  Stream->>Reader: set(nullptr, 0)
+  Note over Reader,Segment: available == 0<br/>bufferEndOffset == currentWriteOffset<br/>reader no longer references B
+  Stream->>Stream: publish B as working buffer
+  Stream->>Segment: completePartAndResetDownloader()
+  Note over Segment: FileSegment retains reader<br/>next downloader can continue
+    </pre>
+    <div class="source">
+      <div class="where"><code>FileSegment.h:226-230</code></div>
+      <div>定义 handoff invariant：非下载状态保存的 reader 必须没有 pending data，且 buffer end 等于 segment 写入进度。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>Cached...cpp:500-528</code></div>
+      <div>说明 downloader 每次只下载一个 buffer chunk，下一个 downloader 复用 implementation buffer/reader 以减少远端请求。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>Cached...cpp:785-850</code></div>
+      <div>设置动态 right bound，并把 reader seek 到请求位置或 <code>currentWriteOffset</code>。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>Cached...cpp:1435-1462</code></div>
+      <div>remote reader 借用外层 buffer；正常路径在释放 downloader 前调用 <code>set(nullptr, 0)</code> detach。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>Cached...cpp:1616-1642</code></div>
+      <div>同一份 bytes 先 reserve、再写 cache，并将 reader 标记为可复用。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>ReadBuffer.cpp:103-143</code></div>
+      <div><code>next</code> 结算旧 cursor、调用 <code>nextImpl</code>、异常时 cancel，并重新发布 working buffer。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>BufferBase.h:59-98</code></div>
+      <div>定义 internal buffer、working buffer、position、<code>offset</code>、<code>available</code> 和 pending-data 语义。</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>4. 当前 Task 007 为什么必须 reopen</h2>
+    <table>
+      <thead><tr><th>合同</th><th>ClickHouse</th><th>已提交 Task 007</th></tr></thead>
+      <tbody>
+        <tr><td><code>eof</code></td><td>无 pending data 时调用 <code>next</code>，会触发读取</td><td>只返回 <code>atEof_</code></td></tr>
+        <tr><td>异常状态</td><td><code>next</code> 异常后 cancel，reader 不再可用</td><td>恢复为空窗口并允许 retry</td></tr>
+        <tr><td>detach</td><td><code>set(nullptr, 0)</code> 合法</td><td>明确拒绝 null/zero</td></tr>
+        <tr><td>external target</td><td>保持到调用方显式替换/detach</td><td>一个 read cycle 后自动切回 internal target</td></tr>
+        <tr><td>buffer API</td><td><code>internalBuffer</code>、<code>buffer</code>、<code>available</code>、<code>hasPendingData</code></td><td>只有只读 <code>position</code> 和 <code>bufferEnd</code></td></tr>
+        <tr><td>内存</td><td>owned buffer 可按 alignment 分配</td><td><code>std::vector&lt;char&gt;</code>，不走 <code>MemoryPool</code></td></tr>
+        <tr><td>writer attach</td><td><code>FileSegment::write</code> 用 <code>set</code> + no-arg <code>next</code> 零复制写入</td><td>writer 没有该接口，且拒绝 buffer size 0</td></tr>
+        <tr><td>writer teardown</td><td><code>finalize</code> 幂等；<code>cancel</code> noexcept 且幂等</td><td>重复 finalize 或 finalize 后 cancel 会抛异常</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>5. 采用的 compatibility 架构</h2>
+    <div class="stack">
+      <div class="card good">
+        <h3>CH <code>FileCache</code> 状态机</h3>
+        <p>按原调用顺序使用 buffer、right bound、seek、handoff 和 writer lifecycle。</p>
+      </div>
+      <div class="arrow">→</div>
+      <div class="card good">
+        <h3><code>ch::ReadBufferFromFileBase</code></h3>
+        <p>只保留 <code>FileCache</code> 实际使用的精确合同；内部 flatten，不移植完整五层通用 IO hierarchy。</p>
+      </div>
+      <div class="arrow">→</div>
+      <div class="card good">
+        <h3><code>ReadBufferFromVeloxReadFile</code></h3>
+        <p>以 <code>ReadFile::pread</code> 实现 <code>nextImpl</code>，owned memory 来自 <code>MemoryPool</code>。</p>
+      </div>
+    </div>
+    <p>
+      <code>FileSegment::RemoteFileReaderPtr</code> 继续保存 compatibility base。
+      <code>FileCacheInputStream</code> 是最外层 Velox <code>SeekableInputStream</code>，
+      但不重新定义 remote reader 的内部状态合同。
+    </p>
+    <div class="grid three">
+      <div class="card">
+        <h3>Buffer state</h3>
+        <ul>
+          <li>internal / working buffer</li>
+          <li>mutable position</li>
+          <li><code>offset</code> / <code>available</code></li>
+          <li><code>hasPendingData</code> / <code>count</code></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Read lifecycle</h3>
+        <ul>
+          <li><code>set</code> attach 与 null/zero detach</li>
+          <li><code>next</code> / <code>eof</code> / <code>cancel</code></li>
+          <li>异常后不可重试</li>
+          <li>external mode capability</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Position/bounds</h3>
+        <ul>
+          <li><code>seek</code></li>
+          <li><code>getPosition</code></li>
+          <li><code>getFileOffsetOfBufferEnd</code></li>
+          <li>dynamic right bound</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>6. Velox 内部实现约束</h2>
+    <div class="grid">
+      <div class="card good">
+        <h3>Pool-backed owned memory</h3>
+        <p>固定 reader/writer buffer 必须通过 <code>MemoryPool</code> 分配，不能使用未计费的 <code>std::vector&lt;char&gt;</code>。</p>
+      </div>
+      <div class="card good">
+        <h3>Direct IO alignment</h3>
+        <p>构造时调用 <code>ReadFile::directIo</code> 获取 alignment。owned buffer 满足该 alignment；caller external buffer 不满足时必须拒绝 external mode，不能静默 fallback。</p>
+      </div>
+      <div class="card good">
+        <h3>Ownership</h3>
+        <p>底层 <code>ReadFile</code> 使用 <code>shared_ptr</code>；如果保留 raw-pointer 构造，则只允许明确 non-owning 场景并测试 lifetime。</p>
+      </div>
+      <div class="card good">
+        <h3>Error propagation</h3>
+        <p>底层 Velox exception 原样传播；compatibility layer 在传播前执行与 CH 相同的 cancel/cleanup 状态转换。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>7. Writer compatibility</h2>
+    <p>
+      Writer 与 reader 采用同一策略：<strong>公开状态机精确兼容 CH，内部用一个
+      flattened buffer-state 对象和 Velox primitive 实现。</strong>不移植完整通用
+      <code>WriteBuffer</code> hierarchy，也不把状态机重新设计成
+      <code>next(data, capacity) + advance</code>。
+    </p>
+
+    <h3>7.1 类结构：与 reader 相同的 compatibility boundary</h3>
+    <pre class="mermaid">
+flowchart LR
+  State["FileCacheBufferState<br/>owned BufferPtr + working view<br/>position + bytes + swap"]
+
+  ReadBase["ch::ReadBufferFromFileBase<br/>exact FileCache read contract"]
+  WriteBase["ch::WriteBufferFromFileBase<br/>exact FileCache write contract"]
+
+  ReadImpl["ReadBufferFromVeloxReadFile<br/>ReadFile::pread"]
+  WriteImpl["WriteBufferFromVeloxWriteFile<br/>WriteFile::append / flush / close"]
+  TempWriter["WriteBufferToFileSegment<br/>Task 016 · post-MVP"]
+
+  State --> ReadBase --> ReadImpl
+  State --> WriteBase --> WriteImpl
+  State --> WriteBase --> TempWriter
+    </pre>
+    <p>
+      <code>FileCacheBufferState</code> 是内部 composition，不是新的通用 IO framework。
+      它保存：
+    </p>
+    <pre>BufferPtr ownedBuffer        // 可空；所有 owned memory 都由 MemoryPool 计费
+char * workingBegin
+char * workingEnd
+char * position
+size_t bytes                // 已结算的逻辑字节数
+bool padded
+
+set(ptr, size, offset)
+offset / available / hasPendingData / count
+swapWorkingState(other)</pre>
+    <p>
+      <code>BufferPtr</code> / <code>AlignedBuffer</code> 是 owned memory 的唯一表示；
+      不使用 <code>std::vector&lt;char&gt;</code>。raw pointer 只表示 caller-owned memory
+      的 non-owning working view，不能延长其 lifetime。
+    </p>
+
+    <h3>7.2 zero-copy 的精确定义</h3>
+    <div class="grid">
+      <div class="card good">
+        <h3>当前 remote miss 写 cache</h3>
+        <pre>FileCacheInputStream owns BufferPtr B
+remote reader writes directly into B
+FileSegment::write borrows B
+local writer appends string_view(B)
+writer detaches B
+query keeps B</pre>
+        <p>reader → writer 之间没有 staging memcpy。</p>
+      </div>
+      <div class="card good">
+        <h3>后置 Task 016</h3>
+        <pre>WriteBufferToFileSegment owns BufferPtr T
+producer writes directly into T
+FileSegment::write borrows T
+local writer appends string_view(T)
+writer detaches T</pre>
+        <p>temporary writer → local writer 之间同样没有第二次用户态复制。</p>
+      </div>
+    </div>
+    <p class="invariant">
+      这里的 zero-copy 指<strong>没有用户态中间 memcpy</strong>。调用
+      <code>WriteFile::append(std::string_view)</code> 时，内核仍会执行正常的
+      userspace-to-kernel/file IO copy；本设计不要求 <code>splice</code> /
+      <code>sendfile</code> 级 kernel zero-copy。
+    </p>
+
+    <h3>7.3 当前路径：<code>FileSegment::write</code></h3>
+    <pre>downloadedSize == 0:
+  open local WriteFile with create + truncate
+
+downloadedSize > 0:
+  open existing local WriteFile in append mode
+  verify WriteFile::size == downloadedSize
+
+writer.set(B.mutableData, B.validSize, offset=B.validSize)
+scope_exit writer.set(nullptr, 0)
+writer.next()
+downloadedSize += B.validSize   // only after next succeeds</pre>
+    <p>
+      <code>FileSegment::DownloadState</code> 持有
+      <code>shared_ptr&lt;WriteBufferFromVeloxWriteFile&gt;</code>，保持 CH
+      <code>LocalCacheWriterPtr</code> 的共享 wrapper 语义；writer wrapper 内部独占
+      <code>unique_ptr&lt;WriteFile&gt;</code>，底层 file handle 只有一个 owner。
+    </p>
+    <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Stream as FileCacheInputStream
+  participant Segment as FileSegment
+  participant Writer as WriteBufferFromVeloxWriteFile
+  participant Buffer as Velox BufferPtr B
+  participant File as local WriteFile
+
+  Stream->>Buffer: remote bytes already reside in B
+  Stream->>Segment: reserve(B.validSize)
+  Segment->>Writer: create lazily if absent
+  Segment->>Writer: set(B.data, B.validSize, offset=B.validSize)
+  Writer->>File: append(string_view(B.data, B.validSize))
+  File-->>Writer: success
+  Writer-->>Segment: next complete
+  Segment->>Writer: set(nullptr, 0)
+  Segment->>Segment: downloadedSize += B.validSize
+  Segment-->>Stream: write complete
+  Note over Stream,Buffer: Stream still owns B<br/>no intermediate memcpy
+    </pre>
+
+    <h3>7.4 精确 writer 状态机</h3>
+    <pre class="mermaid">
+stateDiagram-v2
+  [*] --> ActiveEmpty
+  ActiveEmpty --> ActivePending: set(buffer, size, offset > 0)<br/>or write into owned BufferPtr
+  ActivePending --> ActiveEmpty: next succeeds<br/>bytes += offset; position = begin
+  ActivePending --> Canceled: next throws<br/>settle bytes; cancel; rethrow
+  ActiveEmpty --> Finalized: finalize / finalizeImpl / close
+  ActivePending --> Finalized: finalize / next / close
+  ActiveEmpty --> ActiveEmpty: sync / flush
+  ActivePending --> ActiveEmpty: sync / next / flush
+  ActiveEmpty --> Canceled: cancel
+  ActivePending --> Canceled: cancel discards pending bytes
+  Finalized --> Finalized: finalize or cancel are no-op
+  Canceled --> Canceled: cancel is no-op
+  Canceled --> Canceled: write / finalize rejected
+    </pre>
+    <table>
+      <thead><tr><th>方法</th><th>精确语义</th><th>Velox mapping</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>set(ptr, size, offset)</code></td>
+          <td>安装 non-owning working view；<code>position = ptr + offset</code>。<code>set(nullptr, 0, 0)</code> detach。</td>
+          <td>只改 <code>FileCacheBufferState</code>，不分配、不复制。</td>
+        </tr>
+        <tr>
+          <td><code>next</code></td>
+          <td>canceled 或 offset 0 时 no-op；否则调用 <code>nextImpl</code>。成功后结算 bytes 并把 position 复位；异常时先结算、cancel，再 rethrow。</td>
+          <td><code>nextImpl → WriteFile::append(string_view(workingBegin, offset))</code>；不调用 <code>flush</code>。</td>
+        </tr>
+        <tr>
+          <td><code>sync</code></td>
+          <td>先写完 pending bytes，再请求持久化；writer 保持 Active。</td>
+          <td><code>next</code> 后调用 <code>WriteFile::flush</code>。</td>
+        </tr>
+        <tr>
+          <td><code>finalize</code></td>
+          <td>幂等；canceled 后 finalize 抛异常。失败时 cancel 后传播；成功后 Finalized。</td>
+          <td><code>finalizeImpl → next + WriteFile::close</code>。不额外调用 <code>flush</code>，避免把普通 close 变成每段 fsync。</td>
+        </tr>
+        <tr>
+          <td><code>cancel</code></td>
+          <td>noexcept、幂等；finalized 后 no-op；丢弃 pending bytes，后续 write/finalize 被拒绝。</td>
+          <td>不调用 append/flush；释放 owned <code>WriteFile</code>，由 local writer 的 non-throwing destructor 关闭 handle。</td>
+        </tr>
+        <tr>
+          <td><code>getFileName</code></td>
+          <td>返回底层目标名，供错误和 cleanup 使用。</td>
+          <td><code>WriteFile::getName</code>。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>7.5 <code>FileSegment</code> lifecycle 与错误处理</h3>
+    <div class="grid">
+      <div class="card good">
+        <h3>完整 segment</h3>
+        <p><code>setDownloadedUnlocked</code> 先 finalize/close writer；成功后 reset download data、发布 <code>DOWNLOADED</code>，最后校验物理文件大小。</p>
+      </div>
+      <div class="card warn">
+        <h3>部分 segment，无 continuation</h3>
+        <p>finalize 并 reset writer/reader，释放 handle 和远端状态，再把 segment 缩到实际 downloaded size。</p>
+      </div>
+      <div class="card bad">
+        <h3>写入失败</h3>
+        <p>cancel 并 reset writer，reset remote reader，设置 download failed 并唤醒等待者；pending bytes 不得再次写入。</p>
+      </div>
+      <div class="card">
+        <h3>background continuation</h3>
+        <p>只有成功进入 download queue 时才保留 writer/reader；后续 downloader 从已有文件尾继续。</p>
+      </div>
+    </div>
+    <p>
+      <code>WriteFile::append</code> 是同步 all-or-throw 接口，但 local implementation
+      可能在抛异常前已经发生 partial physical write。异常路径必须读取实际 local file
+      size 并做 reconciliation：
+    </p>
+    <pre>physicalSize = filesystem::file_size(path)
+require downloadedSize <= physicalSize <= reservedSize
+
+if physicalSize == 0:
+  remove the empty cache file
+else:
+  downloadedSize = physicalSize
+
+mark download failed
+propagate the original exception with FileSegment diagnostics</pre>
+    <p>
+      这一步只属于 local cache writer；不能依赖通用 <code>WriteFile::size</code>，
+      因为 short-write exception 前实现可能尚未更新其逻辑 size counter。
+      CH 可以按 typed errno 只处理 ENOSPC/EDQUOT；Velox <code>WriteFile</code> 当前不暴露
+      errno，因此这里明确采用“任何 local append exception 都以物理文件大小为准”的
+      infrastructure adaptation，优先保持 downloaded/reserved/on-disk 三者一致。
+    </p>
+
+    <h3>7.6 后置 Task 016：<code>WriteBufferToFileSegment</code></h3>
+    <p>
+      Task 016 不提前实现，但现在固定其兼容边界。它继承同一个
+      <code>WriteBufferFromFileBase</code> contract，owned memory 是 pool-backed
+      <code>BufferPtr</code>：
+    </p>
+    <pre>nextImpl:
+  acquire downloader
+  scope_exit completePartAndResetDownloader
+  bytesToWrite = offset
+  reserve(bytesToWrite)
+  FileSegment::write(ownedBuffer.data, bytesToWrite, writtenBytes)
+  writtenBytes += bytesToWrite
+
+finalizeImpl / sync:
+  next
+  get FileSegment local cache writer
+  BufferStateSwapGuard(this, cacheWriter)
+  cacheWriter.finalize / cacheWriter.sync</pre>
+    <p>
+      <code>BufferStateSwapGuard</code> 只临时交换 internal/working view 和 position，
+      不交换两个对象对 <code>BufferPtr</code> / <code>WriteFile</code> 的 ownership；
+      也不交换各 writer 已结算的 <code>bytes</code> counter。
+      析构时必须无异常地交换回来。这样 local cache writer 在 detach 状态下也能使用一个
+      有效的 empty working view 完成 finalize/sync。
+    </p>
+
+    <h3>7.7 必须锁定的测试合同</h3>
+    <table>
+      <thead><tr><th>测试</th><th>必须证明</th></tr></thead>
+      <tbody>
+        <tr><td>external zero-copy</td><td><code>append</code> 收到的地址等于 caller <code>BufferPtr</code> 地址；没有 staging allocation/memcpy。</td></tr>
+        <tr><td>owned buffer</td><td>非零 buffer 来自指定 <code>MemoryPool</code>，销毁后计费归还。</td></tr>
+        <tr><td>detach</td><td><code>set(nullptr, 0, 0)</code> 后 writer 不保留 caller pointer。</td></tr>
+        <tr><td><code>next</code></td><td>只 append offset bytes；成功/异常时 bytes、position、canceled 状态与 CH 一致。</td></tr>
+        <tr><td><code>sync</code></td><td>顺序严格是 append → flush，且不 close。</td></tr>
+        <tr><td><code>finalize</code></td><td>append → close；幂等；失败后 canceled；不隐式额外 fsync。</td></tr>
+        <tr><td><code>cancel</code></td><td>noexcept、幂等、不 append；finalized 后 no-op。</td></tr>
+        <tr><td>resume append</td><td>部分下载后重建 writer 从物理文件尾继续，不 truncate 已下载 prefix。</td></tr>
+        <tr><td>partial physical write</td><td>异常后按实际文件大小 reconcile，绝不把 reserved-but-unwritten bytes 标记为 downloaded。</td></tr>
+        <tr><td>Task 016 swap</td><td>swap guard 不改变 BufferPtr/WriteFile ownership，finalize/sync 后恢复两个 working states。</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>8. Task 014 如何使用该合同</h2>
+    <pre>FileCacheInputStream owns output BufferPtr B
+
+remote read-and-cache:
+  reader.set(B.mutableData, B.capacity)
+  reader.next / eof
+  FileSegment::write(reader.buffer.begin, reader.buffer.size)
+  publish B to Velox caller
+  reader.set(nullptr, 0)
+  assert reader.available == 0
+  assert reader.bufferEndOffset == segment.currentWriteOffset
+  release downloader; FileSegment owns reader</pre>
+    <p>
+      <code>outputBuffer_</code> 就是 CH 外层 reader 的 internal buffer，不是第二个需要复制的
+      staging buffer。异常路径不得把 canceled reader 放回 <code>FileSegment</code>；必须先释放
+      downloader/holder，再传播异常。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>9. Source-contract review gate</h2>
+    <pre class="mermaid">
+flowchart TD
+  A[CH source + real call sites] --> B[Approved design contract]
+  B --> C[Numbered task]
+  C --> D[Worker implementation + real RED tests]
+  D --> E[Controller source-contract review]
+  E --> F{Any unresolved drift?}
+  F -- Yes --> G[Stop and reopen affected task]
+  G --> B
+  F -- No --> H[Accept task]
+  H --> I{Checkpoint?}
+  I -- Task 010 --> J[Whole-port review 003-010]
+  I -- Task 014 --> K[Whole-port review 003-014]
+  I -- No --> L[Next task]
+  J --> M{Zero unresolved findings?}
+  K --> M
+  M -- No --> G
+  M -- Yes + user approval --> L
+    </pre>
+    <div class="grid">
+      <div class="card warn">
+        <h3>Task 010 checkpoint</h3>
+        <p>Task 010 完成后暂停，整体复审 Tasks 003–010。发现任何问题立即停止并 reopen；零 unresolved findings 且用户批准后才进入 Task 011。</p>
+      </div>
+      <div class="card warn">
+        <h3>Task 014 checkpoint</h3>
+        <p>Task 014 完成后再次暂停，整体复审 Tasks 003–014。发现任何问题立即停止；零 unresolved findings 且用户批准后才进入 Task 015。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>10. 当前任务处理结果</h2>
+    <table>
+      <thead><tr><th>Task</th><th>文档状态</th><th>进入编码前要求</th></tr></thead>
+      <tbody>
+        <tr><td>003</td><td>reopened</td><td>补齐 timed <code>tryPush</code> 和 non-blocking/timed <code>tryPop</code></td></tr>
+        <tr><td>004</td><td>reopened</td><td>补齐 full-info status diagnostics</td></tr>
+        <tr><td>005</td><td>accepted</td><td>当前调用范围无确定 finding</td></tr>
+        <tr><td>006</td><td>reopened</td><td>恢复 immediate request 优先级</td></tr>
+        <tr><td>007</td><td>reopened / contract rewrite</td><td>reader 与 writer compatibility 均按本文重做</td></tr>
+        <tr><td>008</td><td>reopened</td><td>恢复 CH key parser 行为；提供共享 checked arithmetic helper</td></tr>
+        <tr><td>009</td><td>ready after remediation</td><td>合同审计未发现 blocker</td></tr>
+        <tr><td>010</td><td>amend before execution</td><td>修复 path containment；完成后触发整体 review</td></tr>
+        <tr><td>011</td><td>ready but blocked by checkpoint</td><td>必须等待 Task 010 review 通过，并与 Task 012 连续执行</td></tr>
+        <tr><td>012</td><td>rewrite test contract</td><td>删除 false-green placeholder tests 和重复 CMake 指令</td></tr>
+        <tr><td>013</td><td>rewrite test contract</td><td>所有 lifecycle/concurrency tests 必须可执行且有断言</td></tr>
+        <tr><td>014</td><td>redesign against Task 007</td><td>完整 handoff、真实 cache miss/hit/seek tests；完成后触发整体 review</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="decision">
+    <h2>最终决定</h2>
+    <p>
+      采用 <strong>精确公开语义 + flatten 内部实现</strong>。
+      不用 Task 014 绕开 Task 007 的语义差异，也不把错误的 compatibility 责任推给 consumer。
+      Tasks 003–008 的已提交历史保留，通过新的 corrective commits 修复；不 rebase、不 amend。
+    </p>
+    <p>
+      <span class="status-stop">任一 checkpoint 有 finding：停止。</span>
+      <span class="status-go">零 unresolved findings 且用户批准：继续。</span>
+    </p>
+  </div>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "default",
+    themeVariables: {
+      primaryColor: "#eef4ff",
+      primaryTextColor: "#24292f",
+      primaryBorderColor: "#315fbe",
+      lineColor: "#57606a",
+      secondaryColor: "#edf8f5",
+      tertiaryColor: "#fff8e8",
+      noteBkgColor: "#fff8e8",
+      noteBorderColor: "#9a5b00",
+      actorBkg: "#ffffff",
+      actorBorder: "#315fbe",
+      actorTextColor: "#24292f",
+      signalColor: "#315fbe",
+      signalTextColor: "#24292f"
+    }
+  });
+</script>
+</body>
+</html>

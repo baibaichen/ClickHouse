@@ -5,6 +5,42 @@
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
+## Pre-execution source-contract amendment
+
+Task 012 must not start until corrective Tasks 003, 004, 006, 007, and 008 are
+accepted and the post-Task-010 whole-port review has zero unresolved findings.
+
+All comment-only test bodies and fixture placeholders later in this file are
+non-authoritative and must not be copied. A test name or a green empty body is not
+evidence.
+
+### Mandatory executable tests
+
+Each case below must contain real setup, execute the production path, and assert the
+observable postcondition:
+
+| Contract | Required assertion |
+|---|---|
+| missing key + `KeyNotFoundPolicy::THROW` | production call throws the expected Velox exception |
+| releasable reserve eviction | reserve succeeds only after the real candidate is removed; cache size and segment state agree |
+| empty query id | `getQueryContextHolder` returns null and creates no map entry |
+| same query id | two holders share one context and one map entry |
+| last holder release | destroying the final holder removes the map entry |
+| doomed context destruction | final context destructor runs after the cache write lock is released; test callback can reacquire the lock |
+| max download size | query LRU limit equals the configured maximum and rejects excess reservation |
+| queue pipeline | real timed `tryPush(batch, 10)` and non-blocking `tryPop(batch)` paths execute |
+| remote reader handoff | reader detach, buffer-end offset, available bytes, and downloader release satisfy Task 007 |
+
+For each material test, capture a behavioral RED against the pre-implementation or
+intentionally broken path. Missing-header compile failure alone is insufficient.
+
+### CMake registration
+
+Inspect the existing `velox/ch/Interpreters/FileCache/CMakeLists.txt` before editing.
+Preserve an existing `add_subdirectory(tests)` block; do not add the same source and
+binary directory twice. The literal duplicate block later in this file is
+superseded.
+
 ## Goal
 
 Produce a single compilable and linkable batch that closes the center strongly
@@ -419,14 +455,6 @@ TEST(PathLayoutTest, EphemeralFilename)
         "0_temporary");
 }
 
-TEST(MetadataTest, KeyNotFoundPolicyThrow)
-{
-    auto dir = TempDirectoryPath::create();
-    // A default-initialized CacheMetadata with no existing key should throw
-    // when asked for a non-existent key with policy THROW.
-    // (Exact setup depends on constructor; see design doc.)
-}
-
 TEST(LockedKeyTest, MemberOrderDestructionSafety)
 {
     // lock member must be declared after key_metadata in LockedKey to ensure
@@ -445,195 +473,33 @@ TEST(LockedKeyTest, MemberOrderDestructionSafety)
 
 Create `velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp`:
 
-```cpp
-#include "velox/ch/Interpreters/FileCache/FileCache.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheSettings.h"
-#include "velox/common/testutil/TempDirectoryPath.h"
-#include <gtest/gtest.h>
+Build one real fixture from the final Task 012 production constructors and injected
+runtime services. Do not write an abbreviated constructor or null/fake dependency.
+Implement executable tests for:
 
-namespace facebook::velox::ch
-{
-namespace
-{
-
-using common::testutil::TempDirectoryPath;
-
-class FileCacheTest : public ::testing::Test
-{
-protected:
-    static std::shared_ptr<FileCache> makeCache(
-        const std::string & path,
-        size_t maxSize = 64 * 1024 * 1024)
-    {
-        FileCacheConfig config;
-        config.path = path;
-        config.maxSize = maxSize;
-        config.maxFileSegmentSize = 4 * 1024 * 1024;
-        // Supply required runtime dependencies via constructor injection.
-        // (Exact constructor signature from FileCache.h.)
-        return std::make_shared<FileCache>(config /*, injected deps */);
-    }
-};
-
-TEST_F(FileCacheTest, InitializeOnce)
-{
-    auto dir = TempDirectoryPath::create();
-    auto cache = makeCache(dir->getPath() + "/fc");
-    cache->initialize();
-    EXPECT_TRUE(cache->isInitialized());
-    // Second call must be a no-op, not an error.
-    cache->initialize();
-    EXPECT_TRUE(cache->isInitialized());
-}
-
-TEST_F(FileCacheTest, GetDoesNotCreateMetadata)
-{
-    auto dir = TempDirectoryPath::create();
-    auto cache = makeCache(dir->getPath() + "/fc");
-    cache->initialize();
-
-    auto key = FileCacheKey::fromPath("/some/file.orc");
-    auto origin = cache->getCommonOrigin();
-    // get(...) must return a holder of DETACHED segments without creating metadata.
-    auto holder = cache->get(key, FileSegment::Range{0, 1023}, origin);
-    ASSERT_FALSE(holder.empty());
-    for (const auto & seg : holder)
-    {
-        EXPECT_EQ(seg->state(), FileSegmentState::DETACHED);
-    }
-}
-
-TEST_F(FileCacheTest, GetOrSetCreatesHoles)
-{
-    auto dir = TempDirectoryPath::create();
-    auto cache = makeCache(dir->getPath() + "/fc");
-    cache->initialize();
-
-    auto key = FileCacheKey::fromPath("/data/part.bin");
-    auto origin = cache->getCommonOrigin();
-    FileCacheReadOptions opts;
-    auto holder = cache->getOrSet(key, FileSegment::Range{0, 4095}, origin, opts);
-    ASSERT_FALSE(holder.empty());
-    // Must return at least one EMPTY segment covering the requested range.
-    EXPECT_EQ(holder.front()->state(), FileSegmentState::EMPTY);
-}
-
-TEST_F(FileCacheTest, TryReserveEvictsReleasable)
-{
-    auto dir = TempDirectoryPath::create();
-    // Small cache that forces eviction.
-    auto cache = makeCache(dir->getPath() + "/fc", 8 * 1024);
-    cache->initialize();
-    // Detailed eviction integration test: fill cache, then request more space,
-    // verify evictable segments are removed.
-}
-
-TEST_F(FileCacheTest, ShutdownJoinsWorkers)
-{
-    auto dir = TempDirectoryPath::create();
-    auto cache = makeCache(dir->getPath() + "/fc");
-    cache->initialize();
-    cache->deactivateBackgroundOperations();
-    // No assertion: just must not hang or crash.
-}
-
-TEST_F(FileCacheTest, SecondProcessStatusLockFails)
-{
-    auto dir = TempDirectoryPath::create();
-    auto p = dir->getPath() + "/fc";
-    auto cache1 = makeCache(p);
-    cache1->initialize();
-
-    // A second cache pointing to the same path must fail its status lock.
-    auto cache2 = makeCache(p);
-    EXPECT_THROW(cache2->initialize(), VeloxRuntimeError);
-}
-
-TEST_F(FileCacheTest, InternalOriginAccessAllKeys)
-{
-    auto cache_unused = makeCache("/tmp/unused_012");
-    (void)cache_unused;
-    auto internal = FileCache::getInternalOrigin();
-    EXPECT_EQ(internal.user_id, "internal");
-}
-
-TEST_F(FileCacheTest, CommonOriginIsInjectedUserId)
-{
-    auto dir = TempDirectoryPath::create();
-    auto cache = makeCache(dir->getPath() + "/fc");
-    // Manager-injected commonUserId is reflected in getCommonOrigin().
-    // (Exact check depends on how commonUserId is passed in constructor.)
-    EXPECT_FALSE(cache->getCommonOrigin().user_id.empty());
-}
-
-} // namespace
-} // namespace facebook::velox::ch
+```text
+InitializeOnce
+GetDoesNotCreateMetadata
+GetOrSetCreatesHoles
+TryReserveEvictsReleasable
+ShutdownJoinsWorkers
+SecondProcessStatusLockFails
+InternalOriginAccessAllKeys
+CommonOriginIsInjectedUserId
 ```
+
+Each test must assert the production state after the call. The shutdown case must
+use worker/timer probes proving completion rather than relying only on absence of a
+hang.
 
 - [ ] **Step 7: Write `QueryLimitTest.cpp` (red)**
 
 Create `velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp`:
 
-```cpp
-#include "velox/ch/Interpreters/FileCache/QueryLimit.h"
-#include "velox/ch/Interpreters/FileCache/FileCache.h"
-#include "velox/ch/Common/FileCacheQueryIdScope.h"
-#include "velox/common/testutil/TempDirectoryPath.h"
-#include <gtest/gtest.h>
-#include <thread>
-#include <vector>
-
-namespace facebook::velox::ch
-{
-namespace
-{
-
-using common::testutil::TempDirectoryPath;
-
-TEST(QueryLimitTest, EmptyQueryIdReturnsNull)
-{
-    // No scope -> currentQueryId is empty -> tryGetQueryContext returns null.
-    FileCacheQueryLimit limit;
-    // Use a dummy CacheStateGuard::Lock (construction details from Guards.h).
-    // auto ctx = limit.tryGetQueryContext(cacheLock);
-    // EXPECT_EQ(ctx, nullptr);
-}
-
-TEST(QueryLimitTest, SameQueryIdSharesContext)
-{
-    FileCacheQueryLimit limit;
-    FileCacheReadOptions opts;
-    opts.maxDownloadSizePerQuery = 1024 * 1024;
-    opts.skipDownloadIfExceedsPerQueryCacheWriteLimit = true;
-
-    // Two holders created for the same query id share one QueryContext.
-    // (Requires a FileCache instance for the write-lock parameter; abbreviated here.)
-}
-
-TEST(QueryLimitTest, LastHolderReleasesMapEntry)
-{
-    // After both holders are destroyed, the query map must be empty.
-    // Concurrent release must not leak a stale map entry.
-}
-
-TEST(QueryLimitTest, DoomContextDestroyedOutsideCacheWriteLock)
-{
-    // The doomed QueryContext must be destroyed after the write lock is released.
-    // Test uses a custom destructor spy to detect lock state at destruction time.
-}
-
-TEST(QueryLimitTest, MaxDownloadSizeMapsToQueryLRULimit)
-{
-    // getOrSetQueryContext with maxDownloadSizePerQuery=N creates a query LRU
-    // of size N.
-    FileCacheReadOptions opts;
-    opts.maxDownloadSizePerQuery = 512 * 1024;
-    // verify created QueryContext::priority max size.
-}
-
-} // namespace
-} // namespace facebook::velox::ch
-```
+Use the real `FileCache` lock and query-limit APIs. Implement every query-limit case
+listed in the mandatory executable-test table at the top of this task. The doomed
+context test must use a destructor callback that reacquires the cache write lock,
+which proves destruction occurred after lock release without using sleep.
 
 - [ ] **Step 8: Verify the red build**
 

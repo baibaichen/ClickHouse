@@ -5,6 +5,52 @@
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
+## Post-acceptance source-contract audit — task reopened
+
+The original Task 003 acceptance remains in the receipt, but this task is reopened.
+The queue contract below supersedes every narrower `FileCacheBoundedQueue` API or
+test later in this file.
+
+Task 012 ports `FileCache::freeSpaceRatioImpl`, whose normal background-eviction
+path requires all of these CH queue operations:
+
+```cpp
+bool tryPush(const T & value, uint64_t timeoutMilliseconds = 0);
+bool tryPush(T && value, uint64_t timeoutMilliseconds = 0);
+bool tryPop(T & value);
+bool tryPop(T & value, uint64_t timeoutMilliseconds);
+```
+
+Required semantics:
+
+```text
+tryPush(value, 0):
+  return immediately
+
+tryPush(value, timeout > 0):
+  wait up to timeout for capacity
+  wake on pop or finish
+  return false on timeout or finish
+
+tryPop(value):
+  never wait
+  return false when empty
+
+tryPop(value, timeout):
+  wait up to timeout for data
+  wake on push or finish
+```
+
+The corrective Worker must first add focused RED tests proving:
+
+1. timed `tryPush` blocks while full and succeeds when a consumer frees capacity;
+2. timed `tryPush` returns false after the requested timeout;
+3. non-blocking `tryPop` returns immediately on an empty queue;
+4. timed `tryPop` wakes on push and on `finish`;
+5. the exact Task 012 call shapes `tryPush(batch, 10)` and `tryPop(batch)` compile.
+
+Task 012 must not start until this corrective task is accepted.
+
 ## Goal
 
 Replace the remaining foundational ClickHouse dependencies needed by later

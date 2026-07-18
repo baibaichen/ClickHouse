@@ -738,15 +738,39 @@ sequenceDiagram
 
 ## Buffer adapters
 
-`FileCacheInputStream` 依赖两个 CH-style buffer adapter：
+`FileCacheInputStream` 依赖精确的 CH-compatible buffer contract：
 
 ```text
-ReadBufferFromVeloxReadFile
+ch::ReadBufferFromFileBase
+  -> ReadBufferFromVeloxReadFile
+
 WriteBufferFromVeloxWriteFile
 ```
 
-它们的接口和 Velox `BufferPtr` 使用约定见
+完整场景和 ownership 设计见
+[reader handoff 与 IO compatibility](../design/filecache-reader-handoff-and-contract-recovery.html)；
+接口合同见
 [`FileCache` 底层设施替换矩阵](../1-dependencies/01-filecache-infra-mapping.md)。
+
+`FileCacheInputStream::outputBuffer_` 对应 CH 外层
+`CachedOnDiskReadBufferFromFile` 的 internal buffer。它不是 remote reader 之外的第二份
+staging copy。远端 read-and-cache 路径必须保持：
+
+```text
+reader.set(outputBuffer mutable memory)
+reader.next / reader.eof
+FileSegment::write(reader.buffer begin, reader.buffer size)
+publish outputBuffer to Velox caller
+reader.set(nullptr, 0)
+verify reader available == 0
+verify reader buffer end == segment current write offset
+release downloader and return reader ownership to FileSegment
+```
+
+异常路径不得把 canceled reader 放回 `FileSegment`。先按 CH 顺序释放 downloader /
+holder，再传播底层 exception。Task 014 不得通过显式 `advance`、retryable reader、
+single-cycle external target 或额外 output copy 来绕过 Task 007 的 compatibility
+合同。
 
 ## `BackUp` / `SkipInt64` / `seekToPosition`
 

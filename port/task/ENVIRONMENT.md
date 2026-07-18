@@ -42,6 +42,10 @@ Ninja: /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64
 - For long builds/tests, redirect output to a log in the build directory and report the log path.
 - If a command fails, stop and report the first actionable error plus the log path.
 - Result files under `port/task/result/` are handoff artifacts. Do not commit them unless explicitly asked.
+- CH production source and its real `FileCache` callers are authoritative for behavior.
+  A task snippet or accepted receipt cannot weaken that contract.
+- Comment-only tests, fixtures that return null, disabled tests, and unregistered tests are
+  false-green evidence and cannot satisfy a task gate.
 
 ## Result handoff
 
@@ -112,6 +116,14 @@ Run tasks in this order in the same Velox `filecache` worktree:
 Tasks 011 and 012 are one atomic implementation stage. Task 011 must not create
 fake center-SCC definitions or claim a build; Task 012 immediately completes
 the real types, registers all priority/core sources, and runs the green gate.
+
+After Task 010 is accepted, stop and run a whole-port source-contract review of
+Tasks 003-010. Continue to Task 011 only when the review has zero unresolved
+findings and the user explicitly approves.
+
+After Task 014 is accepted, stop and run a whole-port source-contract review of
+Tasks 003-014. Continue to Task 015 only when the review has zero unresolved
+findings and the user explicitly approves.
 
 Tasks 003-015 are the current Velox MVP path. The execution protocol stops after
 Task 015. Tasks 016-017 are optional Velox post-MVP work. Tasks 018-019 are

@@ -12,6 +12,64 @@
 > one result file under this ClickHouse checkout. Do not modify ClickHouse
 > source files. Do not commit or stage either repository.
 
+## Pre-execution compatibility amendment
+
+This task remains post-MVP. It does not move into the current Tasks 003-014 phase.
+Its writer contract is nevertheless fixed now by:
+
+```text
+port/design/filecache-reader-handoff-and-contract-recovery.html
+```
+
+This amendment supersedes every conflicting class declaration, `std::vector` buffer,
+standalone cursor/finalize state machine, destructor flush, and swap-less
+`sync`/`finalize` pseudo-code in the numbered Steps below. Before Task 016 starts,
+those Steps must be rewritten from this amendment; they must not be copied as
+implementation instructions.
+
+`WriteBufferToFileSegment` must derive from the same flattened
+`ch::WriteBufferFromFileBase` compatibility contract used by
+`WriteBufferFromVeloxWriteFile`. It owns a pool-backed Velox `BufferPtr`; do not use
+`std::vector<char>` or create an independent cursor/finalize/cancel state machine.
+
+Application-level zero-copy path:
+
+```text
+producer writes directly into WriteBufferToFileSegment BufferPtr T
+nextImpl reserves offset() bytes
+FileSegment::write borrows T
+local cache writer borrows the same T and calls WriteFile::append(string_view(T))
+local cache writer detaches T
+```
+
+No intermediate writer staging memcpy is allowed. Kernel IO copying is outside the
+contract.
+
+`nextImpl` must:
+
+1. acquire the downloader;
+2. install a scope guard that releases it;
+3. reserve exactly `offset` bytes;
+4. call `FileSegment::write` with the owned `BufferPtr` address;
+5. increment `writtenBytes` only after success.
+
+`finalizeImpl` and `sync` first call `next`, then obtain the segment's local cache
+writer and use an RAII `BufferStateSwapGuard`. The guard swaps only working
+internal/working views and position. It swaps neither settled-byte counters nor
+`BufferPtr`/`WriteFile` ownership, and always swaps back in its non-throwing
+destructor.
+
+The executable tests must prove:
+
+```text
+owned BufferPtr is charged to and released from the injected MemoryPool
+append observes the same address as the producer-owned BufferPtr
+reserve failure appends nothing and releases downloader
+write failure releases downloader and leaves holder cleanup responsible
+finalize and sync use BufferStateSwapGuard and restore both states
+read-back finalizes first and returns exactly writtenBytes
+```
+
 ## Goal
 
 Port `WriteBufferToFileSegment` from ClickHouse to

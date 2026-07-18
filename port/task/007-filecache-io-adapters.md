@@ -5,6 +5,213 @@
 > result file under this ClickHouse checkout. Do not modify any ClickHouse source
 > files outside `port/task/result/`. Do not commit or stage either repository.
 
+## Post-acceptance source-contract audit — task reopened and contract replaced
+
+The original Task 007 implementation and acceptance remain in history, but the task
+is reopened. This section supersedes all reader/writer API, pseudo-code, lifecycle,
+and test instructions later in this file.
+
+Canonical design:
+
+```text
+port/design/filecache-reader-handoff-and-contract-recovery.html
+```
+
+### Architecture boundary
+
+Implement the `FileCache`-consumed CH contract without porting the complete general
+CH IO hierarchy:
+
+```text
+FileCacheBufferState
+  -> optional pool-backed BufferPtr
+  -> non-owning working view / position / bytes
+  -> set / offset / available / count / swapWorkingState
+
+ch::ReadBufferFromFileBase compatibility contract
+  -> ReadBufferFromVeloxReadFile
+       -> shared_ptr<velox::ReadFile>
+       -> velox::memory::MemoryPool
+
+ch::WriteBufferFromFileBase compatibility contract
+  -> WriteBufferFromVeloxWriteFile
+       -> unique_ptr<velox::WriteFile>
+       -> optional BufferPtr from velox::memory::MemoryPool
+```
+
+`FileSegment::RemoteFileReaderPtr` must be able to store the compatibility base.
+`FileCacheInputStream` must not compensate for a weaker Task 007 contract by
+inventing alternate cursor, retry, detach, or handoff semantics.
+
+### Exact reader contract
+
+The compatibility reader must expose the `FileCache`-used behavior of CH
+`BufferBase`, `ReadBuffer`, `SeekableReadBuffer`, and `ReadBufferFromFileBase`:
+
+```text
+internalBuffer / buffer / mutable position
+offset / available / hasPendingData / count
+set(ptr, size) / set(nullptr, 0)
+next / eof / cancel / isCanceled
+seek / getPosition / getFileOffsetOfBufferEnd
+setReadUntilPosition / setReadUntilEnd
+supportsExternalBufferMode / supportsRightBoundedReads
+getFileName / tryGetFileSize
+```
+
+State transitions are exact:
+
+```text
+next:
+  require no pending data
+  settle consumed bytes with bytes += offset
+  call nextImpl
+  on exception: cancel, then rethrow
+  on false: publish an empty working buffer
+  on true: publish the new working buffer and reset position to its begin
+
+eof:
+  return !hasPendingData && !next
+
+set(ptr, size):
+  replace internal/working memory and expose an empty working window
+  keep that target until another explicit set
+
+set(nullptr, 0):
+  detach all caller memory and leave a coherent empty window
+```
+
+After handoff:
+
+```text
+available == 0
+getFileOffsetOfBufferEnd == FileSegment::getCurrentWriteOffset
+no pointer in the reader references the caller-owned output buffer
+```
+
+The exception path is not retryable. Remove tests and implementation that restore a
+reader for retry after `ReadFile::pread` throws.
+
+### Memory and direct IO
+
+Owned reader/writer buffers must be allocated through `MemoryPool`; do not use
+`std::vector<char>`. Query `ReadFile::directIo` at construction. If direct IO is
+enabled, allocate owned memory with the returned power-of-two alignment and reject
+an external buffer whose address, offset, or length violates the same requirement.
+Do not silently switch to buffered IO or another fallback path.
+
+### Exact writer contract
+
+`WriteBufferFromVeloxWriteFile` must directly support the existing
+`FileSegment::write` call shape:
+
+```text
+construct with buffer size 0
+set(from, size, offset=size)
+next                         # append exactly offset bytes
+set(nullptr, 0)              # detach
+```
+
+It must also provide:
+
+```text
+finalize: idempotent; on failure transition to canceled before rethrow
+cancel: noexcept and idempotent; no-op after finalize
+sync
+getFileName
+```
+
+The external path must append caller memory directly. Do not introduce a mandatory
+copy through writer-owned memory.
+
+All writer-owned memory must be `BufferPtr` / `AlignedBuffer` allocated from the
+injected `MemoryPool`. A writer constructed with buffer size 0 has no owned
+`BufferPtr` and is external-only. Raw pointers are synchronous non-owning views;
+the caller's `BufferPtr` remains the lifetime owner until `next` returns and the
+writer is detached.
+
+Application-level zero-copy is mandatory:
+
+```text
+reader writes directly into FileCacheInputStream BufferPtr B
+FileSegment::write passes B to writer.set
+nextImpl passes string_view(B) to synchronous WriteFile::append
+scope exit detaches B
+```
+
+There is no reader-to-writer staging memcpy. Kernel/file IO copying is outside this
+contract; `splice`/`sendfile` behavior is not required.
+
+Method mapping:
+
+```text
+nextImpl:
+  WriteFile::append(string_view(workingBegin, offset))
+  do not call WriteFile::flush
+
+sync:
+  next
+  WriteFile::flush
+  remain active
+
+finalizeImpl:
+  next
+  WriteFile::close
+  do not add a separate flush/fsync
+
+cancelImpl:
+  append nothing
+  discard pending working state
+  release the owned WriteFile through a non-throwing destruction path
+```
+
+`FileSegment` owns a `shared_ptr<WriteBufferFromVeloxWriteFile>` wrapper, while the
+wrapper owns exactly one `unique_ptr<WriteFile>`. When resuming a partial segment,
+open the existing file in append/no-truncate mode and verify its physical size
+matches `downloadedSize` before the next write.
+
+If `WriteFile::append` throws after a partial physical local write, reconcile from
+`std::filesystem::file_size(path)`, require
+`downloadedSize <= physicalSize <= reservedSize`, update `downloadedSize` to the
+physical size, mark the download failed, and propagate the original exception.
+Do not rely on `WriteFile::size`, whose logical counter may not advance before an
+exception. This is an explicit infrastructure adaptation: CH can branch on typed
+ENOSPC/EDQUOT, while the current Velox `WriteFile` interface does not expose errno,
+so every local append exception uses physical file size as the authority.
+
+### Mandatory RED/green evidence
+
+Reader tests:
+
+1. `eof` fills an empty reader and reports false while bytes become available.
+2. `next` settles consumed offset before the next `nextImpl`.
+3. a `pread` exception cancels the reader and a second read is rejected.
+4. external memory remains the target across reads until explicit detach.
+5. `set(nullptr, 0)` removes every reference to caller memory.
+6. attach/read/write-cache/detach/handoff satisfies both `FileSegment` invariants.
+7. right-bound shrink/extend, seek, buffer-end offset, and pending-data behavior match CH.
+8. pool accounting observes owned-buffer allocation and release.
+9. direct-IO alignment accepts aligned owned/external memory and rejects misalignment.
+
+Writer tests:
+
+1. buffer-size-zero external attach + no-arg `next` appends without an intermediate copy;
+   the address observed by the mock `WriteFile` equals the caller `BufferPtr` address.
+2. non-zero owned memory is a `BufferPtr` charged to the injected `MemoryPool`.
+3. `set(nullptr, 0)` detaches and leaves no caller pointer.
+4. `next` appends exactly `offset` bytes, settles count, and resets position.
+5. `sync` performs append then flush without close.
+6. `finalize` performs append then close without an extra flush; repeated `finalize` is a no-op.
+7. `cancel` is noexcept before/after finalize and when repeated, and never appends pending bytes.
+8. `next`/finalize failure leaves the writer canceled and prevents a second write.
+9. `getFileName` delegates to `WriteFile`.
+10. resume opens an existing partial cache file without truncating its downloaded prefix.
+11. partial physical write reconciliation never counts reserved-but-unwritten bytes as downloaded.
+
+The old Task 007 focused tests may remain only when they assert this replacement
+contract. Tests that require retryable reader exceptions, null/zero rejection, or
+single-cycle external-buffer auto-revert must be removed or rewritten.
+
 ## Goal
 
 Implement the two IO adapters that bridge Velox `ReadFile` / `WriteFile` with

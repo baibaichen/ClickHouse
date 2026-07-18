@@ -5,6 +5,39 @@
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
+## Post-acceptance source-contract audit — task reopened
+
+The SipHash128 vectors, persisted key formatting, enum values, aliases, and rounding
+helpers remain accepted. Two corrective changes are required.
+
+### Match CH malformed-key parsing
+
+CH `FileCacheKey::fromKeyString` rejects only lengths other than 32 and delegates all
+32-byte input to `unhexUInt`. Remove the added per-character exception. Replace
+`FromKeyStringInvalidHexChar` with a compatibility test:
+
+```text
+input:    g0000000000000000000000000000000
+behavior: does not throw
+result:   f0000000000000000000000000000000
+```
+
+Keep wrong-length rejection and valid lower/upper-hex round trips.
+
+### Shared checked arithmetic
+
+Add overflow-checked unsigned addition to `FileCacheUtils.h` for Tasks 013 and 014:
+
+```cpp
+uint64_t checkedAdd(uint64_t lhs, uint64_t rhs, std::string_view operation);
+```
+
+It returns the exact sum or throws `VeloxRuntimeError` containing `operation`; it
+must not saturate, wrap, or return a fallback. Add boundary tests for zero,
+`UINT64_MAX + 0`, and `UINT64_MAX + 1`.
+
+Task 013 and Task 014 must reuse this helper rather than define private variants.
+
 ## Goal
 
 Port all leaf-level types that form the dependency base for every `FileCache`

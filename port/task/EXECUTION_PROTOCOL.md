@@ -7,7 +7,9 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Dispatch now:        Tasks 003-015, in numeric order
+Current state:       Documentation review; dispatch no Worker until user approval
+Repair before resume: Tasks 003, 004, 006, 007, 008
+Then dispatch:       Tasks 009-014, subject to Task 010 and Task 014 review gates
 Optional Velox work: Tasks 016-017, only after a separate decision
 Deferred Gluten:     Tasks 018-019, not in the current phase
 ```
@@ -26,11 +28,23 @@ port/task/EXECUTION_PROTOCOL.md
 port/task/ENVIRONMENT.md
 port/task/NNN-*.md
 port/task/result/*-result.md for earlier accepted dependencies
+every CH production source file and real caller listed by Task NNN
 ```
 
-The numbered task file defines scope, commands, acceptance criteria, and the
-receipt filename. If this protocol conflicts with a task file, stop and record
-the conflict rather than guessing.
+Authority order for behavior:
+
+```text
+current user decision
+CH production source + real FileCache callers
+approved port design contract
+numbered task and its amendments
+implementation and tests
+accepted receipts
+```
+
+The numbered task defines scope, commands, acceptance criteria, and the receipt filename, but it
+cannot silently weaken a higher-authority behavior contract. If sources, design, task, tests, or
+existing implementation disagree, stop and record the conflict rather than guessing.
 
 ## State machine
 
@@ -39,6 +53,10 @@ not_started
   -> worker_running
   -> ready_for_controller
   -> accepted
+
+accepted
+  -> reopened_by_contract_audit
+  -> worker_running
 
 ready_for_controller
   -> changes_requested
@@ -50,8 +68,9 @@ worker_running
 ```
 
 Only the worker writes implementation changes and worker-attempt sections.
-Only the controller writes controller-review sections and creates commits.
-An `accepted` receipt is immutable.
+Only the controller writes controller-review/audit sections and creates commits.
+Existing receipt sections are immutable, but an accepted task can be reopened by appending a
+post-acceptance contract-audit section. Never erase the original acceptance or rewrite history.
 A `blocked` receipt is escalated to the controller. After the external blocker
 is resolved, the controller redispatches the same task number for a new worker
 attempt.
@@ -64,19 +83,25 @@ attempt.
    named by the task. Preserve unrelated existing changes.
 4. Modify only the task's declared file scope. If another file is required,
    stop as `blocked` and explain why instead of silently expanding scope.
-5. Follow the task steps and run every applicable acceptance gate. Redirect
+5. Before implementation, derive a contract table from the listed CH source and real call sites:
+   API/signature, state transition, error behavior, ownership/lifetime, concurrency, persistence,
+   and allowed Velox substitution. If the task contradicts that table, stop as `blocked`.
+6. Follow the task steps and run every applicable acceptance gate. Redirect
    build and test output to the exact log files required by the task.
-6. A skipped, disabled, unbuilt, or unregistered test is not a passing test.
+7. A skipped, disabled, unbuilt, unregistered, comment-only, or assertion-free test is not a passing test.
    Do not weaken assertions or acceptance criteria to obtain green output.
-7. After implementation and local validation, launch exactly one read-only
+8. Every material contract requires a real RED test that fails against the pre-change implementation
+   for the expected behavioral reason. A compile failure caused only by a missing new header does not
+   prove runtime semantics.
+9. After implementation and local validation, launch exactly one read-only
    code-review subagent for the complete task-owned diff across all affected
    repositories. Give it the task file, relevant design references, complete
    diffs, and test outcomes. Ask only for correctness, concurrency, lifetime,
    integration, and false-green findings; it must not edit files.
-8. Resolve every actionable in-scope review finding and rerun affected gates.
+10. Resolve every actionable in-scope review finding and rerun affected gates.
    Record findings and resolutions. Unresolved findings make the task
    `blocked`, not successful.
-9. Write or append the task's declared result receipt. Set
+11. Write or append the task's declared result receipt. Set
    `worker_status: ready_for_controller` when complete or
    `worker_status: blocked` when unresolved, then stop immediately.
 
@@ -196,21 +221,51 @@ The controller performs these checks after the worker stops:
    and contains no unresolved finding or blocker.
 2. Inspect branch, HEAD, status, and complete diffs in every affected
    repository. Separate task-owned changes from pre-existing user changes.
-3. Check exact file scope, API compatibility, dependency direction, ownership,
+3. Re-derive the contract independently from CH production source and real callers; do not treat
+   the task, its tests, or a prior receipt as the behavioral source of truth.
+4. Check exact file scope, API compatibility, dependency direction, ownership,
    concurrency, shutdown order, error propagation, and consistency with all
    previously accepted tasks.
-4. Read the referenced logs and verify commands, exit codes, test discovery,
+5. Read the referenced logs and verify commands, exit codes, test discovery,
    test counts, and benchmark evidence. Rerun a focused gate when evidence is
    incomplete or suspicious.
-5. Perform the overall architecture review that the worker intentionally does
+6. Reject false-green evidence: comment-only test bodies, null fixtures, assertions unrelated to
+   the promised behavior, tests that never reached the changed path, and tests that cannot fail when
+   the implementation is removed.
+7. Perform the overall architecture review that the worker intentionally does
    not own. In particular, check that the accumulated implementation still
    matches the dependency DAG and accepted design documents.
-6. Append one controller-review section to the receipt.
-7. If changes are required, set `controller_status: changes_requested`, do not
+8. Append one controller-review section to the receipt.
+9. If changes are required, set `controller_status: changes_requested`, do not
    stage or commit, and dispatch the same task number again.
-8. If accepted, commit task-owned implementation separately in every affected
+10. If accepted, commit task-owned implementation separately in every affected
    implementation repository, then commit the receipt in the ClickHouse
    repository. Never include unrelated changes.
+
+## Whole-port review gates
+
+### After Task 010
+
+After Task 010 is accepted and all affected repositories are clean:
+
+1. Dispatch no Task 011 Worker.
+2. Review the accumulated Tasks 003-010 contracts against CH source, real callers,
+   approved designs, implementation, tests, failure paths, and cross-task dependencies.
+3. If any finding exists, append a post-acceptance audit to the affected receipt/task,
+   set it to `reopened_by_contract_audit`, and stop.
+4. Continue to Task 011 only when there are zero unresolved findings and the user
+   explicitly approves.
+
+### After Task 014
+
+After Task 014 is accepted and all affected repositories are clean:
+
+1. Dispatch no Task 015 Worker.
+2. Review the accumulated Tasks 003-014, including the center SCC, Factory/Manager,
+   remote reader handoff, cache miss/hit, seek, exception cleanup, and shutdown.
+3. If any finding exists, reopen the affected task and stop.
+4. Continue to Task 015 only when there are zero unresolved findings and the user
+   explicitly approves.
 
 Every physical commit for one logical task starts its subject with
 `Task NNN:`. A cross-repository task therefore has multiple commits linked by
@@ -338,6 +393,9 @@ flowchart TD
         COMMIT_IMPL["Commit task-owned implementation separately<br/>in every affected repository"]
         RECORD_SHA["Record implementation commit SHA(s)<br/>in the receipt"]
         COMMIT_RECEIPT["Commit the receipt in ClickHouse"]
+        CHECKPOINT{"NNN = 010 or 014?"}
+        WHOLE_REVIEW["Run mandatory whole-port<br/>source-contract review"]
+        REVIEW_OK{"Zero unresolved findings<br/>and user approved?"}
         LAST{"NNN = 015?"}
         NEXT["Select Task NNN + 1<br/>Task 011 must go directly to Task 012"]
         PHASE_DONE(["Current Velox MVP phase complete"])
@@ -360,7 +418,11 @@ flowchart TD
 
     CLASSIFY -- "ready_for_controller" --> REVIEW --> ACCEPT
     ACCEPT -- "No" --> CHANGES --> READ
-    ACCEPT -- "Yes" --> COMMIT_IMPL --> RECORD_SHA --> COMMIT_RECEIPT --> LAST
+    ACCEPT -- "Yes" --> COMMIT_IMPL --> RECORD_SHA --> COMMIT_RECEIPT --> CHECKPOINT
+    CHECKPOINT -- "Yes" --> WHOLE_REVIEW --> REVIEW_OK
+    REVIEW_OK -- "No" --> WAIT
+    REVIEW_OK -- "Yes" --> LAST
+    CHECKPOINT -- "No" --> LAST
     LAST -- "No" --> NEXT --> START
     LAST -- "Yes" --> PHASE_DONE
 ```

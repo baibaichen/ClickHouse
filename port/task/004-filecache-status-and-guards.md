@@ -5,6 +5,31 @@
 > result file under this ClickHouse checkout. Do not modify any ClickHouse source
 > files outside `port/task/result/`. Do not commit or stage either repository.
 
+## Post-acceptance source-contract audit — task reopened
+
+The original Task 004 acceptance remains in the receipt. The guards and exclusive
+lock lifecycle remain accepted; only the `StatusFile` diagnostic surface is reopened.
+
+CH `FileCache::initialize` constructs the status file with
+`StatusFile::write_full_info`, not PID-only output. Add a CH-compatible
+`writeFullInfo` fill function that writes exactly three newline-terminated fields:
+
+```text
+PID: <process id>
+Started at: <local process start timestamp>
+Revision: <Velox build revision>
+```
+
+The API remains a reusable `StatusFile::FillFunction`; `FileCache` must not format
+these fields itself. The `Revision` value is an allowed infrastructure adaptation:
+use the repository's real build-revision source. If no real build-revision source is
+available, stop as `blocked` and ask for a product decision; do not invent a constant
+or silently omit the field.
+
+Add focused RED tests that verify all three labels and newline boundaries, while
+retaining the existing cross-process exclusion, non-throwing destructor, unlink,
+and close-failure coverage.
+
 ## Goal
 
 Implement `StatusFile.h/.cpp` — the per-cache-directory exclusive-ownership
