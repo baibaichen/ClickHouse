@@ -68,7 +68,7 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after the Task 003 dependency preflight:
+Current verified snapshot after corrected Task 003 acceptance:
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
@@ -76,11 +76,13 @@ Current verified snapshot after the Task 003 dependency preflight:
     `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    4b14de7f1 Task 008: Add `FileCache` leaf types
+    c755512a8 Task 003: Correct FileCache common shims
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
       ClickHouse: c30a218c481
+      Corrective Velox: c755512a8
+      Corrective ClickHouse: this acceptance commit
     Task 004
       Velox:      f948fb6a4
       ClickHouse: d20e9b241d4
@@ -101,7 +103,8 @@ Current verified snapshot after the Task 003 dependency preflight:
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
 - Task 009 and Task 011 task contracts passed the read-only audit, but no Worker
   may start while the documentation repair is under user review.
-- The Task 003 dependency preflight is complete. The user approved:
+- The Task 003 dependency preflight and corrective implementation are complete.
+  The accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
    Velox-style filesystem exceptions without structured errno;
@@ -111,24 +114,24 @@ Current verified snapshot after the Task 003 dependency preflight:
 
 Current task:
 
-- Task 003 is the first reopened corrective task.
-- Velox is clean at `4b14de7f1`.
+- Corrected Task 003 is accepted at Velox `c755512a8`.
+- Velox is clean at `c755512a8`.
+- Reopened Task 004 is next; its dependency preflight has not started.
 - Task 009 is `not_started`.
-- The canonical Task 003 dependency design, corrective task, and Task 017
-  exception-formatting deliverable have been revised but are not yet accepted.
-- Execution is paused for user review of those documents. Do not modify Velox
-  source or dispatch a Worker until the user approves them.
-- Persistent Task 008 logs belong under:
+- The user approved continuous corrective execution. Before editing Task 004,
+  run its read-only dependency preflight. Stop the pipeline only if that
+  preflight finds an unreviewed dependency or another protocol stop condition.
+- Persistent Task 003 corrective logs belong under:
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
-    /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task008-nonmono/
 
 Resume procedure:
 
-1. Stay paused until the user approves the revised Task 003 design/task
-   documents and Task 017 deferred exception-formatting contract.
-2. On approval, implement corrected Task 003 first. Then repair reopened Tasks
-   004, 006, 007, and 008 with new corrective commits; do not rewrite existing
-   commits or receipt history.
+1. Run a read-only dependency preflight for reopened Task 004 against CH source,
+   real callers, canonical designs, current Velox code, CMake, and tests.
+2. If every Task 004 dependency is already reviewed, repair Task 004 with a new
+   corrective commit. If any dependency is not reviewed, stop for user review.
+3. Continue with reopened Tasks 006, 007, and 008 under the same dependency gate;
+   do not rewrite existing commits or receipt history.
 3. Run the accumulated Task 003-008 regression and complete Controller review.
 4. Only then dispatch Task 009.
 5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
@@ -136,9 +139,10 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: documentation review before any corrective coding.
-- After user approval, repair reopened Tasks 003, 004, 006, 007, and 008 before
-  starting Task 009.
+- Current stop condition: the first unreviewed dependency or unresolved blocker
+  found while correcting Tasks 004, 006, 007, and 008.
+- Corrected Task 003 is accepted. Repair reopened Tasks 004, 006, 007, and 008
+  before starting Task 009.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
