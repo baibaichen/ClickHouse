@@ -14,6 +14,8 @@
 - 每一阶段都要有可编译目标。
 - 每个 task 的合同必须从 CH production source 和真实调用点推导，task literal snippet
   不能覆盖或削弱 source contract。
+- 迁移中遇到未被设计/task 明确 review 的 CH 依赖、宏、类型、API 或 Velox 映射时，
+  当前 task 和后续流水线立即停止；由用户 review 并把决定写入设计/task 后才能继续。
 - Task 010 和 Task 014 是强制整体 review checkpoint；review 有 finding 时停止，
   零 unresolved findings 且用户批准后才继续。
 

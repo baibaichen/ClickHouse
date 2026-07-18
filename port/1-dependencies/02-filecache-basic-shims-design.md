@@ -7,6 +7,7 @@ locks、logging、filesystem 是 `FileCache` 算法迁移时会高频出现的�
 
 | ClickHouse | Velox port first phase |
 |---|---|
+| `chassert` | 独立 `ClickHouseAssert.h` compatibility shim；Debug/sanitizer abort，普通 Release 不求值 |
 | `SharedMutex` | `using SharedMutex = folly::SharedMutex`，功能接口覆盖；性能不声明等价 |
 | `CachePriorityGuard` / `CacheStateGuard` / `CacheMetadataGuard` / `KeyGuard` / `FileSegmentGuard` | 直接迁移 CH `Guards.h` 结构；只替换 `SharedMutex` 底层 |
 | `LoggerPtr` / `getLogger` / `LOG_*` | 第一阶段全 no-op，后续再考虑真实日志移植 |
@@ -15,6 +16,69 @@ locks、logging、filesystem 是 `FileCache` 算法迁移时会高频出现的�
 | local file read/write | 已由 `ReadBufferFromVeloxReadFile` / `WriteBufferFromVeloxWriteFile` 覆盖 |
 
 目标是：`FileCache` 算法文件迁移时不因为锁、日志、路径操作大面积改写。
+
+## `chassert`
+
+`chassert` 不能直接映射为 `VELOX_DCHECK`、`VELOX_CHECK` 或标准 `assert`：
+
+| 候选 | 不等价原因 |
+|---|---|
+| `VELOX_DCHECK` | 仅按 `NDEBUG` 决定，sanitizer Release 可能关闭；失败抛 Velox exception，而不是 abort |
+| `VELOX_CHECK` | 普通 Release 也执行并抛 exception，改变 CH release 行为 |
+| `assert` | sanitizer Release 不保证启用，也不写日志 |
+
+新增独立头文件：
+
+```text
+velox/ch/Common/ClickHouseAssert.h
+```
+
+不要放入 `ClickHouseAliases.h`，避免给所有基础别名使用方引入 glog/portability 依赖。
+
+精确 build-mode 合同：
+
+```text
+!defined(NDEBUG) || defined(FOLLY_SANITIZE):
+  evaluate expression exactly once
+  on failure log expression or caller message
+  abort the process
+
+ordinary Release:
+  do not evaluate expression
+  keep compile-time type checking through sizeof
+```
+
+头文件包含 `folly/CPortability.h`，使用 Folly 已归一化的
+`FOLLY_SANITIZE` 检测 ASan、TSan、MSan、DFSan 和 UBSan。失败路径使用 glog
+`LOG(FATAL)` 或等价 non-returning helper；不得使用会抛 exception 的
+`VELOX_CHECK`。
+
+保留两种调用形状：
+
+```cpp
+chassert(expression);
+chassert(expression, "diagnostic message");
+```
+
+测试要求：
+
+```text
+Debug: false expression causes death and includes the expression text
+Debug: custom message causes death and includes the custom message
+Debug: true expression is evaluated exactly once
+sanitizer: same death behavior remains enabled even with NDEBUG
+ordinary Release probe: expression is not evaluated
+```
+
+Task 003 在同一个 Debug CMake build 中增加两个独立 target 来覆盖预处理分支：
+
+```text
+NDEBUG                       -> ordinary Release non-evaluation probe
+NDEBUG + FOLLY_SANITIZE=1    -> sanitizer gate death test
+```
+
+真实 sanitizer CI 仍会通过 `folly/CPortability.h` 自动定义同一个
+`FOLLY_SANITIZE` gate。
 
 ## Locks / guards
 

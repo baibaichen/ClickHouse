@@ -49,6 +49,75 @@ The corrective Worker must first add focused RED tests proving:
 4. timed `tryPop` wakes on push and on `finish`;
 5. the exact Task 012 call shapes `tryPush(batch, 10)` and `tryPop(batch)` compile.
 
+### `chassert` compatibility shim
+
+Task 012 ports many non-heavy CH invariants expressed as `chassert`. Add:
+
+```text
+velox/ch/Common/ClickHouseAssert.h
+```
+
+Do not map `chassert` to `VELOX_DCHECK`, `VELOX_CHECK`, or standard `assert`.
+The required behavior is:
+
+```text
+!defined(NDEBUG) || defined(FOLLY_SANITIZE):
+  evaluate the expression exactly once
+  log the expression text or explicit message
+  abort; do not throw
+
+ordinary Release:
+  do not evaluate the expression
+  preserve compile-time expression checking with sizeof
+```
+
+Include `folly/CPortability.h` and use its normalized `FOLLY_SANITIZE` macro.
+Keep the one-argument and two-argument call forms:
+
+```cpp
+chassert(expression);
+chassert(expression, "diagnostic message");
+```
+
+Use a dedicated header instead of `ClickHouseAliases.h`, so aliases do not acquire
+glog and portability dependencies. Register `ClickHouseAssert.h` in the Task 003
+public header file set; this overrides any narrower CMake header list later in the
+task.
+
+The corrective Worker must add:
+
+1. death test for the default expression diagnostic;
+2. death test for a custom message;
+3. test proving a true expression is evaluated exactly once;
+4. sanitizer-mode compile/death coverage with `NDEBUG`;
+5. a separate ordinary-Release probe proving an expression with a side effect is
+   not evaluated.
+
+The existing Debug configure remains the only CMake configure. Exercise the other
+preprocessor branches with two dedicated targets in the same build:
+
+```text
+velox_ch_chassert_release_probe
+  source: ChassertReleaseProbe.cpp
+  compile definitions: NDEBUG
+  no FOLLY_SANITIZE definition
+  assertion: chassert(++counter == 1) leaves counter == 0
+
+velox_ch_chassert_sanitizer_gate_test
+  source: ChassertSanitizerGateTest.cpp
+  compile definitions: NDEBUG;FOLLY_SANITIZE=1
+  assertion: chassert(false) still causes process death
+```
+
+The sanitizer-gate target proves branch selection without requiring a second
+sanitizer toolchain configure; real sanitizer CI supplies the same normalized
+`FOLLY_SANITIZE` macro through `folly/CPortability.h`.
+
+Register both executables with CTest. Add `ClickHouseAssert.h`,
+`ChassertReleaseProbe.cpp`, and `ChassertSanitizerGateTest.cpp` to the task-owned
+CMake/file-review lists. All three assertion targets must run in the Task 003
+acceptance gate.
+
 Task 012 must not start until this corrective task is accepted.
 
 ## Goal
@@ -58,6 +127,7 @@ Replace the remaining foundational ClickHouse dependencies needed by later
 
 ```text
 primitive aliases
+CH-compatible assertion shim
 Velox exception adapter
 shared mutex alias
 no-op CH-style logging
@@ -95,6 +165,7 @@ Use the ClickHouse implementations only as behavioral references:
 
 ```text
 /home/chang/SourceCode/ClickHouse/src/Common/ConcurrentBoundedQueue.h
+/home/chang/SourceCode/ClickHouse/base/base/defines.h
 ```
 
 ## File scope
@@ -109,6 +180,7 @@ Create:
 
 ```text
 /home/chang/OpenSource/velox/velox/ch/Common/ClickHouseAliases.h
+/home/chang/OpenSource/velox/velox/ch/Common/ClickHouseAssert.h
 /home/chang/OpenSource/velox/velox/ch/Common/FileCacheException.h
 /home/chang/OpenSource/velox/velox/ch/Common/SharedMutex.h
 /home/chang/OpenSource/velox/velox/ch/Common/logger_useful.h
@@ -116,6 +188,8 @@ Create:
 /home/chang/OpenSource/velox/velox/ch/Common/FileCacheBoundedQueue.h
 /home/chang/OpenSource/velox/velox/ch/Common/tests/CMakeLists.txt
 /home/chang/OpenSource/velox/velox/ch/Common/tests/BasicShimsTest.cpp
+/home/chang/OpenSource/velox/velox/ch/Common/tests/ChassertReleaseProbe.cpp
+/home/chang/OpenSource/velox/velox/ch/Common/tests/ChassertSanitizerGateTest.cpp
 /home/chang/SourceCode/ClickHouse/port/task/result/003-filecache-basic-common-shims-result.md
 ```
 

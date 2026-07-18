@@ -41,10 +41,22 @@ Read before any action:
 
 Authority order:
 1. Current user instructions.
-2. EXECUTION_PROTOCOL.md and ENVIRONMENT.md.
-3. The current numbered task file, including Controller amendments.
-4. Accepted result receipts and actual Git state.
-5. This handoff snapshot.
+2. CH production source and real callers.
+3. Approved design contracts.
+4. EXECUTION_PROTOCOL.md and ENVIRONMENT.md.
+5. The current numbered task file, including Controller amendments.
+6. Accepted result receipts and actual Git state.
+7. This handoff snapshot.
+
+Unreviewed dependency rule:
+- If the current task reaches any CH dependency/macro/type/API or proposed Velox
+  mapping that is not explicitly reviewed in an approved design/task, stop the
+  current task and the entire pipeline.
+- Record the source, callers, semantic gap, and decision needed; set
+  `waiting_for_user`.
+- Do not infer a mapping, create a shim/no-op/fallback, or continue another task.
+- Resume the same task only after the user reviews the mapping and the decision is
+  written into the canonical design and task amendment.
 
 Do not trust the snapshot blindly. First inspect both repositories:
 

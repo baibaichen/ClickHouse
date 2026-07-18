@@ -46,6 +46,35 @@ The numbered task defines scope, commands, acceptance criteria, and the receipt 
 cannot silently weaken a higher-authority behavior contract. If sources, design, task, tests, or
 existing implementation disagree, stop and record the conflict rather than guessing.
 
+## Unreviewed dependency gate
+
+During migration, “dependency” includes every CH external class, base class, macro,
+type alias, helper, API, lifecycle primitive, no-op/debug hook, and every proposed
+Velox replacement or fallback.
+
+Before using or replacing one, the Worker and Controller must find an explicit
+reviewed mapping in an approved design or the current task amendment. A name-only
+row, an implementation guess, an existing compiled shim, or a previously accepted
+receipt is not sufficient when behavior has not been reviewed.
+
+If no explicit reviewed contract exists:
+
+1. stop all implementation work for the current task;
+2. do not start or continue any later task, even if it appears independent;
+3. append `worker_status: blocked` with:
+   - CH defining source and real callers;
+   - required API/state/error/ownership/concurrency behavior;
+   - candidate Velox primitives and known semantic differences;
+   - the exact decision needed from the user;
+4. the Controller appends `controller_status: waiting_for_user`;
+5. ask the user to review the dependency mapping;
+6. only after the user approves, write the decision into the canonical design and
+   numbered task amendment;
+7. redispatch the same task from the source-contract check.
+
+The agent must not choose a “closest” Velox API, create a compatibility shim, mark
+the dependency no-op/deferred, or add a fallback before this review gate is closed.
+
 ## State machine
 
 ```text
@@ -83,25 +112,27 @@ attempt.
    named by the task. Preserve unrelated existing changes.
 4. Modify only the task's declared file scope. If another file is required,
    stop as `blocked` and explain why instead of silently expanding scope.
-5. Before implementation, derive a contract table from the listed CH source and real call sites:
+5. Before implementation, enumerate every CH dependency reached by the task and verify each
+   has an explicit approved mapping. An unreviewed dependency triggers the gate above.
+6. Before implementation, derive a contract table from the listed CH source and real call sites:
    API/signature, state transition, error behavior, ownership/lifetime, concurrency, persistence,
    and allowed Velox substitution. If the task contradicts that table, stop as `blocked`.
-6. Follow the task steps and run every applicable acceptance gate. Redirect
+7. Follow the task steps and run every applicable acceptance gate. Redirect
    build and test output to the exact log files required by the task.
-7. A skipped, disabled, unbuilt, unregistered, comment-only, or assertion-free test is not a passing test.
+8. A skipped, disabled, unbuilt, unregistered, comment-only, or assertion-free test is not a passing test.
    Do not weaken assertions or acceptance criteria to obtain green output.
-8. Every material contract requires a real RED test that fails against the pre-change implementation
+9. Every material contract requires a real RED test that fails against the pre-change implementation
    for the expected behavioral reason. A compile failure caused only by a missing new header does not
    prove runtime semantics.
-9. After implementation and local validation, launch exactly one read-only
+10. After implementation and local validation, launch exactly one read-only
    code-review subagent for the complete task-owned diff across all affected
    repositories. Give it the task file, relevant design references, complete
    diffs, and test outcomes. Ask only for correctness, concurrency, lifetime,
    integration, and false-green findings; it must not edit files.
-10. Resolve every actionable in-scope review finding and rerun affected gates.
+11. Resolve every actionable in-scope review finding and rerun affected gates.
    Record findings and resolutions. Unresolved findings make the task
    `blocked`, not successful.
-11. Write or append the task's declared result receipt. Set
+12. Write or append the task's declared result receipt. Set
    `worker_status: ready_for_controller` when complete or
    `worker_status: blocked` when unresolved, then stop immediately.
 
@@ -221,24 +252,26 @@ The controller performs these checks after the worker stops:
    and contains no unresolved finding or blocker.
 2. Inspect branch, HEAD, status, and complete diffs in every affected
    repository. Separate task-owned changes from pre-existing user changes.
-3. Re-derive the contract independently from CH production source and real callers; do not treat
+3. Enumerate the task's external dependencies and confirm each has an explicit user-reviewed
+   mapping. If any dependency is unreviewed, set `waiting_for_user` and stop the pipeline.
+4. Re-derive the contract independently from CH production source and real callers; do not treat
    the task, its tests, or a prior receipt as the behavioral source of truth.
-4. Check exact file scope, API compatibility, dependency direction, ownership,
+5. Check exact file scope, API compatibility, dependency direction, ownership,
    concurrency, shutdown order, error propagation, and consistency with all
    previously accepted tasks.
-5. Read the referenced logs and verify commands, exit codes, test discovery,
+6. Read the referenced logs and verify commands, exit codes, test discovery,
    test counts, and benchmark evidence. Rerun a focused gate when evidence is
    incomplete or suspicious.
-6. Reject false-green evidence: comment-only test bodies, null fixtures, assertions unrelated to
+7. Reject false-green evidence: comment-only test bodies, null fixtures, assertions unrelated to
    the promised behavior, tests that never reached the changed path, and tests that cannot fail when
    the implementation is removed.
-7. Perform the overall architecture review that the worker intentionally does
+8. Perform the overall architecture review that the worker intentionally does
    not own. In particular, check that the accumulated implementation still
    matches the dependency DAG and accepted design documents.
-8. Append one controller-review section to the receipt.
-9. If changes are required, set `controller_status: changes_requested`, do not
+9. Append one controller-review section to the receipt.
+10. If changes are required, set `controller_status: changes_requested`, do not
    stage or commit, and dispatch the same task number again.
-10. If accepted, commit task-owned implementation separately in every affected
+11. If accepted, commit task-owned implementation separately in every affected
    implementation repository, then commit the receipt in the ClickHouse
    repository. Never include unrelated changes.
 

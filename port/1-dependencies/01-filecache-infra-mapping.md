@@ -17,6 +17,7 @@
 | CH | Velox | 处理方式 |
 |---|---|---|
 | `String` / `UInt64` / `Int64` 等 CH 基础别名 | `velox/ch/Common/ClickHouseAliases.h` 中提供 `using String = std::string` 等；`UInt8` 用 `uint8_t`，不照搬 CH 的 `char8_t` | compat alias |
+| `chassert` | `velox/ch/Common/ClickHouseAssert.h` | compat macro：Debug/sanitizer 时记录并 abort，普通 Release 时不求值 |
 | `BackgroundSchedulePool` | cancelable `folly::Timekeeper` future + shared `FileCacheWorkerPool`；详见 [`FileCacheScheduler`](05-filecache-scheduler-design.md) | wrapper + CH aliases |
 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`；详见[线程池设计](04-filecache-thread-pool-design.md) | wrapper，保留 CH-style join/resize/shutdown |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | `WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` |

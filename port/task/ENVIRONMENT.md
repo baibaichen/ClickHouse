@@ -44,6 +44,10 @@ Ninja: /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64
 - Result files under `port/task/result/` are handoff artifacts. Do not commit them unless explicitly asked.
 - CH production source and its real `FileCache` callers are authoritative for behavior.
   A task snippet or accepted receipt cannot weaken that contract.
+- If migration reaches a CH dependency, macro, type, API, no-op, fallback, or Velox
+  substitution that has not been explicitly reviewed in an approved design/task,
+  stop the current task and the task pipeline. Record the source and callers, then
+  wait for user review. Do not infer a mapping or continue an independent later task.
 - Comment-only tests, fixtures that return null, disabled tests, and unregistered tests are
   false-green evidence and cannot satisfy a task gate.
 
