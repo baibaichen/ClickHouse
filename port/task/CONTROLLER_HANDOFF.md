@@ -56,14 +56,15 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot at handoff creation:
+Current verified snapshot after Task 006 acceptance:
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    dbe95a0fc7b Task 005: Record `FileCache` thread pools
+    Task 006 receipt commit containing this handoff update; resolve with
+    `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    b21177a51 Task 005: Add `FileCache` thread pools
+    d9f4517c5 Task 006: Add `FileCache` scheduler and caller scope
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -74,48 +75,38 @@ Current verified snapshot at handoff creation:
     Task 005
       Velox:      b21177a51
       ClickHouse: dbe95a0fc7b
-- Task 004 and Task 005 each required a Controller amendment and a second
-  Worker attempt. Their committed task files and receipts contain the final
-  authoritative contracts. Do not restore the original literal snippets.
+    Task 006
+      Velox:      d9f4517c5
+      ClickHouse: this Task 006 receipt commit
+- Task 004, Task 005, and Task 006 each required a Controller amendment and a
+  second Worker attempt. Their committed task files and receipts contain the
+  final authoritative contracts. Do not restore the original literal snippets.
 
-Current interrupted task:
+Current task:
 
-- Task 006 Worker execution was interrupted by the agent runtime.
-- It did not return `blocked`.
-- There is no Task 006 receipt and no live Worker agent.
-- The Velox checkout contains unstaged Task 006 work:
-    velox/ch/Common/CMakeLists.txt
-    velox/ch/Common/tests/CMakeLists.txt
-    velox/ch/Common/FileCacheQueryIdScope.cpp
-    velox/ch/Common/FileCacheQueryIdScope.h
-    velox/ch/Common/FileCacheScheduler.cpp
-    velox/ch/Common/FileCacheScheduler.h
-    velox/ch/Common/tests/SchedulerAndScopeTest.cpp
-- Persistent Task 006 logs exist under:
+- Task 007 is `not_started`.
+- Velox is expected to be clean at `d9f4517c5`.
+- After the Task 006 receipt commit, ClickHouse is expected to contain only the
+  unrelated Controller scratch directory `tmp/`.
+- Persistent Task 006 logs remain under:
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
-- A temporary full-diff artifact exists at:
-    /home/chang/SourceCode/ClickHouse/tmp/task006_full_diff_for_review.txt
-- The interrupted Worker reached implementation and validation preparation,
-  but did not complete the mandatory read-only self-review or write its result
-  receipt. Treat Task 006 as `worker_running`, not accepted.
 
 Resume procedure:
 
-1. Redispatch a fresh Worker for exactly Task 006.
-2. Tell it to inspect and preserve the existing unstaged Task 006 work rather
-   than restarting or deleting it.
-3. It must verify every existing change against the current Task 006 file,
-   rerun required gates, launch exactly one read-only review subagent, resolve
-   in-scope findings, write the declared Task 006 receipt, and stop.
+1. Dispatch a fresh Worker for exactly Task 007.
+2. It must read the accepted Task 006 receipt and preserve all committed
+   scheduler and caller-scope behavior.
+3. It must execute the current Task 007 contract, run every gate, launch exactly
+   one read-only review subagent, write the Task 007 receipt, and stop.
 4. It must not stage, commit, amend, rebase, push, create a PR, create another
-   worktree, or start Task 007.
+   worktree, or start Task 008.
 5. After the Worker stops, perform the Controller review defined by
    EXECUTION_PROTOCOL.md. Do not accept the Worker's summary without reading
    the complete diff and logs.
 
 Continuous execution target:
 
-- Complete Tasks 006 through 014 in numeric order without pausing for routine
+- Complete Tasks 007 through 014 in numeric order without pausing for routine
   confirmation.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.

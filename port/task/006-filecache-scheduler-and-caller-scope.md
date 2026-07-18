@@ -27,6 +27,42 @@ argument-free `FileSegment::getCallerId` can compose `"<query-id>:<os-tid>"`.
 Deliverables: `FileCacheScheduler.h/.cpp`, `FileCacheQueryIdScope.h/.cpp`, and
 a focused test executable `velox_ch_scheduler_test`.
 
+## Controller amendment after Worker attempt 1
+
+This amendment overrides every raw `this` capture and conflicting lifetime
+assumption in the literal scheduler algorithms below:
+
+```text
+Destroying or move-assigning a FileCacheScheduledTaskHolder must be safe while
+its task is Delayed or Queued. It must not require shutting down or draining the
+process-wide FileCacheWorkerPool first.
+
+Every worker-pool closure and timer continuation must use lifetime-safe task
+ownership, such as a weak_ptr obtained through enable_shared_from_this and
+locked before any member access. No asynchronous closure may dereference a
+destroyed FileCacheScheduledTask.
+
+deactivate() must still prevent future callbacks and wait for a callback that is
+already running. Queued and delayed closures may remain in their executors, but
+must become safe no-ops after holder destruction.
+```
+
+Add focused tests that:
+
+```text
+1. Fill the worker pool, queue a scheduled task, destroy its holder before
+   releasing the workers, then drain the pool and prove the callback did not run.
+2. Schedule a delayed task, destroy its holder before advancing the
+   ManualTimekeeper, advance past the deadline, drain the pool, and prove the
+   callback did not run.
+```
+
+The final build log must show fresh compilation of both Task 006 implementation
+sources and `SchedulerAndScopeTest.cpp`, followed by relinking of the library and
+test executable. Worker attempt 1's green-build log compiled only
+`FileCacheScheduler.cpp`, so it did not support the receipt's stronger
+full-recompile claim.
+
 ## Starting point
 
 ```text
@@ -986,11 +1022,14 @@ if Idle or Delayed:
     cancelTimerLocked()
     state = Delayed
     generation_ snapshot gen
+    weak task snapshot = weak_from_this()
     timerFuture_ = timekeeper.after(delayMs)
-        .deferValue([this, gen](folly::Unit) {
-            lock mutex_
-            if generation_ != gen or state != Delayed: return
-            queueImmediateLocked()
+        .deferValue([weak task, gen](folly::Unit) {
+            shared task = weak task.lock()
+            if no shared task: return
+            lock task mutex_
+            if task generation_ != gen or task state != Delayed: return
+            task queueImmediateLocked()
         })
     return true
 if Queued:
@@ -1059,11 +1098,14 @@ generation_++
 ```text
 state = Queued
 gen snapshot = generation_
-workerPool_.schedule([this, gen] {
-    lock mutex_
-    if gen != generation_ or state != Queued: return  // stale
+weak task snapshot = weak_from_this()
+workerPool_.schedule([weak task, gen] {
+    shared task = weak task.lock()
+    if no shared task: return
+    lock task mutex_
+    if gen != task generation_ or task state != Queued: return  // stale
     unlock
-    runCallback()
+    task runCallback()
 })
 ```
 
