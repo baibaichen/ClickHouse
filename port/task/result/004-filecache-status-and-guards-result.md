@@ -430,3 +430,194 @@ None.
 | Repository | Commit |
 |---|---|
 | `/home/chang/OpenSource/velox` | `f948fb6a4` |
+
+## Corrective diagnostic contract
+
+```text
+status: success
+worker_status: ready_for_controller
+task: 004
+```
+
+## Corrective baseline and scope
+
+| Repository | Branch | Starting HEAD | Pre-existing dirty files |
+|---|---|---|---|
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache` | `6bdba318f41bc8692f158da10e8c5b83da1b52f9` | None |
+| `/home/chang/OpenSource/velox` | `filecache` | `c755512a8f38974aa8f2ab45dd5909b308bf07b1` | None |
+
+Task-owned files:
+
+```text
+/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
+/home/chang/OpenSource/velox/velox/ch/Common/StatusFile.h
+/home/chang/OpenSource/velox/velox/ch/Common/StatusFile.cpp
+/home/chang/OpenSource/velox/velox/ch/Common/VeloxBuildRevision.h.in
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
+/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/StatusFileAndGuardsTest.cpp
+/home/chang/SourceCode/ClickHouse/port/task/result/004-filecache-status-and-guards-result.md
+```
+
+`git status --short`, `git diff --name-only`, and the untracked-file list
+showed exactly these six Velox source files plus this appended receipt. No files
+were staged or committed. `Guards.h`, `ProfileEvents.h`, the two excluded parent
+`CMakeLists.txt` files, and ClickHouse source/design/task files were unchanged.
+`git diff --check` passed in both repositories.
+
+## Corrective RED evidence
+
+After adding the four focused tests and their private generated-header include,
+but before editing production code, the required default configure succeeded and
+the `velox_ch_guards_test` build failed with:
+
+```text
+velox/ch/Interpreters/FileCache/tests/StatusFileAndGuardsTest.cpp:21:10:
+fatal error: VeloxBuildRevision.h: No such file or directory
+```
+
+This is the expected missing generated revision dependency. The RED build exited
+1. Log:
+
+```text
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_corrective_red.log
+```
+
+## Revision evidence
+
+| Path | Result | Evidence |
+|---|---|---|
+| Default Git fallback | success | Generated `c755512a8f38974aa8f2ab45dd5909b308bf07b1`, exactly matching `git rev-parse HEAD` |
+| Default cache state | success | `CMakeCache.txt` contains `VELOX_BUILD_REVISION:STRING=`; the Git fallback was not written back to the cache |
+| Explicit non-mono override | success | Generated exactly `0123456789abcdef0123456789abcdef01234567` |
+| Invalid explicit value | expected failure | Configure with `not-a-revision` exited 1 and reported that `VELOX_BUILD_REVISION` must contain exactly 40 or 64 hexadecimal characters |
+
+Logs:
+
+```text
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_corrective_green.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/configure_task_004_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision/configure_task_004_invalid_revision.log
+```
+
+## Corrective test results
+
+Both the default mono build and explicit-revision non-mono build successfully
+built and linked `velox_ch_guards_test`. In each build, the registered CTest gate
+passed 1/1, and the complete gtest executable passed 16/16 tests from two suites
+with no failures, skips, or disabled tests.
+
+| Test | Default mono | Non-mono |
+|---|---|---|
+| `StatusFileTest.WritePidFillFunctionDoesNotThrow` | PASS | PASS |
+| `StatusFileTest.WriteFullInfoHasExactThreeLineContract` | PASS | PASS |
+| `StatusFileTest.WritePidPropagatesWriteFailure` | PASS | PASS |
+| `StatusFileTest.WriteFullInfoPropagatesWriteFailure` | PASS | PASS |
+| `StatusFileTest.EmptyFillFunctionDoesNotThrow` | PASS | PASS |
+| `StatusFileTest.SecondInstanceOnSamePathThrows` | PASS | PASS |
+| `StatusFileTest.SecondProcessOnSamePathThrows` | PASS | PASS |
+| `StatusFileTest.DestructorUnlinksPath` | PASS | PASS |
+| `StatusFileTest.AfterDestructionNewInstanceSucceeds` | PASS | PASS |
+| `StatusFileTest.DestructorDoesNotThrowWhenCloseFails` | PASS | PASS |
+| `GuardsTest.CachePriorityGuardLockTypes` | PASS | PASS |
+| `GuardsTest.CachePriorityGuardTryLockMayFail` | PASS | PASS |
+| `GuardsTest.CacheStateGuardTryLockFor` | PASS | PASS |
+| `GuardsTest.CacheStateGuardTryLockForFailsWhenHeld` | PASS | PASS |
+| `GuardsTest.LockTypesAreNotInterchangeable` | PASS | PASS |
+| `GuardsTest.AllGuardsLockSuccessfully` | PASS | PASS |
+
+Logs:
+
+```text
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_004_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_004_corrective_gtest.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/build_task_004_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/test_task_004_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/test_task_004_corrective_gtest.log
+```
+
+## Corrective review
+
+The implementer inspected the complete six-file Velox diff, both generated
+headers, revision cache values, all logs, final status, and exact file scope. One
+read-only code-review subagent then reviewed the complete diff against the
+corrective task, approved design, ClickHouse source behavior, and the RED/GREEN
+evidence, focusing on correctness, resource lifetime, mono/non-mono integration,
+error propagation, cross-process exclusion, and false-green risks.
+
+During GREEN verification, the initial closed-fd failure test exposed Folly's
+Debug destructor diagnostic for an already-closed owned descriptor during
+constructor unwinding. The test helper was corrected without changing production
+lifecycle behavior: it opens a replacement read-only descriptor before closing
+the owned fd, invokes the requested fill on the genuinely closed fd, restores
+that descriptor only after catching the expected `VeloxRuntimeError`, and
+rethrows. The independent reviewer confirmed that the write still executes
+against a closed fd and that this cleanup prevents only Folly's unrelated
+destructor abort; it does not create a false green.
+
+```text
+review findings: None.
+resolutions: No actionable review changes required.
+unresolved findings: None.
+controller/spec/quality approval claimed: No; this is implementer evidence only.
+```
+
+## Blocking errors
+
+```text
+None
+```
+
+## Corrective Controller review
+
+```text
+controller_status: accepted
+task: 004
+```
+
+The independent specification review found no missing, extra, or contradictory
+behavior and no new unreviewed dependency. The independent code-quality review
+found no correctness, resource-lifetime, concurrency, CMake-integration, or
+test-validity defect. A final task-level read-only review also passed with no
+findings.
+
+The Controller independently inspected all six changed Velox source files and
+reran the complete acceptance gate:
+
+| Gate | Result |
+|---|---|
+| Default mono configure and build | PASS |
+| Default generated revision | `c755512a8f38974aa8f2ab45dd5909b308bf07b1`, equal to Velox HEAD |
+| Default revision cache state | Empty; the Git fallback was not cached |
+| Default `velox_ch_guards_test` CTest | 1/1 PASS |
+| Default direct gtest run | 16/16 PASS |
+| Explicit-revision non-mono configure and build | PASS |
+| Explicit generated revision | `0123456789abcdef0123456789abcdef01234567` |
+| Non-mono `velox_ch_guards_test` CTest | 1/1 PASS |
+| Non-mono direct gtest run | 16/16 PASS |
+| Invalid revision configure probe | Expected failure with the 40/64 hexadecimal diagnostic |
+| Velox scope | Exactly five modified files and one new template; nothing staged |
+| ClickHouse scope | Only this result receipt modified; nothing staged |
+
+Controller verification logs:
+
+```text
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13/gtest_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/configure_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/build_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/test_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/gtest_task_004_controller_corrective.log
+/home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision/configure_task_004_controller_invalid_revision.log
+```
+
+The implementation and receipt were unstaged and uncommitted when the
+Controller acceptance gate completed.
+
+## Corrective commits
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `5ed26f9413f4e52ef95830b8e4d6a1d91d1a7fe7` |
