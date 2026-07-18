@@ -56,15 +56,15 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after Task 006 acceptance:
+Current verified snapshot after Task 007 acceptance:
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    Task 006 receipt commit containing this handoff update; resolve with
+    Task 007 receipt commit containing this handoff update; resolve with
     `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    d9f4517c5 Task 006: Add `FileCache` scheduler and caller scope
+    711a84850 Task 007: Add `FileCache` IO adapters
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -77,27 +77,30 @@ Current verified snapshot after Task 006 acceptance:
       ClickHouse: dbe95a0fc7b
     Task 006
       Velox:      d9f4517c5
-      ClickHouse: this Task 006 receipt commit
-- Task 004, Task 005, and Task 006 each required a Controller amendment and a
-  second Worker attempt. Their committed task files and receipts contain the
-  final authoritative contracts. Do not restore the original literal snippets.
+      ClickHouse: 5af6ab908fe
+    Task 007
+      Velox:      711a84850
+      ClickHouse: this Task 007 receipt commit
+- Tasks 004-007 required Controller amendments. Their committed task files and
+  receipts contain the final authoritative contracts. Do not restore the
+  original literal snippets.
 
 Current task:
 
-- Task 007 is `not_started`.
-- Velox is expected to be clean at `d9f4517c5`.
-- After the Task 006 receipt commit, ClickHouse is expected to contain only the
-  unrelated Controller scratch directory `tmp/`.
-- Persistent Task 006 logs remain under:
+- Task 007 is accepted.
+- Task 008 is `not_started`.
+- Velox is expected to be clean at `711a84850`.
+- After the Task 007 receipt commit, ClickHouse is expected to be clean.
+- Persistent Task 007 logs are under:
     /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
 
 Resume procedure:
 
-1. Dispatch a fresh Worker for exactly Task 007.
-2. It must read the accepted Task 006 receipt and preserve all committed
-   scheduler and caller-scope behavior.
-3. It must execute the current Task 007 contract, run every gate, launch exactly
-   one read-only review subagent, write the Task 007 receipt, and stop.
+1. Dispatch a fresh Worker for exactly Task 008.
+2. It must read the accepted Task 007 receipt and preserve all committed IO
+   adapter behavior.
+3. It must execute the current Task 008 contract, run every gate, launch exactly
+   one read-only review subagent, write the Task 008 receipt, and stop.
 4. It must not stage, commit, amend, rebase, push, create a PR, create another
    worktree, or start Task 008.
 5. After the Worker stops, perform the Controller review defined by

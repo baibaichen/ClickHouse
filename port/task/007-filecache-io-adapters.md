@@ -30,6 +30,112 @@ Deliverables: `velox/ch/IO/ReadBufferFromVeloxReadFile.h/.cpp`,
 `velox/ch/IO/WriteBufferFromVeloxWriteFile.h/.cpp`, a new `IO/CMakeLists.txt`,
 and a focused test executable `velox_ch_io_test`.
 
+## Controller amendment after Worker attempt 1
+
+This amendment overrides the conflicting CMake, read-buffer pseudo-code, and
+ownership-test snippets below.
+
+### Build registration
+
+`velox_ch_filecache` is an alias in the default mono build. Register the `.cpp`
+files through the existing `velox_sources` helper. Register the public header
+file set with `target_sources` only when `VELOX_MONO_LIBRARY` is disabled and
+the target is a real library.
+
+### External-buffer lifecycle
+
+An external buffer installed by `set` is valid for exactly one read cycle.
+Every read must be bounded by the active buffer's actual capacity. After that
+cycle, `next` must restore the internal buffer before another read; it must
+never retain or write through stale caller-owned storage.
+
+### Offset and boundary safety
+
+```text
+advance(n):
+  reject n < 0 before any pointer arithmetic
+  compare n with bufEnd_ - pos_ before computing pos_ + n
+  reject attempts to advance past the current buffer
+
+seek(offset, SEEK_SET):
+  reject negative offsets
+
+seek(offset, SEEK_CUR):
+  support valid negative seeks
+  reject positions before zero
+  reject positive overflow before addition
+
+setReadUntilPosition(filePos):
+  update atEof_ in both directions
+  extending the boundary beyond currentOffset_ must allow next() again
+
+set(data, size):
+  reject a null pointer or zero capacity
+
+WriteBufferFromVeloxWriteFile::advance(n):
+  compare n with buffer_.size() - writePos_ so the validation itself cannot
+  overflow
+```
+
+Add focused tests for negative and oversized read advances, valid and invalid
+negative seeks, resuming after extending `readUntil`, invalid external buffers,
+and write-advance overflow.
+
+### Shared-ownership test
+
+Keep the caller's `shared_ptr` outside the writer scope. Prove the file remains
+alive after the writer is destroyed while the caller still owns it, then reset
+the caller pointer and prove the writer did not leak ownership.
+
+## Controller amendment after Worker attempt 2
+
+This amendment adds lifecycle rules found while tracing every exit from `next`
+and every terminal writer transition.
+
+### External-buffer completion
+
+Every attempted `next` call ends the lifetime promised by the preceding `set`,
+whether `next` succeeds, returns `false` because of a boundary or physical EOF,
+or propagates an exception from `ReadFile::pread`. On every non-success path:
+
+```text
+- disarm the external buffer
+- restore bufData_ and bufCapacity_ to the internal allocation
+- make pos_ and bufEnd_ a coherent empty internal-buffer window
+- preserve currentOffset_
+- propagate any ReadFile exception unchanged
+```
+
+This also applies when `set` is called while `atEof_` is already true. A later
+`setReadUntilPosition` extension or retry must never write through the expired
+external pointer.
+
+### Boundary changes with buffered data
+
+Shrinking `readUntil_` must also constrain an already-loaded window. After
+`setReadUntilPosition(filePos)`, `bufferEnd` must not expose bytes at or beyond
+`filePos`. If the new boundary is at or behind the current position, expose an
+empty window and mark EOF. Extending a previously reached boundary must still
+allow a later `next` to resume from `currentOffset_`.
+
+### Terminal writer state
+
+`advance` is a write operation: after either `finalize` or `cancel`, it must
+throw without changing `writePos_` or `totalWritten_`, just like `write` and
+`next`.
+
+Add focused TDD coverage for:
+
+```text
+- set(external), next() returning false at a boundary, extending the boundary,
+  then next() reading into internal memory without modifying external memory
+- set(external), ReadFile::pread throwing, then a retry using internal memory
+  without modifying external memory
+- shrinking readUntil_ while a larger buffer window is already loaded
+- advance after finalize
+- advance after cancel
+```
+
 ## Starting point
 
 ```text
