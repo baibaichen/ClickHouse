@@ -140,12 +140,17 @@ Current task:
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
-- Task 009 is accepted. Task 010 is the next work item and is not started.
+- Task 009 is accepted.
+- Task 010 Worker attempt 1 blocked before edits on stale mono/non-mono CMake
+  scope/instructions. Controller resolved it from established Tasks 008/009
+  conventions: expanded Common CMake scope, mono-safe source registration,
+  public settings headers/dependency, reduced consumer, and non-mono gate.
+- Task 010 Worker attempt 2 is ready.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch Task 010.
+1. Dispatch Task 010 Worker attempt 2.
 2. After Task 010 acceptance, stop for the mandatory Tasks 003-010 whole-port
    source-contract review.
 3. Continue to Task 011 only with zero unresolved findings and explicit user
@@ -154,7 +159,7 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: none; Task 010 may proceed.
+- Current stop condition: none; Task 010 Worker attempt 2 may proceed.
 - Corrected Tasks 003, 004, 006, 007, and 008 plus Task 009 are accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.

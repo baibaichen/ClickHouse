@@ -44,6 +44,57 @@ After Task 010 is accepted, stop. Run a whole-port source-contract review of
 Tasks 003-010. Any finding reopens the affected task and stops execution. Task 011
 may start only with zero unresolved findings and explicit user approval.
 
+### Controller amendment after Worker attempt 1 — mono/non-mono registration
+
+Add this file to the declared `Modify` scope:
+
+```text
+<velox_repo>/velox/ch/Common/CMakeLists.txt
+```
+
+The literal Step 7 CMake snippets are superseded.
+
+Register the compiled source through the mono-safe helper:
+
+```cmake
+velox_sources(
+  velox_ch_filecache
+  PRIVATE
+  FileCacheSettings.cpp
+)
+```
+
+Append both public headers to the existing non-mono `PUBLIC HEADERS` file set in
+`velox/ch/Interpreters/FileCache/CMakeLists.txt`:
+
+```cmake
+${CMAKE_CURRENT_SOURCE_DIR}/FileCacheSettings.h
+${CMAKE_CURRENT_SOURCE_DIR}/FileCacheReadOptions.h
+```
+
+Do not call `target_sources` on the mono alias and do not create another file
+set.
+
+`FileCacheSettings.h` publicly includes `velox/common/config/Config.h`. Add
+`velox_common_config` to the existing non-mono
+`target_link_libraries(velox_ch_filecache PUBLIC ...)` block in
+`velox/ch/Common/CMakeLists.txt`.
+
+The focused settings test must directly link only:
+
+```cmake
+velox_ch_filecache
+GTest::gtest
+GTest::gtest_main
+```
+
+so missing public compile/link dependencies are not masked.
+
+Run the normal mono gates and a separate full-profile non-mono build at
+`<velox_build_dir>-task010-nonmono` with `VELOX_MONO_LIBRARY=OFF`. Build,
+discover, and run `velox_ch_settings_test` as a reduced public-interface
+consumer; persist configure/build/test/discovery logs there.
+
 ## Goal
 
 Port `FileCacheSettings.h` and `FileCacheSettings.cpp` from ClickHouse to Velox
@@ -123,6 +174,7 @@ Velox config infrastructure reference:
 Modify:
 
 ```text
+<velox_repo>/velox/ch/Common/CMakeLists.txt
 <velox_repo>/velox/ch/Interpreters/FileCache/CMakeLists.txt
 <velox_repo>/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
 ```

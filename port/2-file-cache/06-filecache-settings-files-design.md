@@ -72,6 +72,20 @@ FileCacheManager:
   multiple cache discovery, same-path dedup, reload orchestration, stats
 ```
 
+## build registration
+
+`FileCacheSettings.cpp` 通过 `velox_sources(velox_ch_filecache PRIVATE ...)`
+注册，兼容 mono alias 和 non-mono real library。
+
+`FileCacheSettings.h` / `FileCacheReadOptions.h` 是 public headers；创建时加入
+现有 non-mono `PUBLIC HEADERS` file set。由于 settings header 公开 include
+`velox/common/config/Config.h`，`velox_common_config` 必须是 non-mono
+`velox_ch_filecache` 的 `PUBLIC` link dependency。
+
+focused settings test 只直接 link `velox_ch_filecache` + GTest，并在 mono /
+non-mono 两个 build 中运行，防止直接 link `velox_common_config` / Folly / fmt /
+exception 掩盖 public interface 缺失。
+
 ## `FileCacheSettings.h`
 
 ### 不迁移 CH settings macros
