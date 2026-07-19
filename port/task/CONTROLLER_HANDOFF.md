@@ -166,27 +166,47 @@ Current task:
   consumer path. It must not add an errno-unavailable fallback.
 - Structured errno production in the FileCache concrete writer is a separate
   pre-release gate and does not block Tasks 011/012 development.
-- No implementation was modified and Task 003 has not yet been marked
-  `reopened_by_contract_audit` in its task/receipt.
-- Task 011 is not started and remains prohibited.
+- Task 003 has been marked `reopened_by_contract_audit` in its task file and
+  receipt, with the exact B1/B2 name lists, no-op requirement,
+  compile-coverage test requirement, and delete-one-name false-green
+  mutation requirement now written into
+  `port/task/003-filecache-basic-common-shims.md` and
+  `port/task/result/003-filecache-basic-common-shims-result.md`. No Velox
+  implementation was modified; only the task-authoring wave (Task 1 of the
+  continuous-execution plan) landed.
+- Tasks 011, 012, 013, and 014 have been amended with dependency pre-checks,
+  CH consumer-contract excerpts (file:line), structure-deviation
+  registrations (SD1-SD5), exact `ProfileEvents`/`CurrentMetrics` name lists
+  where applicable, RED matrices, and false-green probe requirements. Stale
+  pseudo-code that contradicted the cross-profile decisions (Task-011's
+  full `CacheUsagePerUser` interface listing, Task-012's reconcile-every-
+  exception bullet and `offsetof`-based `LockedKey` test, Task-013's private
+  `checkedAdd`, Task-014's dangling placeholder-fixture warning) has been
+  removed or superseded in place.
+- Task 011 is not started and remains prohibited until Task 003's corrective
+  implementation is accepted and the user explicitly approves.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Mark Task 003 and its receipt `reopened_by_contract_audit`; write the exact
-   B1/B2 corrective contract and RED/false-green requirements.
-2. Apply the approved Task-012 and Task-017 authoring amendments and structure
-   deviation registrations.
-3. Dispatch and re-review the Task-003 corrective Worker.
+1. Task 003 and its receipt are now marked `reopened_by_contract_audit` with
+   the exact B1/B2 corrective contract and RED/false-green requirements
+   written in place (done by the Task-1 authoring wave).
+2. The approved Task-011/012/013/014 authoring amendments and structure
+   deviation registrations are written in place (done by the Task-1
+   authoring wave).
+3. Dispatch and review the Task-003 corrective Worker next.
 4. Continue to Task 011 only with zero unresolved findings and explicit user
    approval.
 5. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: approved Task-003 corrective contract and
-  implementation are pending.
-- Task 011 and Task 012 are prohibited.
+- Current stop condition: the Task-003 B1/B2 corrective contract is now
+  written (task-authoring wave complete); its implementation and Controller
+  acceptance are pending. Dispatch the Task-003 corrective Worker next.
+- Task 011 and Task 012 are prohibited until Task 003 is accepted and the
+  user explicitly approves.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

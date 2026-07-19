@@ -7,13 +7,98 @@
 
 ## Status and authority
 
-The original Task 003 implementation was accepted, then reopened by the
-post-acceptance source-contract audit. This document is the only executable
-Task 003 plan. The original implementation instructions are intentionally not
-retained here; the existing receipt preserves their result.
+```text
+controller_status: reopened_by_contract_audit
+```
 
-Task 012 must not start until this corrective task is implemented, reviewed, and
-accepted.
+The original Task 003 implementation was accepted, then reopened first by the
+post-acceptance source-contract audit and again by the Tasks 003-010
+cross-profile review recorded in
+`port/task/fullreview/cross-profile/1/003-010-review-decisions.md`. This
+document is the only executable Task 003 plan. The original implementation
+instructions are intentionally not retained here; the existing receipt
+preserves their result.
+
+Task 011 and Task 012 must not start until this corrective task, including its
+`ProfileEvents`/`CurrentMetrics` name-surface scope below, is implemented,
+reviewed, and accepted.
+
+## Corrective scope B1/B2: no-op `ProfileEvents`/`CurrentMetrics` name surfaces
+
+This is the exact, non-negotiable scope reopened by the cross-profile review.
+Apply it in addition to the "Approved dependency decisions" below. Do not
+reinterpret or shrink either name list.
+
+### B1 — 31 `ProfileEvents` names
+
+Add these 31 names, referenced by CH `src/Interpreters/FileCache/*` and
+currently absent from `velox/ch/Common/ProfileEvents.h`:
+
+```text
+FileSegmentFailToIncreasePriority
+FileSegmentHolderCompleteMicroseconds
+FileSegmentIncreasePriorityMicroseconds
+FileSegmentLockMicroseconds
+FilesystemCacheBackgroundDownloadQueuePush
+FilesystemCacheBackgroundEvictedBytes
+FilesystemCacheBackgroundEvictedFileSegments
+FilesystemCacheBackgroundRemovedInvalidatedEntries
+FilesystemCacheCreatedKeyDirectories
+FilesystemCacheDowngradedFileSegments
+FilesystemCacheEvictMicroseconds
+FilesystemCacheEvictedBytes
+FilesystemCacheEvictedFileSegments
+FilesystemCacheEvictionReusedIterator
+FilesystemCacheEvictionSkippedEvictingFileSegments
+FilesystemCacheEvictionSkippedFileSegments
+FilesystemCacheEvictionSkippedMovingFileSegments
+FilesystemCacheEvictionTries
+FilesystemCacheFailToReserveSpaceBecauseOfCacheResize
+FilesystemCacheFailedEvictionCandidates
+FilesystemCacheFreeSpaceKeepingThreadErrors
+FilesystemCacheFreeSpaceKeepingThreadRun
+FilesystemCacheFreeSpaceKeepingThreadWorkMilliseconds
+FilesystemCacheHoldFileSegments
+FilesystemCacheIdleClientEvictions
+FilesystemCacheInvalidatedEntriesCleanupThreadWorkMilliseconds
+FilesystemCacheLoadMetadataMicroseconds
+FilesystemCacheLockKeyMicroseconds
+FilesystemCacheLockMetadataMicroseconds
+FilesystemCacheLockOriginPoolMicroseconds
+FilesystemCacheUnusedHoldFileSegments
+```
+
+### B2 — five `CurrentMetrics` names
+
+Add only these five names to `velox/ch/Common/CurrentMetrics.h`:
+
+```text
+FilesystemCacheElements
+FilesystemCacheInvalidatedElements
+FilesystemCachePriorityQueueElements
+FilesystemCacheSize
+FilesystemCacheKeys
+```
+
+Do not add `FilesystemCacheEvictionThreads`,
+`FilesystemCacheEvictionThreadsActive`,
+`FilesystemCacheEvictionThreadsScheduled`, or
+`FilesystemCacheOvercommitUsers`. The accepted thread-pool mapping drops the
+three constructor-only metrics, and overcommit remains excluded.
+
+### B1/B2 rules
+
+```text
+ProfileEvents and CurrentMetrics remain no-op: increment/add/sub/Increment
+  keep their current no-op bodies; do not implement real counters.
+Add one compile-coverage test (in BasicShimsTest.cpp) that references every
+  required B1 name and every required B2 name so a missing name fails
+  compilation, not just a missing feature.
+False-green mutation: delete exactly one required name from ProfileEvents.h
+  or CurrentMetrics.h and prove the compile-coverage test target fails to
+  build. Restore the name afterward and re-prove the build succeeds.
+Real event counters and real metrics remain Task 017.
+```
 
 ## Approved dependency decisions
 
@@ -250,6 +335,8 @@ Modify in the Velox checkout:
 <velox_repo>/velox/ch/Common/FileCacheException.h
 <velox_repo>/velox/ch/Common/FileCacheFilesystem.h
 <velox_repo>/velox/ch/Common/logger_useful.h
+<velox_repo>/velox/ch/Common/ProfileEvents.h
+<velox_repo>/velox/ch/Common/CurrentMetrics.h
 <velox_repo>/velox/ch/Common/tests/CMakeLists.txt
 <velox_repo>/velox/ch/Common/tests/BasicShimsTest.cpp
 ```
@@ -312,6 +399,8 @@ Extend `BasicShimsTest.cpp` with tests for every row below:
 | Logger no-op | all `LOG_*` macros leave side-effect counters unchanged |
 | Exception helper | `throwFileCacheException` throws `VeloxRuntimeError`, not `VeloxUserError` |
 | Filesystem helper | context, path, numeric error, and error message are present in the runtime exception |
+| B1 `ProfileEvents` coverage | a compile-coverage test references every one of the 31 required names; deleting one name from `ProfileEvents.h` fails compilation |
+| B2 `CurrentMetrics` coverage | a compile-coverage test references every one of the 5 required names; deleting one name from `CurrentMetrics.h` fails compilation |
 
 Use promises/futures or condition variables to coordinate threads. Do not use
 `sleep`. A short `future::wait_for` may prove that a worker is still pending,
@@ -336,6 +425,15 @@ custom diagnostic construction side effect is not evaluated
 Create `ChassertSanitizerGateTest.cpp`, compiled with
 `NDEBUG;FOLLY_SANITIZE=1`, as a death-test executable proving `chassert(false)`
 still aborts.
+
+Add the B1/B2 compile-coverage test to `BasicShimsTest.cpp`:
+
+```text
+one function/test body that references (odr-uses) every one of the 31 B1
+  ProfileEvents::Event names and every one of the 5 B2 CurrentMetrics::Metric
+  names, e.g. by passing each enumerator through ProfileEvents::increment or
+  CurrentMetrics::add.
+```
 
 - [ ] **Step 3: Prove the current implementation is RED**
 
@@ -381,6 +479,11 @@ Implement only the contracts in this task:
    a `BAD_ARGUMENTS` mode.
 8. Keep filesystem failures as `VeloxRuntimeError` diagnostics without
    structured errno or fallback control flow.
+9. Add every B1 name to `ProfileEvents::Event` and every B2 name to
+   `CurrentMetrics::Metric` in `velox/ch/Common/ProfileEvents.h` and
+   `velox/ch/Common/CurrentMetrics.h`. Keep `increment`/`add`/`sub`/`Increment`
+   no-op. Do not add `FilesystemCacheEvictionThreads*` or
+   `FilesystemCacheOvercommitUsers`.
 
 Do not change callers in later task scopes during this corrective task.
 
@@ -444,6 +547,13 @@ Expected:
 100% tests passed, 0 tests failed.
 ```
 
+Then perform the B1/B2 false-green mutation probe: temporarily delete exactly
+one required name from `ProfileEvents.h` (e.g. the last B1 name) and confirm
+`velox_ch_common_test` fails to build because the compile-coverage test no
+longer resolves that name. Restore the name, repeat once for one `CurrentMetrics`
+name, restore it, and re-run Step 6/Step 7 to confirm the final build and test
+run are green again. Record both mutation logs in the corrective receipt.
+
 - [ ] **Step 8: Inspect only task-owned changes**
 
 Run:
@@ -459,6 +569,8 @@ git --no-pager diff -- \
   velox/ch/Common/FileCacheException.h \
   velox/ch/Common/FileCacheFilesystem.h \
   velox/ch/Common/logger_useful.h \
+  velox/ch/Common/ProfileEvents.h \
+  velox/ch/Common/CurrentMetrics.h \
   velox/ch/Common/tests/CMakeLists.txt \
   velox/ch/Common/tests/BasicShimsTest.cpp \
   velox/ch/Common/tests/ChassertReleaseProbe.cpp \
@@ -503,6 +615,12 @@ status: success
 
 <one result for every Step 2 matrix row>
 
+## B1/B2 false-green mutation evidence
+
+<mutation log path and outcome for the deleted ProfileEvents name;
+mutation log path and outcome for the deleted CurrentMetrics name;
+confirmation that both were restored and the final build/test are green>
+
 ## Deferred work
 
 getCurrentExceptionMessage remains empty; real formatting is owned by Task 017.
@@ -529,7 +647,11 @@ filesystem failures remain Velox-style and do not expose structured errno
 getLogger is non-null and name-only
 logging and current-exception formatting remain no-op
 all three CTest targets pass
-the corrective receipt contains RED and final verification evidence
+every B1 ProfileEvents name and every B2 CurrentMetrics name compiles through
+  the coverage test, with ProfileEvents/CurrentMetrics remaining no-op
+the delete-one-name false-green mutation fails compilation for one B1 name and
+  one B2 name, and the build/test are green again after restoring both names
+the corrective receipt contains RED, mutation, and final verification evidence
 ```
 
 ## Explicit exclusions

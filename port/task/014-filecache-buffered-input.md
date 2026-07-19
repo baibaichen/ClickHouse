@@ -36,15 +36,27 @@ On any read/write/reserve exception, do not return the canceled reader to
 `FileSegment`. Release downloader and holder state in CH order, then propagate the
 exception. Do not retry the same canceled reader.
 
-Use `checkedAdd` from `FileCacheUtils.h` for region-relative to absolute conversion.
-No private duplicate helper or unchecked addition is allowed.
+Use `checkedAdd` from `FileCacheUtils.h` (the shared Task-008
+`FileCacheUtils::checkedAdd(lhs, rhs, operation)` helper, already reused by
+Tasks 012/013) for region-relative to absolute conversion. No private
+duplicate helper or unchecked addition is allowed.
+
+`getRemoteFileMetadata() == std::nullopt` means truncation metadata is
+unavailable for that source file; it is not evidence of a real or fabricated
+file size. Tests must not assume a real metadata source exists. The
+`CachedReadBufferTruncatedObjectPredownload` migration case below must cover
+both branches: metadata present (truncation boundary known) and metadata
+absent (`nullopt`, handoff/backup proceed without a truncation boundary).
 
 ### Placeholder tests are forbidden
 
-The later `makeInput` implementation that returns null and all comment-only
-`TEST_F` bodies are invalid examples and must be replaced, not copied. The test
-fixture must construct a real `FileCacheManager`, `FileCache`, source `ReadFile`,
-`FileCacheBufferedInput`, and temporary cache directory.
+Every `TEST_F` in `FileCacheBufferedInputTest.cpp` must construct a real
+`FileCacheManager`, `FileCache`, source `ReadFile`, `FileCacheBufferedInput`,
+and temporary cache directory, then execute the production path and assert an
+observable postcondition. A fixture helper (e.g. `makeInput`) that returns
+`nullptr`/a fake stream, or a `TEST_F` body that is empty, comment-only, or
+disabled, is invalid and must not be written in the first place; it is not a
+placeholder to "replace later."
 
 Mandatory executable tests:
 
@@ -61,9 +73,16 @@ Mandatory executable tests:
 | handoff | Q1 writes one chunk, detaches reader, Q2 reuses it from `currentWriteOffset` |
 | exception | remote read, reserve, cache write, and output publication failures leave no leaked downloader or caller-buffer pointer |
 | direct IO | aligned buffers work; misaligned external buffer is rejected |
+| truncation metadata absent | `getRemoteFileMetadata() == nullopt` path completes handoff/backup without assuming a truncation boundary; no test fabricates a metadata source |
 
-Each material test requires behavioral RED evidence. Missing-header compile failure
-is not sufficient.
+Each material test requires both a behavioral RED (fails against the
+pre-implementation or an intentionally reverted path, for the declared
+behavioral reason) and a false-green probe (temporarily remove or
+`if (false)`-guard the specific handoff/seek/failure-handling branch the test
+claims to cover, and confirm the test now fails). Missing-header compile
+failure alone is not sufficient RED evidence, and a RED-only test without a
+recorded false-green probe is not accepted evidence for that row. Record both
+pieces of evidence per test in the result receipt.
 
 ### ClickHouse reader-test migration ownership
 

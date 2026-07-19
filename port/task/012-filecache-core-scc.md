@@ -73,6 +73,169 @@ Preserve an existing `add_subdirectory(tests)` block; do not add the same source
 binary directory twice. The literal duplicate block later in this file is
 superseded.
 
+### Approved infrastructure mappings (dependency pre-check)
+
+Every external name below must resolve to exactly this mapping before
+implementing the corresponding `.cpp` file. If a required Task-003/009/011
+name surface (B1/B2 `ProfileEvents`/`CurrentMetrics`, `ClickHouseAssert.h`,
+F14 shim headers) is missing, stop at the dependency gate instead of
+substituting a guess.
+
+| CH dependency | Approved Velox mapping | Limits / source |
+|---|---|---|
+| `Memory<>` (CH `src/Common/Memory.h`, used by `FileSegment`'s local write buffer) | MemoryPool-charged `BufferPtr` | Preserve size, reuse, and lifetime accounting; cross-profile decisions, Task-012 contract |
+| `SCOPE_EXIT` (`base/base/defines.h`) | Folly scope guard (`folly::makeGuard` / `SCOPE_EXIT` equivalent) | Must run on both normal and exceptional exit | cross-profile decisions |
+| `Stopwatch` (`src/Common/Stopwatch.h`, used by `FileCache.cpp`'s two wall-clock measurement sites) | `using Stopwatch = facebook::velox::DeltaCpuWallTimeStopWatch;` | Only the two call sites that construct and read one wall snapshot; use `elapsed().wallNanos / 1'000'000`; no `stop`/`reset`/`restart` contract is ported | cross-profile decisions |
+| `callOnce`/`OnceFlag` (`src/Common/callOnce.h`, used by `FileCache::initialize`) | `std::call_once` / `std::once_flag` | Preserve CH's retry-on-exception semantics: an exception during initialization does not mark `once_flag` used up, so a subsequent call retries; preserve `init_exception` publication and rethrow | cross-profile decisions |
+
+Reuse these mappings directly at their call sites. Do not add a private
+FileCache-local reimplementation of any of them (e.g. a local wall-clock
+timer duplicating `Stopwatch`, a hand-rolled once-flag instead of
+`std::call_once`, or a local checked-arithmetic helper instead of the shared
+`FileCacheUtils::checkedAdd` from Task 008). A private copy that
+diverges even slightly from the approved mapping is an unreviewed dependency;
+stop at the gate instead of introducing one.
+
+SD1 (no-reference-escape), SD2 (`absl` flat containers -> F14, registered in
+Task 011), SD3 (`KeyMetadata` ordered `std::map`), SD5 (`std::list` LRU/SLRU
+queues) are approved structure deviations/preservations inherited from Tasks
+009 and 011; Task 012 must not silently re-decide them. SD4 is registered
+below for the `CacheMetadata` bucket array this task adds.
+
+### Structure-deviation registrations (this task)
+
+| CH structure | Velox replacement | Guarantee difference | Hard constraint / gate | Approval |
+|---|---|---|---|---|
+| SD1: `ShardedMap` callback (Task 009), reused by `CacheMetadata`'s origin dedup pool | `folly::F14FastMap`-backed shard, no map-slot reference/address/iterator may escape a callback | F14 rehash may move values | proof: every `ShardedMap`/bucket callback in `Metadata.cpp` copies out values before returning; no reference, pointer, or iterator into a shard survives past the callback | cross-profile decisions: "Keep `F14FastMap`; the user approved the no-reference-escape contract" |
+| SD3: `KeyMetadata` (`Metadata.h`) | remains ordered `std::map<size_t, FileSegmentMetadataPtr>`, not F14 | n/a (no deviation; CH structure preserved) | `lower_bound` and adjacency queries in `Metadata.cpp` depend on ordering | cross-profile decisions |
+| SD4: `CacheMetadata`'s 1024-bucket shard array, each bucket `folly::F14FastMap<FileCacheKey, KeyMetadataPtr, FileCacheKeyHash>` | F14 accepted only under a no-reference-across-mutation proof | F14 rehash may move values | every `CacheMetadata` bucket accessor (`Metadata.cpp`) must copy the `KeyMetadataPtr` (a `shared_ptr`, stable across rehash) out of the bucket before releasing the per-bucket guard; no raw reference/iterator into a bucket may cross a mutating call | cross-profile decisions |
+| SD5: `FileSegments`/LRU/SLRU queues and cursors | remain `std::list` | n/a (no deviation; inherited from Task 011) | n/a | cross-profile decisions |
+
+### `FileCacheErrnoException` consumer contract (typed errno, no reconcile-every-exception fallback)
+
+Task 012 defines and consumes a typed errno exception:
+
+```cpp
+class FileCacheErrnoException : public velox::VeloxRuntimeError
+{
+public:
+    int getErrno() const;
+};
+```
+
+`FileSegment::write`'s short-write reconciliation applies **only** to this
+typed exception, and **only** for `ENOSPC`/`EDQUOT`:
+
+```text
+catch FileCacheErrnoException & e:
+  mark download failed
+  if e.getErrno() is ENOSPC or EDQUOT:
+    if downloaded_size is zero:
+      remove the failed new file
+    otherwise:
+      read physical file size via filesystem::file_size
+      require downloadedSize <= physicalSize <= reservedSize
+      set downloaded_size to physical_size
+  rethrow the original exception
+
+catch any other exception (including FileCacheErrnoException with a
+different errno, and any non-errno exception):
+  mark download failed
+  rethrow the original exception
+  do NOT reconcile downloaded_size against physical size
+```
+
+This supersedes any instruction elsewhere in this task that reconciles
+`downloaded_size` against on-disk size for every write exception. A single
+catch-all reconciliation is a forbidden fallback: it silently masks
+non-space failures (corruption, permission errors, disk-hardware errors)
+behind a resize that looks like a successful partial write.
+
+Forbidden, per the cross-profile decision:
+
+```text
+reconciling every append exception regardless of errno;
+parsing errno from exception text;
+implementing reconciliation inside a test double or mock WriteFile.
+```
+
+Required tests (both are material contracts from the mandatory-tests table
+above):
+
+```text
+positive: a real-file-backed WriteFile double commits a strict prefix and
+  throws a typed ENOSPC (or EDQUOT) FileCacheErrnoException; the production
+  FileSegment path reconciles downloaded_size to the physical size and
+  rethrows.
+negative: the same double throws a generic (non-errno, or errno-mapped to
+  a different value) exception; the production FileSegment path does NOT
+  reconcile downloaded_size and simply rethrows. Assert downloaded_size is
+  unchanged from its pre-exception value.
+```
+
+Producing a real, structured-errno-raising `WriteFile` in the concrete
+FileCache writer remains a separate pre-release gate (not this task); Task
+012's consumer logic and tests do not depend on that producer existing yet.
+
+### Settings reload: per-field comparison, not field presence
+
+`applySettingsIfPossible(new_config, current_config)` must compare each field
+of `new_config` against the corresponding field of `current_config` by value,
+and apply/reject changes per field based on that comparison. It must **not**
+use whether a field is present/set in the incoming configuration payload as
+the reload condition; `FileCacheConfig` fields are always structurally
+present (Task 010), so a presence check would always evaluate true and
+silently reapply every field on every call, including unrelated no-op
+settings pushes.
+
+### Shutdown ordering (mandatory, three phases at `FileCache` level plus queue-cancel-before-join at `CacheMetadata` level)
+
+`FileCache::deactivateBackgroundOperations` must execute in exactly this order:
+
+```text
+1. set shutdown flag
+2. join the metadata-load thread
+3. deactivate both scheduler tasks (background-cleanup, free-space)
+4. wait for the eviction/free-space worker pool to drain
+5. shutdown metadata (CacheMetadata::shutdown)
+```
+
+`CacheMetadata::shutdown` itself must cancel its queues (`CleanupQueue`,
+`DownloadQueue`) **before** joining the workers that pop from them: setting
+the cancel flag and calling `notify_all` first unblocks any worker parked in
+a blocking pop, so the subsequent join cannot hang. Joining first and
+cancelling second is a deadlock risk and is rejected.
+
+The `ShutdownJoinsWorkers` test in the mandatory-tests table must observe
+this exact ordering (e.g. via barriers/probes proving each phase completed
+before the next begins), not merely the absence of a hang.
+
+### Deferred to Task 017 / pre-release (do not implement here)
+
+```text
+F-CALLERID: restoring "None:<threadname>:<tid>" caller identity is Task 017.
+  This task's getCallerId keeps the current "None:<tid>" / "<query-id>:<tid>"
+  shape from Task 006; do not add thread-name formatting here.
+SD8: the scheduler recursive-mutex resolution/registration is Task 017.
+  This task must not change FileCacheScheduler's locking discipline.
+StatusFile unclean-restart diagnostics (three-line PID/Started/Revision text
+  and closeNoThrow-before-unlink ordering) remain a pre-release gate; this
+  task's StatusFile usage (acquiring the process lock during initialize) is
+  unaffected and unchanged.
+Real ProfileEvents/CurrentMetrics counters, real logging, and real exception
+  text formatting remain Task 017. Keep every name-surface shim no-op.
+```
+
+### False-green evidence requirement
+
+Every material test row in the mandatory-tests table above requires both a
+behavioral RED (fails against the pre-implementation or an intentionally
+reverted path, for the declared behavioral reason) and a false-green probe
+(temporarily remove or `if (false)`-guard the specific implementation branch
+the test claims to cover, and confirm the test now fails). Record both pieces
+of evidence per test in the result receipt; a test with only a compile-time
+RED, or with no false-green probe, is not accepted evidence for that row.
+
 ## Goal
 
 Produce a single compilable and linkable batch that closes the center strongly
@@ -491,14 +654,17 @@ TEST(PathLayoutTest, EphemeralFilename)
         "0_temporary");
 }
 
-TEST(LockedKeyTest, MemberOrderDestructionSafety)
+TEST(LockedKeyTest, LockReleasesBeforeHolderDrops)
 {
-    // lock member must be declared after key_metadata in LockedKey to ensure
-    // the lock releases before the metadata shared_ptr drops.
-    // Verify by inspecting static member offsets:
-    static_assert(
-        offsetof(LockedKey, key_metadata) < offsetof(LockedKey, lock),
-        "LockedKey::lock must be declared after key_metadata");
+    // Behavioral replacement for an offsetof-based member-order assertion
+    // (forbidden: applying offsetof to LockedKey, a non-standard-layout type
+    // with a shared_ptr member and a non-trivial lock member, is only
+    // conditionally supported and triggers -Winvalid-offsetof under a
+    // -Werror build). Member declaration order is instead verified
+    // structurally (see Step 18) and behaviorally here: acquiring a fresh
+    // LockedKey for the same key must succeed immediately after the prior
+    // LockedKey is destroyed, proving its lock released before the holder's
+    // KeyMetadata shared reference was the last one dropped.
 }
 
 } // namespace
@@ -752,6 +918,19 @@ private:
 };
 ```
 
+Do not verify this with `offsetof(LockedKey, ...)`: `LockedKey` is not a
+standard-layout type (it holds a `shared_ptr` member and a non-trivial lock
+member), so `offsetof` on it is only conditionally supported and typically
+raises `-Winvalid-offsetof` under a `-Werror` build. Verify it instead with:
+
+```text
+a structural check (Step 18) confirming key_metadata is declared textually
+  before lock in the class body of Metadata.h;
+the FileSegmentTest.cpp/MetadataTest.cpp behavioral test
+  LockReleasesBeforeHolderDrops (Step 5) proving the observable release
+  ordering through the real locking API, not raw memory offsets.
+```
+
 `LockedKey` provides: map iteration/lower_bound, `get`/`tryGet` by offset,
 `removeFileSegment` variants, `removeAllReleasableSegments`,
 `submitToDownloadQueue`, range intersection, empty-key delayed cleanup,
@@ -988,9 +1167,14 @@ Implement the exact state machine and invariants from
 - `wait` slices in one-second increments, checks the cancellation token each
   slice, and returns after 60 seconds without blocking indefinitely.
 - `reserve`: calls `cache_->tryReserve(*this, size, options)`.
-- `write` short-write path: reconciles `downloaded_size` with actual on-disk
-  file size before propagating the write exception; never leaves
-  `downloaded_size > actual on-disk size`.
+- `write` short-write path: catch `FileCacheErrnoException`; reconcile
+  `downloaded_size` against the actual on-disk file size (via
+  `filesystem::file_size`) **only when** `getErrno()` is `ENOSPC` or
+  `EDQUOT`, per the "`FileCacheErrnoException` consumer contract" above;
+  never leaves `downloaded_size > actual on-disk size` on that path. Any
+  other exception (a different errno, or a non-`FileCacheErrnoException`)
+  marks the download failed and rethrows unchanged, without touching
+  `downloaded_size`. Do not reconcile on every write exception.
 - Final rename `<offset>` → `<offset>_<size>` precedes publishing `DOWNLOADED`.
   Rename failure keeps legacy `<offset>` path; `size_in_filename` stays false.
 - `FileSegmentsHolder::reset` catches and logs (no-op shim) per-segment
@@ -1184,6 +1368,21 @@ git --no-pager diff -- \
 
 Expected: no whitespace errors, no files outside the declared scope changed by
 this task, changes remain unstaged and uncommitted.
+
+Also run the `LockedKey` member-order structural check (replacing the
+forbidden `offsetof` compile-time assertion):
+
+```bash
+awk '/class LockedKey/,/^};/' velox/ch/Interpreters/FileCache/Metadata.h \
+  | grep -n 'key_metadata\|KeyGuard::Lock lock' \
+  > <velox_build_dir>/check_task_012_lockedkey_order.log
+```
+
+Expected: `key_metadata` appears on an earlier line than `lock` in the
+captured output. False-green probe: temporarily swap the two declaration
+lines, rerun the check, confirm it now reports `lock` before `key_metadata`
+(i.e., the check would catch the regression), then restore the original
+order and rerun to confirm a clean pass. Record both outputs in the receipt.
 
 - [ ] **Step 19: Write the result handoff**
 

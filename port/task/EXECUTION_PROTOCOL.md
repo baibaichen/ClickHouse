@@ -7,11 +7,18 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:       Tasks 003-010 review decisions approved
-Repair before resume: Task 003 B1/B2 corrective contract and implementation
-Then dispatch:       Task 003 corrective Worker only; do not start Task 011
-Optional Velox work: Tasks 016-017, only after a separate decision
-Deferred Gluten:     Tasks 018-019, not in the current phase
+Current state:        Task 003 reopened by cross-profile review
+Repair before resume:  Task 003 B1/B2 corrective contract (numbered task and
+                       receipt now amended with the exact name lists, RED, and
+                       false-green mutation requirements) and its
+                       implementation
+Then dispatch:         Task 003 corrective Worker only; do not start Task 011
+Task 011 allowed only after Task 003 acceptance and explicit user approval.
+Tasks 011-014 have been amended with dependency pre-checks, consumer-contract
+  excerpts, structure-deviation registrations, RED matrices, and false-green
+  probe requirements; they still may not start ahead of Task 003 acceptance.
+Optional Velox work:  Tasks 016-017, only after a separate decision
+Deferred Gluten:       Tasks 018-019, not in the current phase
 ```
 
 Task 011 and Task 012 form one atomic SCC migration stage. Run them

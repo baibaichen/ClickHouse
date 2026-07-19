@@ -46,6 +46,21 @@ Controller acceptance requires reading every test body and mapping each promised
 contract to at least one assertion. A green executable containing empty/comment-only
 tests is an automatic `changes_requested`.
 
+## Dependency pre-check (stop at the gate if any row is unmet)
+
+Before implementing `FileCacheManager`/`FileCacheFactory`, confirm each
+runtime-service and container dependency below already has an explicit
+reviewed mapping. Do not guess a mapping for any row marked "verify"; if it
+is unresolved in the Velox worktree, stop as `blocked` and report it.
+
+| Dependency | Approved mapping | Source / disposition |
+|---|---|---|
+| `FileCacheWorkerPool` | already ported, reused as a Manager-owned member (`workerPool_`) | Task 005 (`port/task/005-filecache-thread-pools.md`); verify the type exists and links before use |
+| `FileCacheScheduler` | already ported, reused as a Manager-owned member (`scheduler_`) | Task 006 (`port/task/006-filecache-scheduler-and-caller-scope.md`); verify `shutdown()` matches the destruction-ordering contract below |
+| `OpenedFileCache` (CH `src/IO/OpenedFileCache.h`) | not ported by any earlier task; this task migrates it fresh as a Manager-owned member (`openedFileCache_`) | behavioral source: `src/IO/OpenedFileCache.h`. Map `ProfileEvents::OpenedFileCacheHits/Misses/Microseconds` to the existing Task-003 no-op `ProfileEvents` shim (add the three names if the coverage test does not already reference them); map `MapWithMemoryTracking`/`VectorWithMemoryTracking` to plain `std::unordered_map`/`std::vector` (no CH memory-tracking allocator is in scope at this layer). The bucket-selection hash (`CityHash_v1_0_2::CityHash64`) has no CH-visible consumer contract — no caller depends on which physical bucket an entry lands in, only on `get`/`remove` correctness and weak-pointer sharing — so it is an approved internal-only infra substitution: use `std::hash<std::string>` combined with `flags` (e.g. via `folly::hash::hash_combine`) for the 1024-bucket selection. If any other CH primitive surfaces while porting this file (e.g. a lifecycle hook not covered here), stop at the gate instead of improvising. |
+| `folly::Timekeeper` | approved (SD7: CH delay thread/multimap -> `Timekeeper` + Future continuations) | cross-profile decisions, "Profile reconciliation" table; verify `FileCacheScheduler` (Task 006) already owns/accepts the shared `Timekeeper` instance this task constructs once at Manager level |
+| F14 shared-pointer registries (`CacheByName = folly::F14FastMap<std::string, FileCacheDataPtr>`, `Caches = folly::F14FastSet<FileCacheDataPtr>`) | approved: F14 registry/set values are `shared_ptr`; pointees remain stable across rehash, so no reference/iterator into a bucket may be held across a mutating registry call | cross-profile decisions, "Task-013 contract decisions": "F14 registry/set values are `shared_ptr`; pointees remain stable across rehash." |
+
 ## Goal
 
 Implement the real `FileCacheFactory` (sole registry/name/path aliasing) and
@@ -72,6 +87,7 @@ Read before editing:
 
 ```text
 port/task/ENVIRONMENT.md
+port/task/fullreview/cross-profile/1/003-010-review-decisions.md
 port/2-file-cache/12-filecache-factory-files-design.md
 port/3-consumers/02-filecache-manager-design.md
 port/2-file-cache/06-filecache-settings-files-design.md
@@ -84,6 +100,7 @@ Use ClickHouse source only as behavioral reference:
 ```text
 src/Interpreters/FileCache/FileCacheFactory.h
 src/Interpreters/FileCache/FileCacheFactory.cpp
+src/IO/OpenedFileCache.h
 ```
 
 ## File Scope
@@ -101,6 +118,7 @@ Create:
 <velox_repo>/velox/ch/Interpreters/FileCache/FileCacheFactory.cpp
 <velox_repo>/velox/ch/Interpreters/FileCache/FileCacheManager.h
 <velox_repo>/velox/ch/Interpreters/FileCache/FileCacheManager.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/OpenedFileCache.h
 <velox_repo>/velox/ch/Interpreters/FileCache/tests/FileCacheFactoryManagerTest.cpp
 <clickhouse_repo>/port/task/result/013-filecache-factory-manager-result.md
 ```
@@ -613,16 +631,19 @@ cache background workers stop
 
 ### Worker budget formula
 
-Use checked addition; overflow is a configuration error:
+Use the shared checked-arithmetic helper; overflow is a configuration error.
+Do not define a private `checkedAdd` in `FileCacheManager`:
 
 ```cpp
-size_t checkedAdd(size_t a, size_t b)
-{
-    VELOX_CHECK_LE(b, std::numeric_limits<size_t>::max() - a,
-        "Worker budget overflow");
-    return a + b;
-}
+size_t new_total = FileCacheUtils::checkedAdd(
+    current_worker_budget, additional_workers, "worker budget");
 ```
+
+`FileCacheUtils::checkedAdd(uint64_t lhs, uint64_t rhs, std::string_view
+operation)` (Task 008, `velox/ch/Interpreters/FileCache/FileCacheUtils.h`)
+already throws with the given `operation` label on overflow; reuse it exactly
+as Task 011/012/014 do. A local reimplementation, even one that is
+behaviorally identical, is an unreviewed private helper and is rejected.
 
 - [ ] **Step 8: Update `CMakeLists.txt`**
 
@@ -688,6 +709,7 @@ git --no-pager diff -- \
   velox/ch/Interpreters/FileCache/FileCacheFactory.cpp \
   velox/ch/Interpreters/FileCache/FileCacheManager.h \
   velox/ch/Interpreters/FileCache/FileCacheManager.cpp \
+  velox/ch/Interpreters/FileCache/OpenedFileCache.h \
   velox/ch/Interpreters/FileCache/tests/FileCacheFactoryManagerTest.cpp
 ```
 

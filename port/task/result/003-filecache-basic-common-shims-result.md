@@ -573,3 +573,52 @@ None.
 Run the dependency preflight for reopened Task 004 before corrective coding.
 Stop if it exposes any mapping not already reviewed in the canonical design.
 ```
+
+## Post-acceptance cross-profile contract audit
+
+```text
+controller_status: reopened_by_contract_audit
+audit source: port/task/fullreview/cross-profile/1/003-010-review-decisions.md
+task: 003
+```
+
+### Finding
+
+```text
+The Tasks 003-010 cross-profile review (round 1) reopened Task 003 a second
+time. It found the accepted implementation still lacks the required no-op
+`ProfileEvents`/`CurrentMetrics` name surfaces used by real CH `FileCache`
+source (`src/Interpreters/FileCache/*`):
+
+B1: 31 ProfileEvents::Event names referenced by CH FileCache but absent from
+    velox/ch/Common/ProfileEvents.h.
+B2: 5 CurrentMetrics::Metric names referenced by CH FileCache but absent from
+    velox/ch/Common/CurrentMetrics.h (excluding the three constructor-only
+    eviction-thread metrics and FilesystemCacheOvercommitUsers, which remain
+    out of scope).
+
+Absent these names, Task 011 (priority/eviction) and Task 012 (center SCC)
+cannot reference the full no-op event/metric surface their migrated CH source
+expects, which would force an unreviewed workaround at implementation time.
+```
+
+### Corrective contract
+
+```text
+The exact corrective contract, including the full B1/B2 name lists, the
+no-op requirement, the compile-coverage test requirement, and the
+delete-one-name false-green mutation requirement, is recorded in
+port/task/003-filecache-basic-common-shims.md under
+"Corrective scope B1/B2: no-op ProfileEvents/CurrentMetrics name surfaces".
+This receipt file remains the append-only evidence target for the corrective
+Worker attempt that implements that scope.
+```
+
+### Status
+
+```text
+status: reopened, not yet corrected
+Task 011 and Task 012 must not start until a corrective Worker attempt below
+records B1/B2 RED, mutation, and final-green evidence, and a Controller
+review accepts it.
+```
