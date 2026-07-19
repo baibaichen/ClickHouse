@@ -40,7 +40,7 @@ worktree, stop as `blocked` and report it; do not guess a mapping.
 
 | External name | Approved mapping | Source of approval |
 |---|---|---|
-| Task-003 B1 `ProfileEvents` name surface | `velox/ch/Common/ProfileEvents.h` contains all 31 required names, no-op | Task 003 corrective acceptance (must be `accepted`, not merely `reopened_by_contract_audit`) before this task starts |
+| Task-003 B1 `ProfileEvents` name surface | `velox/ch/Common/ProfileEvents.h` contains all 34 required names, no-op | Task 003 corrective acceptance (must be `accepted`, not merely `reopened_by_contract_audit`) before this task starts |
 | Task-003 B2 `CurrentMetrics` name surface | `velox/ch/Common/CurrentMetrics.h` contains the 5 required names, no-op | Task 003 corrective acceptance |
 | `DB` namespace | `facebook::velox::ch` | `port/1-dependencies/01-filecache-infra-mapping.md` |
 | `String`/`UInt*` aliases | Task-003 `ClickHouseAliases.h` | Task 003 result |

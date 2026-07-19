@@ -68,7 +68,7 @@ Add:
 
 ```text
 controller_status: reopened_by_contract_audit
-B1: exact 31-name ProfileEvents list from cross-profile decisions
+B1: exact 34-name ProfileEvents list from cross-profile decisions
 B2: exact five-name CurrentMetrics list from cross-profile decisions
 ProfileEvents and CurrentMetrics remain no-op
 compile-coverage test references every required name
@@ -238,7 +238,7 @@ Expected: non-zero exit caused by a missing required event/metric enumerator.
 
 - [ ] **Step 3: Add no-op names**
 
-Add exactly the 31 approved event names and five approved metric names. Do not
+Add exactly the 34 approved event names and five approved metric names. Do not
 change `increment`, `add`, `sub`, timer, or `Increment` behavior.
 
 - [ ] **Step 4: Run the focused green test**
