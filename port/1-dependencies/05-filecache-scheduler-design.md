@@ -266,9 +266,15 @@ Idle / Delayed:
 
 Queued:
   keep already queued immediate run
+  return false
 
 Running:
-  remember/overwrite one delayed next-run request
+  if one immediate next-run request is already pending:
+    keep the immediate request
+    return false
+  otherwise:
+    remember/overwrite one delayed next-run request
+    return true
 ```
 
 使用 one-shot self-reschedule，不创建 fixed periodic timer：
@@ -427,6 +433,7 @@ schedule dispatches exactly one immediate callback
 scheduleAfter runs after delay
 schedule advances an existing delayed task
 scheduleAfter overwrites an existing delayed timer
+scheduleAfter while Running does not replace a pending immediate next run
 multiple schedule calls while Queued coalesce
 schedule while Running produces exactly one next run
 callback can self-scheduleAfter

@@ -489,3 +489,397 @@ None.
 | Repository | Commit |
 |---|---|
 | `/home/chang/OpenSource/velox` | `d9f4517c5` |
+
+## Worker attempt 3
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 006
+```
+
+This attempt executes the reopened **post-acceptance source-contract audit**
+(task file lines 8-41): it corrects the single scheduling-priority divergence in
+`FileCacheScheduledTask::scheduleAfter` while a callback is `Running`, and adds
+the deterministic RED regression test the amendment mandates. It runs under the
+`root-oss` profile (attempts 1-2 ran under `home-chang`). Only the corrective
+Velox files were touched, plus this appended section. All prior attempt sections
+and controller reviews above are unchanged.
+
+TDD summary: a genuine behavioral RED was captured against the pre-fix code
+before any production edit; the smallest root-cause fix was then applied; all
+attempt-2 weak-ownership / generation / holder-destruction / `deactivate` /
+shutdown / coalescing / exception / query-id-TID contracts are preserved
+(untouched by this diff).
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/clickhouse` | `ch-filecache` | `48b129cc2b5a8e5fbece558e464f3471ce8f85c6` | clean (only this receipt is appended) |
+| `/root/oss/velox` | `filecache` | `5ed26f9413f4e52ef95830b8e4d6a1d91d1a7fe7` | clean |
+
+Final Velox dirty status: exactly the three corrective Task-006 paths, all
+unstaged. No other file touched in either repository apart from this receipt.
+
+## Source-contract / dependency preflight
+
+Authoritative CH source: `src/Core/BackgroundSchedulePool.cpp` /
+`BackgroundSchedulePool.h` (`BackgroundSchedulePoolTaskInfo`). Real FileCache
+callers: `src/Interpreters/FileCache/FileCache.cpp`. No new CH dependency, macro,
+type, API, or Velox substitution is reached by the corrective path — the fix
+only re-maps the priority of two already-reviewed pending flags
+(`pendingImmediate_` / `pendingDelayed_`, the accepted attempt-2 mapping of CH
+`scheduled` / `delayed`). No unreviewed-dependency gate is triggered.
+
+Derived contract (CH default args `overwrite=true, only_if_scheduled=false`;
+`scheduled` and `delayed` are mutually exclusive; `scheduled` may be true while
+`executing`):
+
+```text
+schedule():        if (deactivated || scheduled) return false;
+                   else set scheduled=true; if !executing enqueue; if delayed cancel timer
+                   => an immediate request cancels a pending delayed one.
+scheduleAfter(ms): if (deactivated || scheduled) return false;   <-- immediate has priority
+                   if (delayed && !overwrite) return false;
+                   else record/overwrite the single delayed timer.
+execute() end:     if (scheduled) re-enqueue immediately; else the delayed timer fires itself.
+```
+
+Allowed Velox mapping (Running state): `scheduled`==`pendingImmediate_`,
+`delayed`==`pendingDelayed_`(+`pendingDelayMs_`); `runCallback()` re-arm already
+prioritizes `pendingImmediate_`, matching `execute()`.
+
+Real-caller confirmation:
+- `FileCache::backgroundCleanupTaskFunc` ends by `background_cleanup_task->schedule()`
+  (full batch) or `->scheduleAfter(backgroundCleanupIntervalMs())` (otherwise)
+  from inside the running callback (FileCache.cpp:1954-1957); the
+  invalidated-entries notifier (FileCache.cpp:562) and `applySettingsChanges`
+  (FileCache.cpp:2925) may call `schedule()` concurrently. The immediate cleanup
+  re-run must survive the callback's own `scheduleAfter`.
+- `freeSpaceRatioKeepingThreadFunc` ends by `keep_up_free_space_ratio_task->scheduleAfter(reschedule_ms)`
+  then `chassert(scheduled)` (FileCache.cpp:1641-1642). This task is `schedule()`d
+  only once at init (FileCache.cpp:592) and never concurrently, so
+  `pendingImmediate_` is never set during its run; `scheduleAfter` still returns
+  true and the chassert holds. The fix makes the port match CH here, not diverge.
+
+## Root-cause hypothesis and concrete trace
+
+Hypothesis (verified, not assumed): the pre-fix `scheduleAfter` Running branch
+did `pendingDelayed_ = true; pendingImmediate_ = false; ... return true;`,
+overwriting an already-pending immediate re-run with a delayed one — unlike CH
+`scheduleAfter`, which returns false and records nothing when `scheduled` is
+already set. Concrete divergent trace (pre-fix):
+
+```text
+run0 Running; external schedule() -> pendingImmediate_=true
+run0 calls scheduleAfter(D): pendingDelayed_=true; pendingImmediate_=false; return true  (BUG)
+run0 returns -> runCallback re-arm: pendingImmediate_ false, pendingDelayed_ true
+             -> armTimerLocked(D); state=Delayed
+=> next run waits for the timer (a full interval), not immediate. Return value wrongly true.
+```
+
+Fixed trace:
+
+```text
+run0 calls scheduleAfter(D): pendingImmediate_ true -> return false (no delayed recorded)
+run0 returns -> runCallback re-arm: pendingImmediate_ true -> queueImmediateLocked()
+=> next run fires immediately without advancing the clock. Return value false.
+```
+
+## RED evidence (before any production edit)
+
+The new test was built against the unmodified (pre-fix) production code and run
+alone:
+
+```text
+build (new test vs buggy code): /root/oss/velox/_build/debug/build_task_006_attempt3_red.log  (exit 0; compiles cleanly)
+run  (new test vs buggy code):  /root/oss/velox/_build/debug/test_task_006_attempt3_red.log   (exit 1; genuine behavioral RED)
+```
+
+Failure output (SchedulerAndScopeTest.cpp):
+
+```text
+:200 Failure  Value of: scheduleAfterReturn.load()  Actual: true  Expected: false
+:206 Failure  secondRanFuture.wait_for(5s) is timeout, expected ready
+[  FAILED  ] FileCacheSchedulerTest.ScheduleAfterWhileRunningDoesNotReplacePendingImmediate (5001 ms)
+```
+
+Both failures are caused solely by the scheduling-priority divergence
+(scheduleAfter returned true and armed a far-future timer instead of preserving
+the pending immediate). It is not a compile error, typo, missing registration,
+or unrelated timeout: the test compiled, linked into `velox_ch_scheduler_test`,
+reached the changed Running branch, and failed for the exact behavioral reason.
+After the fix the same test passes in ~1 ms without advancing the clock.
+
+## Files changed
+
+```text
+# Velox (unstaged, corrective Task-006 scope)
+/root/oss/velox/velox/ch/Common/FileCacheScheduler.cpp                       (scheduleAfter Running branch: immediate has priority)
+/root/oss/velox/velox/ch/Common/FileCacheScheduler.h                         (scheduleAfter doc: returns false when immediate pending)
+/root/oss/velox/velox/ch/Common/tests/SchedulerAndScopeTest.cpp              (new deterministic RED test)
+
+# ClickHouse (this receipt only; attempt 3 appended)
+/root/oss/clickhouse/port/task/result/006-filecache-scheduler-and-caller-scope-result.md
+```
+
+CMake was not modified: `FileCacheScheduler.cpp`, `FileCacheQueryIdScope.cpp`,
+and `SchedulerAndScopeTest.cpp` were already registered by attempt 2, so the
+correction needed no CMake change (a smaller-than-declared scope).
+
+## Commands and outcomes
+
+All build/test shells first `source /root/oss/velox-helper/env.sh`, use the full
+root-oss helper-equivalent CMake configuration, pass no `-j`, and redirect to
+unique logs under `/root/oss/velox/_build/debug`. `build.sh` was not used as
+evidence.
+
+```bash
+# configure (root-oss helper-equivalent, full flag set)
+/usr/bin/cmake -S . -B _build/debug -GNinja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_TOOLCHAIN_FILE=/root/oss/gluten/dev/vcpkg/toolchain.cmake \
+  -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DVELOX_GFLAGS_TYPE=static \
+  -DVELOX_BUILD_TESTING=ON -DVELOX_ENABLE_BENCHMARKS=ON -DVELOX_ENABLE_EXEC=ON \
+  -DVELOX_ENABLE_PARQUET=OFF -DVELOX_ENABLE_REMOTE_FUNCTIONS=ON \
+  -DVELOX_ENABLE_GROUPED_TESTS=OFF -DVELOX_MONO_LIBRARY=ON -DVELOX_BUILD_RUNNER=OFF \
+  -DVELOX_ENABLE_GEO=OFF -DVELOX_BUILD_MINIMAL=OFF -DVELOX_SIMDJSON_SKIPUTF8VALIDATION=ON \
+  -DMAX_HIGH_MEM_JOBS=16 -DMAX_LINK_JOBS=16 -DVELOX_FORCE_COLORED_OUTPUT=ON
+
+# RED: build new test vs buggy code, then run new test alone
+/usr/local/bin/ninja -C _build/debug velox_ch_scheduler_test
+./_build/debug/velox/ch/Common/tests/velox_ch_scheduler_test \
+  --gtest_filter='FileCacheSchedulerTest.ScheduleAfterWhileRunningDoesNotReplacePendingImmediate'
+
+# fresh green build (force-recompile all 3 Task-006 sources + relink)
+touch velox/ch/Common/FileCacheScheduler.cpp velox/ch/Common/FileCacheQueryIdScope.cpp \
+      velox/ch/Common/tests/SchedulerAndScopeTest.cpp
+/usr/local/bin/ninja -C _build/debug velox_ch_scheduler_test
+
+# focused test + discovery (list, count, DISABLED/SKIP, full direct run)
+ctest --test-dir _build/debug -R '^velox_ch_scheduler_test$' --output-on-failure
+./_build/debug/velox/ch/Common/tests/velox_ch_scheduler_test --gtest_list_tests   # + full run
+
+# regression build + run (Task 003/004/005)
+/usr/local/bin/ninja -C _build/debug velox_ch_common_test velox_ch_guards_test velox_ch_threadpool_test
+ctest --test-dir _build/debug -R '^(velox_ch_common_test|velox_ch_guards_test|velox_ch_threadpool_test)$' --output-on-failure
+```
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| configure (root-oss helper-equivalent) | 0 | `/root/oss/velox/_build/debug/configure_task_006_attempt3.log` |
+| RED build (new test vs pre-fix code) | 0 | `/root/oss/velox/_build/debug/build_task_006_attempt3_red.log` |
+| RED run (new test alone; behavioral RED) | 1 | `/root/oss/velox/_build/debug/test_task_006_attempt3_red.log` |
+| green build (fresh 3 sources + relink lib/test) | 0 | `/root/oss/velox/_build/debug/build_task_006_attempt3_scheduler.log` |
+| focused test (ctest) | 0 | `/root/oss/velox/_build/debug/test_task_006_attempt3_scheduler.log` |
+| discovery / no-skip proof (list + full direct run) | 0 | `/root/oss/velox/_build/debug/discovery_task_006_attempt3.log` |
+| regression build | 0 | `/root/oss/velox/_build/debug/build_task_006_attempt3_regression.log` |
+| regression test (ctest) | 0 | `/root/oss/velox/_build/debug/test_task_006_attempt3_regression.log` |
+
+## Fresh-build proof
+
+`build_task_006_attempt3_scheduler.log` records the forced fresh compilation of
+all three Task-006 sources followed by relinking the library and test:
+
+```text
+[16/36] Building CXX object .../ch/Common/FileCacheQueryIdScope.cpp.o
+[32/36] Building CXX object .../ch/Common/FileCacheScheduler.cpp.o
+[33/36] Building CXX object .../tests/.../SchedulerAndScopeTest.cpp.o
+[34/36] Linking CXX static library lib/libvelox.a
+[35/36] Linking CXX executable velox/ch/Common/tests/velox_ch_scheduler_test
+```
+
+(The 16-31 range is incidental FBThrift/remote-function regeneration from the
+reconfigure; it is pre-existing Velox code outside Task-006 scope.)
+
+## Acceptance evidence
+
+```text
+test count: 20 (16 FileCacheSchedulerTest + 4 FileCacheQueryIdScopeTest); was 19, +1 new RED test
+failed tests: 0 (focused ctest 1/1 pass; direct binary 20/20 pass, exit 0)
+skipped/disabled tests: 0 (gtest_list_tests enumerates 20 cases, 0 "DISABLED"; 0 GTEST_SKIP in source; ctest -N registers test #429 velox_ch_scheduler_test)
+new test: FileCacheSchedulerTest.ScheduleAfterWhileRunningDoesNotReplacePendingImmediate (RED before fix, GREEN after)
+regression: velox_ch_common_test (#427), velox_ch_threadpool_test (#428), velox_ch_guards_test (#432) all Passed (0 failed of 3)
+fresh compilation: FileCacheQueryIdScope.cpp, FileCacheScheduler.cpp, SchedulerAndScopeTest.cpp all rebuilt + library/test relinked
+benchmark result, when required: N/A (Task 006 requires no benchmark)
+git diff --check: clean; the 3 changed files contain 0 trailing-whitespace lines; scope limited to the 3 corrective Task-006 paths
+```
+
+Sanitizer note: the build directory is Debug with ASan/UBSan OFF
+(`VELOX_ENABLE_ASAN_UBSAN_SANITIZERS:BOOL=OFF` in `CMakeCache.txt`). This
+corrective diff neither adds nor removes any asynchronous pointer capture, so the
+attempt-2 weak_ptr UAF-freedom is unaffected; the change is a pure priority
+re-map of two in-lock pending flags.
+
+## Worker review
+
+```text
+review subagent: code-review (read-only), one fresh invocation for attempt 3.
+Supplied: the complete corrective Task-006 tracked diff across both repos, the
+reopened amendment, the CH source contract (BackgroundSchedulePool.cpp/.h) and
+real FileCache callers, the root-cause trace, and the RED/GREEN test outcomes.
+The agent independently read the files and re-ran the tests. It did not edit.
+
+verdict: No blocking defects. The fix is correct, complete, and matches CH
+  scheduleAfter immediate-priority semantics exactly.
+  - Correctness: the four Running-state cases now map 1:1 to CH
+    (Deactivated->false, Queued->false, Running+immediate-pending->false,
+    Running+no-immediate->overwrite delayed+true); runCallback re-arm unchanged
+    and still prioritizes pendingImmediate_. freeSpaceRatioKeepingThreadFunc's
+    chassert(scheduled) is not broken (that task is never concurrently
+    schedule()d, so scheduleAfter still returns true).
+  - Invariant: pendingImmediate_ and pendingDelayed_ can never both be true after
+    the change (the removed `pendingImmediate_ = false` was redundant, not
+    load-bearing); pendingDelayMs_ is never observably stale.
+  - Concurrency/lifetime: one early `return false` inside the existing
+    recursive_mutex guard; no new lock/cv/capture/future; weak_ptr/generation/
+    deactivate/coalescing/exception machinery untouched; no new deadlock/race/UAF.
+  - Test: fully promise/future-driven, no sleeps, ManualTimekeeper never advanced;
+    ordering race-free (firstRunning set under Running before the barrier;
+    releaseFirst gates scheduleAfter strictly after the main-thread schedule();
+    scheduleAfterReturn stored before scheduleAfterDone signaled). Genuine
+    behavioral RED, not false-green, not compile/registration/typo/unrelated
+    timeout. 5s bounded waits are appropriate safety nets.
+  - Attempt-2 contracts (weak ownership, generation, holder destruction,
+    deactivate, shutdown, coalescing, exception, query-id/TID): not weakened.
+
+findings:
+  1. Non-blocking, pre-existing, out-of-scope: schedule()'s Running branch
+     (FileCacheScheduler.cpp:121-125) unconditionally returns true, whereas CH
+     schedule() returns false for a redundant call while `scheduled` is already
+     set. Side effects are identical (a single coalesced immediate re-run), and
+     all FileCache schedule() call sites (FileCache.cpp:562, 592, 1955, 2925)
+     discard the return value, so caller impact is zero. This is accepted
+     attempt-2 behavior, is not part of the reopened scheduleAfter amendment, and
+     no test depends on it. Surfaced for Controller awareness only.
+
+resolutions:
+  Finding 1: intentionally NOT changed. It is pre-existing, outside the corrective
+    amendment's declared contract (which governs scheduleAfter priority only), and
+    behaviorally zero-impact. Altering schedule()'s return value would expand
+    scope onto already-accepted behavior, contrary to the "modify only the
+    correction; stop blocked rather than expand scope" rule. Consistent with the
+    attempt-2 precedent of documenting pre-existing/benign findings for the
+    Controller instead of fixing them. If the Controller wants CH-exact
+    schedule() return parity, that is a separate task/amendment decision.
+
+unresolved findings: none (zero actionable in-scope findings).
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only the reopened corrective Task 006 was attempted (attempt 3). Task 007 was not started.
+Changes are unstaged and uncommitted in both repositories.
+Prior attempt sections and controller reviews above were not altered.
+No numbered task/design/protocol/environment/handoff file was modified.
+The worker stopped after writing this receipt.
+```
+
+## Controller review 3
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+task: 006
+```
+
+## Review evidence
+
+```text
+scope review:
+  The Worker changed exactly the three corrective Task-006 Velox files:
+    velox/ch/Common/FileCacheScheduler.cpp
+    velox/ch/Common/FileCacheScheduler.h
+    velox/ch/Common/tests/SchedulerAndScopeTest.cpp
+  No CMake change was needed because all sources and the focused test were
+  already registered. The Controller synchronized the canonical scheduler
+  design with the reopened amendment and appended this review; no unrelated
+  source, receipt history, or user work was changed.
+
+source-contract and dependency review:
+  CH BackgroundSchedulePoolTaskInfo::scheduleAfter returns false before
+  recording delayed work whenever scheduled is already true. During a running
+  callback, scheduled is the pending immediate rerun. The accepted Velox
+  mapping is pendingImmediate_ for scheduled and pendingDelayed_ plus
+  pendingDelayMs_ for delayed. The correction reaches no new dependency,
+  macro, type, API, ownership primitive, or fallback, so no unreviewed mapping
+  remains. The canonical scheduler design now states the same immediate-first
+  Running-state contract.
+
+implementation review:
+  The new in-lock early return preserves pendingImmediate_ and leaves
+  pendingDelayed_ unchanged, so runCallback queues the immediate rerun when the
+  current callback returns. When no immediate rerun is pending, scheduleAfter
+  still records or overwrites one delayed request and returns true. A later
+  schedule still clears pendingDelayed_ and records immediate work. The change
+  adds no lock, future, callback capture, ownership, generation, or shutdown
+  transition and therefore does not weaken the accepted weak-ownership,
+  holder-destruction, deactivate, exception, or same-task serialization
+  contracts.
+
+real-caller and failure-path review:
+  FileCache background cleanup can receive schedule concurrently from the
+  invalidation notifier or applySettingsChanges while its callback chooses
+  scheduleAfter; the immediate wake now survives. The free-space keeper has no
+  concurrent schedule caller, so its scheduleAfter still returns true and its
+  chassert remains valid. Deactivation clears both pending flags under the same
+  mutex, and callback exceptions still reach the unchanged re-arm path.
+
+test and false-green review:
+  The new promise/future barrier test deterministically reaches Running, records
+  the immediate request from the main thread, and only then lets the worker
+  callback call scheduleAfter. The RED run compiled and registered successfully
+  before failing on both the true return value and the absent immediate rerun;
+  it was not a compile, registration, typo, or timing-only failure. The green
+  path proves scheduleAfter returns false and the second callback runs without
+  advancing ManualTimekeeper.
+
+log and Controller gate review:
+  Worker logs prove a behavioral RED, a forced fresh compile of
+  FileCacheScheduler.cpp, FileCacheQueryIdScope.cpp, and
+  SchedulerAndScopeTest.cpp, relinking of libvelox.a and
+  velox_ch_scheduler_test, focused 20/20 success with zero disabled/skipped
+  tests, and Task 003-005 regression success 3/3.
+
+  Controller logs:
+    /root/oss/velox/_build/debug/configure_task_006_controller_corrective.log
+    /root/oss/velox/_build/debug/build_task_006_controller_corrective.log
+    /root/oss/velox/_build/debug/test_task_006_controller_corrective.log
+    /root/oss/velox/_build/debug/discovery_task_006_controller_corrective_retry.log
+    /root/oss/velox/_build/debug/test_task_006_precommit.log
+
+  The Controller configure completed, the build freshly compiled all three
+  Task-006 sources and relinked the library/test, and CTest passed the focused
+  test plus Tasks 003-005 regressions 4/4. Direct discovery and execution listed
+  and passed 20/20 tests with zero DISABLED_ names and zero GTEST_SKIP uses.
+  The first discovery helper attempt failed only because rg was unavailable in
+  its shell; the persisted grep-based retry log closed that evidence gap.
+
+independent review:
+  A fresh read-only Controller review found no correctness, concurrency,
+  lifetime, integration, or false-green defect. It independently traced both
+  schedule-before-scheduleAfter and scheduleAfter-before-schedule orderings and
+  confirmed that immediate work wins in each.
+
+unresolved findings:
+  None.
+```
+
+## Required changes
+
+```text
+None.
+```
+
+## Corrective commits
+
+| Repository | Commit |
+|---|---|
+| `/root/oss/velox` | `b3c2832e18f76b574faf74e2d6ba05c2da741efd` |

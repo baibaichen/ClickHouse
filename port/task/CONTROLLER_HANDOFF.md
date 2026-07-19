@@ -74,15 +74,17 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after corrected Task 004 acceptance:
+Current verified snapshot after corrected Task 006 acceptance:
 
 environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
-- ClickHouse accepted receipt HEAD: 6c57283d31775c1bcf8e53b251829a0c4a767a3c
+- ClickHouse accepted receipt HEAD:
+    Corrective Task 006 receipt commit containing this handoff update; resolve
+    with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    5ed26f9413f4e52ef95830b8e4d6a1d91d1a7fe7 Task 004: Correct StatusFile diagnostics
+    b3c2832e18f76b574faf74e2d6ba05c2da741efd Task 006: Preserve immediate scheduler requests
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -100,14 +102,16 @@ environment_profile: root-oss
     Task 006
       Velox:      d9f4517c5
       ClickHouse: 5af6ab908fe
+      Corrective Velox: b3c2832e18f76b574faf74e2d6ba05c2da741efd
+      Corrective ClickHouse: this acceptance commit
     Task 007
       Velox:      711a84850
       ClickHouse: c9a5c35be06
     Task 008
       Velox:      4b14de7f1
       ClickHouse: 1275836e76a
-- Tasks 003 and 004 corrected and accepted.
-- Tasks 006, 007, and 008 remain reopened by the source-contract review;
+- Tasks 003, 004, and 006 corrected and accepted.
+- Tasks 007 and 008 remain reopened by the source-contract review;
   corrective passes required before Task 009.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
 - Task 009 and Task 011 task contracts passed the read-only audit.
@@ -122,17 +126,17 @@ environment_profile: root-oss
 
 Current task:
 
-- Corrected Tasks 003 and 004 are accepted.
-- Velox is clean at `5ed26f9413f4e52ef95830b8e4d6a1d91d1a7fe7`.
+- Corrected Tasks 003, 004, and 006 are accepted.
+- Velox is clean at `b3c2832e18f76b574faf74e2d6ba05c2da741efd`.
 - Task 005 remains accepted.
-- Corrected Task 006 is the next work item, followed by corrected Tasks 007
-  and 008, before dispatching Task 009.
+- Corrected Task 007 is the next work item, followed by corrected Task 008,
+  before dispatching Task 009.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch corrective Task 006 worker.
-2. After Task 006 acceptance, dispatch corrective Task 007, then Task 008.
+1. Dispatch corrective Task 007 worker.
+2. After Task 007 acceptance, dispatch corrective Task 008.
 3. Run the accumulated Task 003-008 regression and complete Controller review.
 4. Only then dispatch Task 009.
 5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
@@ -141,7 +145,7 @@ Resume procedure:
 Continuous execution target:
 
 - Current stop condition: none; execution may proceed.
-- Corrected Tasks 003 and 004 are accepted. Repair reopened Tasks 006, 007,
+- Corrected Tasks 003, 004, and 006 are accepted. Repair reopened Tasks 007
   and 008 before starting Task 009.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
