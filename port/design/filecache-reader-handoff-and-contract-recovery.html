@@ -695,8 +695,8 @@ finalizeImpl / sync:
         <tr><td><code>sync</code></td><td>顺序严格是 append → flush，且不 close。</td></tr>
         <tr><td><code>finalize</code></td><td>append → close；幂等；失败后 canceled；不隐式额外 fsync。</td></tr>
         <tr><td><code>cancel</code></td><td>noexcept、幂等、不 append；finalized 后 no-op。</td></tr>
-        <tr><td>resume append</td><td>部分下载后重建 writer 从物理文件尾继续，不 truncate 已下载 prefix。</td></tr>
-        <tr><td>partial physical write</td><td>异常后按实际文件大小 reconcile，绝不把 reserved-but-unwritten bytes 标记为 downloaded。</td></tr>
+        <tr><td>resume append</td><td><strong>Task 012 / production FileSegment：</strong>部分下载后重建 writer，从物理文件尾继续，不 truncate 已下载 prefix。Task 007 只证明 already-open WriteFile 上的 append 不改写 prefix。</td></tr>
+        <tr><td>partial physical write</td><td><strong>Task 012 / production FileSegment：</strong>异常后按实际文件大小 reconcile，绝不把 reserved-but-unwritten bytes 标记为 downloaded。Task 007 只证明 adapter 透传异常、cancel 且不重试。</td></tr>
         <tr><td>Task 016 swap</td><td>swap guard 不改变 BufferPtr/WriteFile ownership，finalize/sync 后恢复两个 working states。</td></tr>
       </tbody>
     </table>

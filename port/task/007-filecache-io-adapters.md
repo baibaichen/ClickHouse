@@ -205,12 +205,52 @@ Writer tests:
 7. `cancel` is noexcept before/after finalize and when repeated, and never appends pending bytes.
 8. `next`/finalize failure leaves the writer canceled and prevents a second write.
 9. `getFileName` delegates to `WriteFile`.
-10. resume opens an existing partial cache file without truncating its downloaded prefix.
-11. partial physical write reconciliation never counts reserved-but-unwritten bytes as downloaded.
+10. given an already-open `WriteFile` containing a downloaded prefix, appending
+    through the adapter preserves that prefix; this proves the adapter never
+    truncates an already-open file, but does not claim to prove the opening mode.
+11. a `WriteFile` test double physically commits a strict prefix and then throws;
+    the adapter propagates the original exception, becomes canceled, performs no
+    retry, and leaves the physical prefix observable for `FileSegment` to
+    reconcile.
 
 The old Task 007 focused tests may remain only when they assert this replacement
 contract. Tests that require retryable reader exceptions, null/zero rejection, or
 single-cycle external-buffer auto-revert must be removed or rewritten.
+
+### Controller amendment after Worker attempt 4 — approved task boundary
+
+The user approved the adapter/FileSegment split:
+
+```text
+Task 007:
+  prove only behavior observable from an already-open ReadFile/WriteFile
+  do not open/reopen paths or duplicate FileSegment reconciliation in tests
+
+Task 012:
+  production FileSegment opens an existing partial file in append/no-truncate mode
+  production FileSegment verifies the existing physical size before continuation
+  production FileSegment reconciles a partial physical append from filesystem::file_size
+  downloadedSize <= physicalSize <= reservedSize
+  reserved-but-unwritten bytes never become downloaded
+```
+
+The following Worker-attempt-4 findings are mandatory Task-007 rework:
+
+1. `FileCacheBufferState` must represent null/zero as an explicit coherent empty
+   state without null pointer arithmetic. `CacheBuffer::size`,
+   `FileCacheBufferState::offset`, and `available` must be null-safe, and `set`
+   must reject `offset > size`.
+2. `cancel` must discard the pending cursor and detach caller memory while
+   remaining noexcept and idempotent. The writer must retain no external pointer
+   after explicit cancel or append failure.
+3. Direct-IO reads fail closed. Before `ReadFile::pread`, validate the actual
+   destination address, file offset, and requested length against the reported
+   alignment. `seek` must reject an unaligned next-read offset. A right bound or
+   file tail that produces an unaligned request must be rejected explicitly;
+   do not silently use buffered IO or round into an unreviewed over-read.
+4. Add genuine RED tests for null-detach accessors/finalize, invalid `set` offset,
+   cancel/append-failure detachment, and actual direct-IO read attempts with an
+   alignment-enforcing mock. Correct the attempt-4 receipt inaccuracies.
 
 ## Goal
 

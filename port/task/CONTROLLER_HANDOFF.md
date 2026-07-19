@@ -142,27 +142,26 @@ Current task:
 - In-scope defects: null-detach pointer arithmetic/offset validation, writer
   cancel not discarding/detaching pending state, and untested/unenforced
   direct-IO read offset/length alignment.
-- User decision required: Task 007 mandates resume and partial physical-write
-  tests, but CH source and the canonical design place those behaviors in
-  `FileSegment`, which Task 012 ports.
+- User approved the Task-007/Task-012 boundary:
+    Task 007 proves already-open adapter behavior;
+    Task 012 must prove production `FileSegment` append-mode resume and partial
+    physical-write reconciliation.
+- Canonical design and Tasks 007/012 now record this split. Task 007 is ready
+  for Worker attempt 5; no implementation finding is waived.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Wait for the user to choose the Task-007/Task-012 boundary.
-2. Write the approved decision into the canonical design and numbered task
-   amendment(s).
-3. Redispatch corrective Task 007 for Worker attempt 5.
-4. After Task 007 acceptance, dispatch corrective Task 008.
-5. Run the accumulated Task 003-008 regression and complete Controller review.
-6. Only then dispatch Task 009.
-7. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
-8. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
+1. Redispatch corrective Task 007 for Worker attempt 5.
+2. After Task 007 acceptance, dispatch corrective Task 008.
+3. Run the accumulated Task 003-008 regression and complete Controller review.
+4. Only then dispatch Task 009.
+5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
+6. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: waiting for the user's Task-007/Task-012 boundary
-  decision; dispatch no Worker.
+- Current stop condition: none; Task 007 Worker attempt 5 may proceed.
 - Corrected Tasks 003, 004, and 006 are accepted. Repair reopened Tasks 007
   and 008 before starting Task 009.
 - For every task:

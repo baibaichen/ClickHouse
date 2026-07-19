@@ -1269,3 +1269,44 @@ evidence:
 
 redispatch same task: no (waiting for user)
 ```
+
+## Controller unblock response 2
+
+```text
+controller_status: blocker_resolved
+environment_profile: root-oss
+task: 007
+```
+
+## Resolution
+
+```text
+root cause:
+  Task 007 can prove only behavior observable from an already-open WriteFile.
+  Append-mode opening, physical path, downloaded/reserved sizes, and
+  filesystem-size reconciliation belong to production FileSegment in Task 012.
+  Existing CH tests cover ordinary FileSegment writes, source failures, partial
+  states, cache-disk failure before write, and truncated cache recovery, but no
+  existing test precisely covers append-mode continuation plus an append that
+  physically writes a strict prefix before throwing and then reconciles size.
+
+decision:
+  User approved the Controller recommendation:
+    Task 007 keeps the adapter-only boundary and tests its observable half.
+    Task 012 owns mandatory production FileSegment UTs for resume/no-truncate
+    and partial physical-write reconciliation.
+
+task or environment update:
+  Updated the Task-007 replacement contract with adapter-only tests 10-11 and
+  the attempt-4 safety/direct-IO findings.
+  Updated Task 012 with two mandatory production FileSegment tests and explicit
+  false-green rejection.
+  Updated the canonical reader/writer handoff design with Task-012 ownership.
+
+evidence:
+  CH FileSegment.cpp owns O_APPEND opening and filesystem-size reconciliation;
+  Task 012 owns FileSegment.h/.cpp. The current adapter owns only an already-open
+  WriteFile and cannot observe downloaded/reserved state.
+
+redispatch same task: yes
+```

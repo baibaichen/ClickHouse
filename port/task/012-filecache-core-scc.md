@@ -30,9 +30,19 @@ observable postcondition:
 | max download size | query LRU limit equals the configured maximum and rejects excess reservation |
 | queue pipeline | real timed `tryPush(batch, 10)` and non-blocking `tryPop(batch)` paths execute |
 | remote reader handoff | reader detach, buffer-end offset, available bytes, and downloader release satisfy Task 007 |
+| partial-file resume | production `FileSegment` writes a first prefix, releases/recreates its writer through the real continuation path, verifies the existing physical size, appends without truncating the prefix, and keeps downloaded/physical size consistent |
+| partial physical append failure | the production `FileSegment` path observes an append that physically commits a strict prefix and then throws, reads `filesystem::file_size`, enforces `downloadedSize <= physicalSize <= reservedSize`, updates downloaded size to physical size, marks the download failed, preserves the original exception, and never counts reserved-but-unwritten bytes |
 
 For each material test, capture a behavioral RED against the pre-implementation or
 intentionally broken path. Missing-header compile failure alone is insufficient.
+
+The two `FileSegment` cases above are the integration half of the Task-007
+adapter contract. Task 007 proves only the already-open `WriteFile` behavior
+(append preserves existing bytes, and a partial-writing `WriteFile` exception is
+propagated once while the adapter becomes canceled). Task 012 must execute the
+real file-opening, downloaded/reserved accounting, filesystem-size
+reconciliation, and failure-publication path. A test that performs reconciliation
+inside test code or a mock instead of production `FileSegment` is false-green.
 
 ### CMake registration
 
