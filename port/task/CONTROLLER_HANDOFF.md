@@ -74,17 +74,17 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after corrected Task 006 acceptance:
+Current verified snapshot after corrected Task 007 acceptance:
 
 environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    Corrective Task 006 receipt commit containing this handoff update; resolve
+    Corrective Task 007 receipt commit containing this handoff update; resolve
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    b3c2832e18f76b574faf74e2d6ba05c2da741efd Task 006: Preserve immediate scheduler requests
+    7e7f157fc50c0945067184dd2ac55be82213bc1b Task 007: Restore IO adapter compatibility
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -107,11 +107,13 @@ environment_profile: root-oss
     Task 007
       Velox:      711a84850
       ClickHouse: c9a5c35be06
+      Corrective Velox: 7e7f157fc50c0945067184dd2ac55be82213bc1b
+      Corrective ClickHouse: this acceptance commit
     Task 008
       Velox:      4b14de7f1
       ClickHouse: 1275836e76a
-- Tasks 003, 004, and 006 corrected and accepted.
-- Tasks 007 and 008 remain reopened by the source-contract review;
+- Tasks 003, 004, 006, and 007 corrected and accepted.
+- Task 008 remains reopened by the source-contract review;
   corrective passes required before Task 009.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
 - Task 009 and Task 011 task contracts passed the read-only audit.
@@ -126,36 +128,25 @@ environment_profile: root-oss
 
 Current task:
 
-- Corrected Tasks 003, 004, and 006 are accepted.
-- Velox implementation HEAD remains
-  `b3c2832e18f76b574faf74e2d6ba05c2da741efd`; corrective Task 007 Worker
-  attempt 4 is unstaged and uncommitted.
+- Corrected Tasks 003, 004, 006, and 007 are accepted.
+- Velox is clean at `7e7f157fc50c0945067184dd2ac55be82213bc1b`.
 - Task 005 remains accepted.
-- Task 007 Worker attempt 5 stopped `ready_for_controller`; Controller review 5
-  requested one remaining CH byte-count settlement fix. Worker attempt 6 is
-  ready to dispatch.
-- Velox dirty files are exactly:
-    `velox/ch/IO/ReadBufferFromVeloxReadFile.h`,
-    `velox/ch/IO/ReadBufferFromVeloxReadFile.cpp`,
-    `velox/ch/IO/WriteBufferFromVeloxWriteFile.h`,
-    `velox/ch/IO/WriteBufferFromVeloxWriteFile.cpp`,
-    `velox/ch/IO/tests/IoAdaptersTest.cpp`.
-- Attempt 5 resolved null-detach/offset safety, cancel detachment, direct-IO
-  fail-close, and adapter-only tests 10-11.
-- Remaining in-scope defect: writer append exceptions must settle the attempted
-  bytes before cancel/rethrow, matching CH `WriteBuffer::next`.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
     Task 012 must prove production `FileSegment` append-mode resume and partial
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
+- User requested a pause after Task 007. Task 008 is not started.
+- Preserve the unrelated untracked
+  `port/design/filecache-scheduler-and-caller-scope.html`; it is not part of
+  Task 007.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Redispatch corrective Task 007 for Worker attempt 6.
-2. After Task 007 acceptance, dispatch corrective Task 008.
+1. Stay paused until the user asks to resume.
+2. Dispatch corrective Task 008.
 3. Run the accumulated Task 003-008 regression and complete Controller review.
 4. Only then dispatch Task 009.
 5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
@@ -163,9 +154,10 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: none; Task 007 Worker attempt 6 may proceed.
-- Corrected Tasks 003, 004, and 006 are accepted. Repair reopened Tasks 007
-  and 008 before starting Task 009.
+- Current stop condition: user-requested pause after accepted Task 007; dispatch
+  no Worker until the user resumes.
+- Corrected Tasks 003, 004, 006, and 007 are accepted. Repair reopened Task 008
+  before starting Task 009.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

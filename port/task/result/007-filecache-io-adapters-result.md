@@ -1696,3 +1696,330 @@ unresolved findings:
 ## Commits
 
 No implementation or acceptance commit was created.
+
+## Worker attempt 6
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 007
+```
+
+Corrective rework implementing the **writer-failure bytes-settlement fix** per
+Controller review 5 (`controller_status: changes_requested`, single unresolved
+finding: "Writer append exceptions do not settle attempted bytes before
+cancel/rethrow"). Worker attempts 1-5, Controller reviews 1-5, and Controller
+unblock responses 1-2 above are unchanged; this section is appended only.
+
+## Preflight (attempt 6)
+
+```text
+Re-derived contract from: task 007 (replacement contract + attempt-4 boundary
+amendment), canonical design, CH WriteBuffer::next (src/IO/WriteBuffer.h:63-74),
+and Task 012 boundary. Confirmed:
+- No new CH dependency, macro, type, API, or Velox substitution is reached beyond
+  the attempt-5 reviewed table. Only already-reviewed primitives are used:
+  state_.addBytes (FileCacheBufferState, already used on success path), cancel()
+  (already called on failure path).
+- No std::filesystem, no FileSegment, no file open/reopen, no downloaded/reserved
+  state is introduced. No new header, no new file.
+- File scope unchanged: only the five declared Task-007 Velox files (two of them
+  changed in attempt 6: WriteBufferFromVeloxWriteFile.cpp and IoAdaptersTest.cpp);
+  the three CMake files need no change.
+Result: no unreviewed-dependency gate triggered; no scope expansion; not blocked.
+```
+
+## Repository baselines (attempt 6)
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/clickhouse` | `ch-filecache` | `e2ea438fe10` | `?? port/design/filecache-scheduler-and-caller-scope.html` (pre-existing untracked, preserved); no tracked file dirty |
+| `/root/oss/velox` | `filecache` | `b3c2832e18f76b574faf74e2d6ba05c2da741efd` | `M velox/ch/IO/ReadBufferFromVeloxReadFile.{h,cpp}`, `M velox/ch/IO/WriteBufferFromVeloxWriteFile.{h,cpp}`, `M velox/ch/IO/tests/IoAdaptersTest.cpp` — exactly the five attempt-4/5 Task-007 dirty files |
+
+Both repositories match the stated baselines. The pre-existing unrelated untracked
+`port/design/filecache-scheduler-and-caller-scope.html` was NOT created or modified
+by this attempt and is preserved. The accepted attempt-3 IO adapters remain
+committed in Velox at `711a848501d5` (Task 007 commit), an ancestor of HEAD.
+
+## Files changed (attempt 6)
+
+```text
+# /root/oss/velox  (two of the five declared Task-007 files changed)
+velox/ch/IO/WriteBufferFromVeloxWriteFile.cpp
+  (catch block in WriteBufferFromFileBase::next: +state_.addBytes(bytesInBuffer)
+   before cancel() and rethrow, replacing the prior comment-only block)
+velox/ch/IO/tests/IoAdaptersTest.cpp
+  (WriterNextFailureCancelsAndPreventsWrite: +2 EXPECT_EQ for count()/getPosition();
+   WriterPartialWriteCommitsPrefixThenThrows: +2 EXPECT_EQ for count()/getPosition())
+
+# Unchanged in attempt 6 (already correct from attempt 5):
+velox/ch/IO/ReadBufferFromVeloxReadFile.h
+velox/ch/IO/ReadBufferFromVeloxReadFile.cpp
+velox/ch/IO/WriteBufferFromVeloxWriteFile.h
+
+# /root/oss/clickhouse
+port/task/result/007-filecache-io-adapters-result.md  (this appended section only)
+```
+
+## TDD RED evidence (attempt 6)
+
+Tests augmented first (before any production change). Build
+`task007_attempt6_red_build.log` (exit 0); run `task007_attempt6_red_run.log`
+(exit 1): **31 tests, 29 passed, 2 FAILED** — exactly the two augmented tests,
+each failing because `count()` returns 0 (current code does not settle bytes
+before cancel):
+
+```text
+IoAdaptersTest.WriterNextFailureCancelsAndPreventsWrite
+  IoAdaptersTest.cpp:802 Failure
+  writer.count() Which is: 0  vs  5u
+  "writer must settle the attempted 5 bytes before cancel"
+
+IoAdaptersTest.WriterPartialWriteCommitsPrefixThenThrows
+  IoAdaptersTest.cpp:881 Failure
+  writer.count() Which is: 0  vs  16u
+  "writer must settle the full attempted 16 bytes before cancel"
+```
+
+These are genuine behavioral failures: the current code calls `cancel()` (which
+calls `state_.detach()`, zeroing `offset()`) without first calling
+`state_.addBytes(bytesInBuffer)`, so `count()` = `bytes_` + 0 = 0.
+
+## Production fix (attempt 6)
+
+```text
+WriteBufferFromFileBase::next() — WriteBufferFromVeloxWriteFile.cpp, catch block:
+
+Before (attempt 5):
+    catch (...)
+    {
+        // Terminal failure: discard the pending working state, detach caller
+        // memory, release the file, and prevent any retry (a later write is
+        // rejected because the writer is canceled). The original exception
+        // propagates unchanged so the caller can reconcile from the physical
+        // file size.
+        cancel();
+        throw;
+    }
+
+After (attempt 6):
+    catch (...)
+    {
+        // CH WriteBuffer::next settles bytes += bytes_in_buffer before
+        // cancel/rethrow (WriteBuffer.h:69). Settle here so count()/getPosition()
+        // report the prior committed total plus the attempted chunk, allowing the
+        // caller to reconcile from the physical file size.
+        state_.addBytes(bytesInBuffer);
+        cancel();
+        throw;
+    }
+```
+
+CH reference (WriteBuffer.h:63-73):
+```cpp
+catch (...)
+{
+    pos = working_buffer.begin();
+    bytes += bytes_in_buffer;   // settle before cancel
+    cancel();
+    throw;
+}
+```
+
+The fix is minimal: one `state_.addBytes(bytesInBuffer)` line added before
+`cancel()`, comment updated. Physical-prefix handling and Task-012 reconciliation
+boundary are not altered.
+
+## Commands and outcomes (attempt 6)
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| RED build (augmented tests vs unchanged attempt-5 production) | 0 | `_build/debug/task007_attempt6_red_build.log` |
+| RED run (31 tests, 29 passed, 2 FAILED — genuine behavioral) | 1 | `_build/debug/task007_attempt6_red_run.log` |
+| GREEN build (fix applied; WriteBufferFromVeloxWriteFile.cpp + IoAdaptersTest.cpp recompiled) | 0 | `_build/debug/task007_attempt6_green_build.log` |
+| GREEN run (31/31) | 0 | `_build/debug/task007_attempt6_green_run.log` |
+| Fresh final build (touch all 3 sources; recompile both .cpp + test, relink libvelox.a + velox_ch_io_test) | 0 | `_build/debug/task007_attempt6_final_build.log` |
+| Final focused io run (31/31) | 0 | `_build/debug/task007_attempt6_io_final.log` |
+| gtest discovery (`--gtest_list_tests`) = 31 | 0 | `_build/debug/task007_attempt6_discovery.log` |
+| Task 003-007 combined ctest gate (5/5) | 0 | `_build/debug/task007_attempt6_all_gates.log` |
+| git diff --check (both changed Velox files) | 0 | (inline, clean) |
+| Consolidated 5-file diff | - | `_build/debug/task007_attempt6_five_file_diff.diff` |
+
+Configure was already current in `/root/oss/velox/_build/debug` (root-oss:
+`VELOX_MONO_LIBRARY=ON`, `VELOX_BUILD_TESTING=ON`, vcpkg toolchain). Every build
+sourced `/root/oss/velox-helper/env.sh` and used `/usr/local/bin/ninja` with no
+`-j`; `build.sh` was not used as evidence.
+
+## Fresh-build proof (attempt 6)
+
+`task007_attempt6_final_build.log`, after touching all three sources, shows:
+
+```text
+[1/6] Building CXX .../ch/IO/WriteBufferFromVeloxWriteFile.cpp.o
+[2/6] Building CXX .../ch/IO/ReadBufferFromVeloxReadFile.cpp.o
+[3/6] Building CXX .../ch/IO/tests/CMakeFiles/.../IoAdaptersTest.cpp.o
+[4/6] Linking CXX static library lib/libvelox.a
+[5/6] Linking CXX executable velox/ch/IO/tests/velox_ch_io_test
+```
+
+Both Task-007 production `.cpp` files and `IoAdaptersTest.cpp` recompiled; both
+`libvelox.a` and `velox_ch_io_test` relinked.
+
+## Acceptance evidence (attempt 6)
+
+```text
+test count: velox_ch_io_test = 31 tests (17 Reader... + 14 Writer...), all pass.
+  Registered with ctest as #434 and Passed under ctest.
+failed tests: none (final).
+skipped/disabled tests: none. grep DISABLED_/GTEST_SKIP/GTEST_FILTER in
+  IoAdaptersTest.cpp = 0; --gtest_list_tests enumerates all 31;
+  the run reports no SKIPPED/DISABLED lines.
+discovery: task007_attempt6_discovery.log lists 31 cases.
+Task 003-007 ctest gate: 5/5 suites passed (#427 common, #428 threadpool,
+  #429 scheduler, #432 guards, #434 io), 100%, 0 failed
+  (task007_attempt6_all_gates.log: "100% tests passed, 0 tests failed out of 5").
+git diff --check: clean (exit 0) for both changed Velox files.
+```
+
+## Worker review (attempt 6)
+
+```text
+review subagent: exactly one fresh read-only code-review subagent
+  ("task007-attempt6-review"), given the full Task 007 contract, Controller
+  review 5 finding, CH WriteBuffer::next reference, attempt-6 production fix,
+  augmented test assertions, and all attempt-6 RED/green/final/ctest/discovery
+  evidence. Instructed not to edit; it made no edits.
+verdict: Approved. No actionable in-scope defects found.
+findings: none (blocker/major/minor).
+  Confirmed: addBytes(bytesInBuffer) before cancel() correctly replicates the CH
+  contract; no double-settling (success path and catch path are mutually
+  exclusive); finalize() exception path is clean (bytes settled by nested next()
+  which already carries the fix; outer finalize() catch calls cancel() which is
+  a no-op when already canceled); new assertions are genuine (RED shows count()==0
+  without the fix); fix is limited to the single catch line with no Task-012
+  boundary violation; all 5-file invariants from attempt 5 preserved.
+resolutions: none required. Production was not changed after the review; all
+  gates were already GREEN.
+unresolved findings: none.
+false-green check: 2 behavioral RED assertions failed against attempt-5 production
+  for the exact under-reporting reason; the fix makes both pass; no assertion
+  was weakened and no test-only hook was added to production.
+```
+
+## Blockers (attempt 6)
+
+```text
+None. No unreviewed dependency, no required file outside the declared scope, and
+no unresolved source/design/task disagreement. The fix exactly matches the CH
+WriteBuffer::next catch-block contract (settle bytes, then cancel, then rethrow).
+```
+
+## Repository statuses (final, attempt 6)
+
+```text
+Velox      /root/oss/velox      branch filecache      HEAD b3c2832e18f76b574faf74e2d6ba05c2da741efd
+  dirty: M velox/ch/IO/ReadBufferFromVeloxReadFile.{h,cpp},
+         M velox/ch/IO/WriteBufferFromVeloxWriteFile.{h,cpp},
+         M velox/ch/IO/tests/IoAdaptersTest.cpp
+  (exactly the five declared Task-007 files; unstaged/uncommitted).
+ClickHouse /root/oss/clickhouse branch ch-filecache HEAD e2ea438fe10
+  dirty: M port/task/result/007-filecache-io-adapters-result.md (this appended receipt).
+  Pre-existing untracked, unrelated, preserved: ?? port/design/filecache-scheduler-and-caller-scope.html.
+```
+
+## Worker declaration (attempt 6)
+
+```text
+Only Task 007 attempt 6 was attempted; Task 008 and Task 012 were not started.
+Changes are unstaged and uncommitted; no stage/commit/amend/rebase/push/PR/
+worktree/branch change was performed.
+No ClickHouse task/design/protocol/environment/handoff file was modified; no
+earlier receipt section was altered (attempt 6 is appended only).
+The worker stopped after writing this receipt.
+```
+
+## Controller review 6
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+task: 007
+worker_attempt_reviewed: 6
+```
+
+## Review evidence
+
+```text
+scope review:
+  The final Velox diff contains exactly the five declared Task-007 adapter/test
+  files. The Worker never started Task 008 or Task 012. The unrelated untracked
+  scheduler design artifact in ClickHouse was preserved and is not part of this
+  task.
+
+source-contract and architecture review:
+  The adapters now implement the FileCache-consumed CH BufferBase, ReadBuffer,
+  SeekableReadBuffer, and WriteBuffer behavior over already-open Velox files.
+  The user-approved boundary remains intact: Task 007 proves adapter-observable
+  behavior; Task 012 owns production FileSegment append-mode resume and physical
+  size/downloaded/reserved reconciliation. Tasks 012/014/015 record the approved
+  CH test migration ownership.
+
+implementation review:
+  Null/zero detach is a coherent state without null pointer arithmetic; invalid
+  offsets are rejected before pointer arithmetic. Writer cancel and append
+  failure discard the cursor, detach caller memory, release the file, and remain
+  terminal/idempotent. Direct-IO reads validate destination, offset, and length
+  before pread and reject unaligned seek/tail/right-bound without fallback.
+  Reader handoff, pool-backed ownership, unique WriteFile ownership, zero-copy
+  append, sync/finalize/cancel ordering, and exception identity match the
+  replacement contract.
+
+  On a writer append exception, bytesInBuffer is settled exactly once before
+  cancel/rethrow, matching CH WriteBuffer::next. This logical attempted-byte
+  counter is local to the adapter and does not change FileSegment downloaded
+  bytes; Task 012 will reconcile physical bytes independently.
+
+test and false-green review:
+  Attempt 6 captured genuine RED in both append-failure tests: count and
+  getPosition were 0 instead of 5/16 before the fix. The adapter-only strict
+  prefix test observes only the physically committed prefix and does not
+  duplicate reconciliation. Earlier attempt-5 RED and mutation proofs cover
+  null/offset safety, cancel detachment, direct-IO fail-close, zero-copy, and
+  prefix preservation.
+
+log and Controller gate review:
+  Worker evidence passed 31/31 focused tests, discovered 31 with zero
+  disabled/skipped, passed Task 003-007 CTest 5/5, and freshly rebuilt both
+  production cpp files plus IoAdaptersTest.cpp and relinked libvelox.a/io test.
+
+  Controller logs:
+    /root/oss/velox/_build/debug/configure_task_007_controller_corrective.log
+    /root/oss/velox/_build/debug/build_task_007_controller_corrective.log
+    /root/oss/velox/_build/debug/test_task_007_controller_corrective.log
+    /root/oss/velox/_build/debug/discovery_task_007_controller_corrective.log
+    /root/oss/velox/_build/debug/test_task_007_precommit.log
+
+  The persisted Controller gate repeated the fresh compile/relink, passed all
+  five CTest entries, and directly listed/ran/passed 31/31 tests with zero
+  DISABLED_ names and zero GTEST_SKIP uses.
+
+independent review:
+  A fresh read-only Controller review traced the full five-file diff against CH
+  and the canonical design and reported no Blocker or Major finding. It
+  independently confirmed all Controller-review-4/5 findings are closed.
+
+unresolved findings:
+  None.
+```
+
+## Required changes
+
+```text
+None.
+```
+
+## Corrective commits
+
+| Repository | Commit |
+|---|---|
+| `/root/oss/velox` | `7e7f157fc50c0945067184dd2ac55be82213bc1b` |
