@@ -1,7 +1,7 @@
 # Task 013: `FileCacheFactory` and `FileCacheManager`
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
+> modifies the Velox checkout under `<velox_repo>` and writes one
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
@@ -57,7 +57,7 @@ and a `velox_ch_filecache_manager_test` executable.
 ## Starting Point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected predecessors:
   Task 012: FileCache center SCC — FileSegmentInfo, FileSegment,
@@ -91,18 +91,18 @@ src/Interpreters/FileCache/FileCacheFactory.cpp
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheFactory.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheFactory.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheManager.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheManager.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileCacheFactoryManagerTest.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/013-filecache-factory-manager-result.md
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheFactory.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheFactory.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheManager.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheManager.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/FileCacheFactoryManagerTest.cpp
+<clickhouse_repo>/port/task/result/013-filecache-factory-manager-result.md
 ```
 
 Every new Velox C++ and CMake file must begin with the Apache 2.0 license
@@ -135,10 +135,14 @@ operations. The registry API itself lives only on `FileCacheFactory`.
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -185,25 +189,19 @@ that evidence, implement Factory/Manager until the same tests pass.
 
 Reconfigure (same command as Task 012 Step 8, updating the log name):
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_013_factory_mgr.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`. For `home-chang`, also add
+`-DVELOX_BUILD_TESTING=ON` (already present in the `root-oss` effective
+configuration). Redirect output to `<velox_build_dir>/configure_task_013_factory_mgr.log`.
 
 Then:
 
 ```bash
-if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+if <ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_manager_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_013_red.log 2>&1
+  > <velox_build_dir>/build_task_013_red.log 2>&1
 then
   echo "ERROR: red build unexpectedly succeeded"
   exit 1
@@ -658,10 +656,10 @@ targets must remain unchanged.
 Reconfigure (same CMake command, updated log path), then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_manager_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_013_factory_mgr.log 2>&1
+  > <velox_build_dir>/build_task_013_factory_mgr.log 2>&1
 ```
 
 Expected: exit code 0.
@@ -670,10 +668,10 @@ Expected: exit code 0.
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_filecache_manager_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_013_factory_mgr.log 2>&1
+  > <velox_build_dir>/test_task_013_factory_mgr.log 2>&1
 ```
 
 Expected: `100% tests passed, 0 tests failed`.
@@ -681,7 +679,7 @@ Expected: `100% tests passed, 0 tests failed`.
 - [ ] **Step 11: Inspect task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -701,7 +699,7 @@ this task, changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/013-filecache-factory-manager-result.md
+<clickhouse_repo>/port/task/result/013-filecache-factory-manager-result.md
 ```
 
 Use exactly this structure:
@@ -734,10 +732,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_013_factory_mgr.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_013_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_013_factory_mgr.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_013_factory_mgr.log
+<velox_build_dir>/configure_task_013_factory_mgr.log
+<velox_build_dir>/build_task_013_red.log
+<velox_build_dir>/build_task_013_factory_mgr.log
+<velox_build_dir>/test_task_013_factory_mgr.log
 ```
 
 ## Verification

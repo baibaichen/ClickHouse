@@ -1,7 +1,7 @@
 # Task 010: `FileCache` Settings — `FileCacheConfig` and `FileCacheSettingsLoader`
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
+> modifies the Velox checkout under `<velox_repo>` and writes one
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
@@ -77,7 +77,7 @@ Key constraints:
 ## Starting point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected HEAD:    Task 009 result commit or any direct descendant
 ```
@@ -99,23 +99,23 @@ Stop if the branch is not `filecache` or if any of these files is absent.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/2-file-cache/06-filecache-settings-files-design.md
-/home/chang/SourceCode/ClickHouse/port/2-file-cache/01-filecache-fwd-files-design.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/01-filecache-read-context-design.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/2-file-cache/06-filecache-settings-files-design.md
+<clickhouse_repo>/port/2-file-cache/01-filecache-fwd-files-design.md
+<clickhouse_repo>/port/3-consumers/01-filecache-read-context-design.md
 ```
 
 Use the ClickHouse files only as behavioral references:
 
 ```text
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCacheSettings.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCacheSettings.cpp
+<clickhouse_repo>/src/Interpreters/FileCache/FileCacheSettings.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileCacheSettings.cpp
 ```
 
 Velox config infrastructure reference:
 
 ```text
-/home/chang/OpenSource/velox/velox/common/config/Config.h
+<velox_repo>/velox/common/config/Config.h
 ```
 
 ## File scope
@@ -123,18 +123,18 @@ Velox config infrastructure reference:
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheReadOptions.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileCacheSettingsTest.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/010-filecache-settings-result.md
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheSettings.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheSettings.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheReadOptions.h
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/FileCacheSettingsTest.cpp
+<clickhouse_repo>/port/task/result/010-filecache-settings-result.md
 ```
 
 Every new Velox C++ file must begin with the Apache 2.0 license header using
@@ -142,10 +142,14 @@ Every new Velox C++ file must begin with the Apache 2.0 license header using
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -556,25 +560,19 @@ TEST(FileCacheSettingsLoaderTest, SplitCacheWithOvercommitRejected)
 
 Reconfigure:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_010_settings.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`. For `home-chang`, also add
+`-DVELOX_BUILD_TESTING=ON` (already present in the `root-oss` effective
+configuration). Redirect output to `<velox_build_dir>/configure_task_010_settings.log`.
 
 Then attempt to build:
 
 ```bash
-if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+if <ninja> \
+  -C <velox_build_dir> \
   velox_ch_settings_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_010_red.log 2>&1
+  > <velox_build_dir>/build_task_010_red.log 2>&1
 then
   echo "ERROR: red build unexpectedly succeeded"
   exit 1
@@ -1164,10 +1162,10 @@ velox_link_libraries(
 Reconfigure with the same command as Step 3, then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_settings_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_010_settings.log 2>&1
+  > <velox_build_dir>/build_task_010_settings.log 2>&1
 ```
 
 Expected:
@@ -1180,10 +1178,10 @@ Exit code 0.
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_settings_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_010_settings.log 2>&1
+  > <velox_build_dir>/test_task_010_settings.log 2>&1
 ```
 
 Expected:
@@ -1195,7 +1193,7 @@ Expected:
 - [ ] **Step 10: Inspect only task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -1221,7 +1219,7 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/010-filecache-settings-result.md
+<clickhouse_repo>/port/task/result/010-filecache-settings-result.md
 ```
 
 Use exactly this structure:
@@ -1254,10 +1252,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_010_settings.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_010_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_010_settings.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_010_settings.log
+<velox_build_dir>/configure_task_010_settings.log
+<velox_build_dir>/build_task_010_red.log
+<velox_build_dir>/build_task_010_settings.log
+<velox_build_dir>/test_task_010_settings.log
 ```
 
 ## Verification

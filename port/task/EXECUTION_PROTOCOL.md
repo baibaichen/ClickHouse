@@ -7,8 +7,8 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:       Documentation review; dispatch no Worker until user approval
-Repair before resume: Tasks 003, 004, 006, 007, 008
+Current state:       Corrective migration active; corrected Task 006 next
+Repair before resume: Tasks 006, 007, 008
 Then dispatch:       Tasks 009-014, subject to Task 010 and Task 014 review gates
 Optional Velox work: Tasks 016-017, only after a separate decision
 Deferred Gluten:     Tasks 018-019, not in the current phase
@@ -152,6 +152,7 @@ controller feedback.
 
 ```text
 worker_status: ready_for_controller | blocked
+environment_profile: <name>
 task: NNN
 ```
 
@@ -313,6 +314,7 @@ Append:
 
 ```text
 controller_status: accepted | changes_requested
+environment_profile: <name>
 task: NNN
 ```
 
@@ -347,13 +349,14 @@ controller's external task ledger or next accepted receipt if needed.
 
 ## Copyable worker prompt
 
-Replace only `NNN`:
-
+Before dispatching: select the active profile from `port/task/ENVIRONMENT.md`
+and resolve all logical keys (e.g. `<clickhouse_repo>`, `<velox_repo>`,
+`<ninja>`) to their concrete values. Then replace only `NNN`:
 ```text
 Execute FileCache port Task NNN using file-only coordination.
 
 Repository containing the task protocol:
-/home/chang/SourceCode/ClickHouse
+<clickhouse_repo>
 
 You must first read:
 - port/task/EXECUTION_PROTOCOL.md

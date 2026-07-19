@@ -1,7 +1,7 @@
 # Task 004: Correct `StatusFile` Diagnostics
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and appends
+> modifies the Velox checkout under `<velox_repo>` and appends
 > corrective evidence to one result file under this ClickHouse checkout. Do not
 > modify ClickHouse source files. Do not commit or stage either repository.
 
@@ -188,7 +188,7 @@ The existing `velox_ch_guards_test` remains the focused test executable.
 ## Starting point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected HEAD:    c755512a8 Task 003: Correct FileCache common shims
 ```
@@ -201,26 +201,26 @@ dirty file. Stop if the branch is not `filecache`.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/task/EXECUTION_PROTOCOL.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/02-filecache-basic-shims-design.md
-/home/chang/SourceCode/ClickHouse/port/task/result/003-filecache-basic-common-shims-result.md
-/home/chang/SourceCode/ClickHouse/port/task/result/004-filecache-status-and-guards-result.md
-/home/chang/SourceCode/ClickHouse/src/Common/StatusFile.h
-/home/chang/SourceCode/ClickHouse/src/Common/StatusFile.cpp
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCache.cpp
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/task/EXECUTION_PROTOCOL.md
+<clickhouse_repo>/port/1-dependencies/02-filecache-basic-shims-design.md
+<clickhouse_repo>/port/task/result/003-filecache-basic-common-shims-result.md
+<clickhouse_repo>/port/task/result/004-filecache-status-and-guards-result.md
+<clickhouse_repo>/src/Common/StatusFile.h
+<clickhouse_repo>/src/Common/StatusFile.cpp
+<clickhouse_repo>/src/Interpreters/FileCache/FileCache.cpp
 ```
 
 Verified Velox infrastructure:
 
 ```text
-/usr/local/include/folly/FileUtil.h
+folly/FileUtil.h
   folly::writeFull retries EINTR/partial writes and returns -1 on error.
 
-/home/chang/OpenSource/velox/velox/common/process/Profiler.cpp
+<velox_repo>/velox/common/process/Profiler.cpp
   existing localtime_r + strftime local-time pattern.
 
-/home/chang/OpenSource/velox/CMake/VeloxUtils.cmake
+<velox_repo>/CMake/VeloxUtils.cmake
   velox_include_directories handles mono and non-mono targets.
 ```
 
@@ -229,17 +229,17 @@ Verified Velox infrastructure:
 Modify in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Common/StatusFile.h
-/home/chang/OpenSource/velox/velox/ch/Common/StatusFile.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/StatusFileAndGuardsTest.cpp
+<velox_repo>/velox/ch/Common/CMakeLists.txt
+<velox_repo>/velox/ch/Common/StatusFile.h
+<velox_repo>/velox/ch/Common/StatusFile.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/StatusFileAndGuardsTest.cpp
 ```
 
 Create in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/VeloxBuildRevision.h.in
+<velox_repo>/velox/ch/Common/VeloxBuildRevision.h.in
 ```
 
 The generated header under the build directory is an artifact, not a tracked
@@ -248,7 +248,7 @@ source file.
 Append corrective evidence in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/004-filecache-status-and-guards-result.md
+<clickhouse_repo>/port/task/result/004-filecache-status-and-guards-result.md
 ```
 
 Do not modify `Guards.h`, `ProfileEvents.h`, `velox/ch/CMakeLists.txt`, or
@@ -257,12 +257,16 @@ unchanged.
 
 ## Corrective steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the baseline**
 
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -304,21 +308,15 @@ No test may use `sleep`, `GTEST_SKIP`, or `DISABLED_`.
 Reconfigure the default build and build `velox_ch_guards_test`:
 
 ```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -UVELOX_BUILD_REVISION \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_corrective.log 2>&1
+# Run the selected profile's complete configure recipe from ENVIRONMENT.md.
+# For root-oss: source <velox_env> first, include all helper-equivalent options.
+# Build dir: <velox_build_dir> (existing). Probe override: -UVELOX_BUILD_REVISION
+# Redirect output to <velox_build_dir>/configure_task_004_corrective.log
 
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_guards_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_corrective_red.log 2>&1
+  > <velox_build_dir>/build_task_004_corrective_red.log 2>&1
 ```
 
 Require failure caused by the missing `writeFullInfo` or generated revision
@@ -365,24 +363,18 @@ First reconfigure the default build after adding the CMake/header
 implementation:
 
 ```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -UVELOX_BUILD_REVISION \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_004_corrective_green.log 2>&1
+# Run the selected profile's complete configure recipe from ENVIRONMENT.md.
+# For root-oss: source <velox_env> first, include all helper-equivalent options.
+# Build dir: <velox_build_dir> (existing). Probe override: -UVELOX_BUILD_REVISION
+# Redirect output to <velox_build_dir>/configure_task_004_corrective_green.log
 ```
 
 Then verify the default checkout fallback:
 
 ```bash
-git -C /home/chang/OpenSource/velox rev-parse HEAD
+git -C <velox_repo> rev-parse HEAD
 grep -A1 'kVeloxBuildRevision' \
-  /home/chang/OpenSource/velox/cmake-build-debug-gcc13/velox/ch/Common/VeloxBuildRevision.h
+  <velox_build_dir>/velox/ch/Common/VeloxBuildRevision.h
 ```
 
 Require the generated value to equal the full Git HEAD.
@@ -391,44 +383,33 @@ Explicit override: configure a non-mono build with a known 40-character
 hexadecimal revision:
 
 ```bash
-mkdir -p /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono
+mkdir -p <velox_build_dir>-task004-nonmono
 
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -DVELOX_MONO_LIBRARY=OFF \
-  -DVELOX_BUILD_REVISION=0123456789abcdef0123456789abcdef01234567 \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/configure_task_004_corrective.log 2>&1
+# Run the selected profile's complete configure recipe from ENVIRONMENT.md.
+# For root-oss: source <velox_env> first, include all helper-equivalent options.
+# Fresh build dir: <velox_build_dir>-task004-nonmono
+# Append after the complete profile recipe (CMake last-wins):
+#   -DVELOX_MONO_LIBRARY=OFF -DVELOX_BUILD_REVISION=0123456789abcdef0123456789abcdef01234567
+# Redirect output to <velox_build_dir>-task004-nonmono/configure_task_004_corrective.log
 ```
 
 Require the generated header to contain exactly the explicit value.
 
-Invalid explicit value: configure a separate probe build with
-`-DVELOX_BUILD_REVISION=not-a-revision` and require configure to fail:
+Invalid explicit value: treat the following as a hard acceptance gate, not a
+comment-only description:
 
-```bash
-mkdir -p /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision
-
-if /usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -DVELOX_BUILD_REVISION=not-a-revision \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-invalid-revision/configure_task_004_invalid_revision.log 2>&1
-then
-  echo "ERROR: invalid revision unexpectedly configured"
-  exit 1
-fi
-```
+1. Take the selected profile's complete configure recipe from `ENVIRONMENT.md`.
+2. Create the fresh build dir `<velox_build_dir>-task004-invalid-revision`,
+   then append `-DVELOX_BUILD_REVISION=not-a-revision` after the complete
+   profile recipe (CMake last-wins) without dropping any profile option;
+   for `root-oss`, source `<velox_env>` first.
+3. Execute that configure recipe with output redirected to
+   `<velox_build_dir>-task004-invalid-revision/configure_task_004_invalid_revision.log`
+   and capture the exit status.
+4. Exit status `0` immediately fails and blocks Task 004; a nonzero exit status
+   is required.
+5. Keep the subsequent exact-log diagnostic check and all original acceptance
+   semantics unchanged.
 
 Require the log to contain the revision validation diagnostic.
 
@@ -437,31 +418,31 @@ Require the log to contain the revision validation diagnostic.
 Default mono build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_guards_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_004_corrective.log 2>&1
+  > <velox_build_dir>/build_task_004_corrective.log 2>&1
 
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_guards_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_004_corrective.log 2>&1
+  > <velox_build_dir>/test_task_004_corrective.log 2>&1
 ```
 
 Non-mono explicit-revision build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono \
+<ninja> \
+  -C <velox_build_dir>-task004-nonmono \
   velox_ch_guards_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/build_task_004_corrective.log 2>&1
+  > <velox_build_dir>-task004-nonmono/build_task_004_corrective.log 2>&1
 
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono \
+  --test-dir <velox_build_dir>-task004-nonmono \
   -R '^velox_ch_guards_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13-task004-nonmono/test_task_004_corrective.log 2>&1
+  > <velox_build_dir>-task004-nonmono/test_task_004_corrective.log 2>&1
 ```
 
 Do not pass `-j`. Every command must exit 0 and every test must pass with no

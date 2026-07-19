@@ -26,7 +26,7 @@ VeloxBackend tearDown shuts Manager before executors and memory pool
 Task 015 Velox E2E/benchmark succeeded.
 Task 018 Gluten integration succeeded.
 Gluten CMakeCache points VELOX_HOME and VELOX_BUILD_PATH at
-/home/chang/OpenSource/velox and its cmake-build-debug-gcc13 build.
+<velox_repo> and its <velox_build_dir> build.
 ```
 
 Read:
@@ -44,31 +44,35 @@ port/task/result/018-filecache-gluten-integration-result.md
 Modify:
 
 ```text
-/home/chang/SourceCode/gluten1/cpp/velox/tests/CMakeLists.txt
+<gluten_repo>/cpp/velox/tests/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/SourceCode/gluten1/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/019-filecache-gluten-e2e-result.md
+<gluten_repo>/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
+<clickhouse_repo>/port/task/result/019-filecache-gluten-e2e-result.md
 ```
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm both repository baselines**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 
-cd /home/chang/SourceCode/gluten1
+cd <gluten_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 
 grep -E '^(VELOX_HOME|VELOX_BUILD_PATH):' \
-  /home/chang/SourceCode/gluten1/cpp/build/CMakeCache.txt
+  <gluten_repo>/cpp/build/CMakeCache.txt
 ```
 
 Stop if Gluten still points at its bundled `ep/build-velox` checkout.
@@ -109,7 +113,7 @@ releasing the pool.
 
 ```bash
 if rg -n 'GTEST_SKIP|DISABLED_' \
-  /home/chang/SourceCode/gluten1/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
+  <gluten_repo>/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
 then
   echo "ERROR: skipped Gluten FileCache test remains"
   exit 1
@@ -119,14 +123,14 @@ fi
 - [ ] **Step 5: Build the external Velox library and Gluten test**
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_019_external_velox.log 2>&1
+  > <velox_build_dir>/build_task_019_external_velox.log 2>&1
 
-cmake --build /home/chang/SourceCode/gluten1/cpp/build \
+<cmake> --build <gluten_repo>/cpp/build \
   --target velox_file_cache_e2e_gluten_test \
-  > /home/chang/SourceCode/gluten1/cpp/build/build_task_019_gluten_e2e.log 2>&1
+  > <gluten_repo>/cpp/build/build_task_019_gluten_e2e.log 2>&1
 ```
 
 Do not add `-j`.
@@ -135,10 +139,10 @@ Do not add `-j`.
 
 ```bash
 ctest \
-  --test-dir /home/chang/SourceCode/gluten1/cpp/build \
+  --test-dir <gluten_repo>/cpp/build \
   -R '^velox_file_cache_e2e_gluten_test$' \
   --output-on-failure \
-  > /home/chang/SourceCode/gluten1/cpp/build/test_task_019_gluten_e2e.log 2>&1
+  > <gluten_repo>/cpp/build/test_task_019_gluten_e2e.log 2>&1
 ```
 
 Expected:
@@ -150,7 +154,7 @@ Expected:
 - [ ] **Step 7: Inspect task-owned changes**
 
 ```bash
-cd /home/chang/SourceCode/gluten1
+cd <gluten_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \

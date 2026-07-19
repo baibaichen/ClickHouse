@@ -1,7 +1,7 @@
 # Task 008: `FileCache` Leaf Types — `SipHash128`, `FileCacheKey`, `FileSegmentKeyType`, `FileCacheOriginInfo`, Forward Headers, `FileCacheUtils`
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
+> modifies the Velox checkout under `<velox_repo>` and writes one
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
@@ -180,7 +180,7 @@ proof for the CMake mode changed by this amendment.
 ## Starting point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected HEAD:    Task 007 result commit or any direct descendant
 ```
@@ -208,25 +208,25 @@ Stop if the branch is not `filecache` or if any of these files is absent.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/2-file-cache/01-filecache-fwd-files-design.md
-/home/chang/SourceCode/ClickHouse/port/2-file-cache/02-filecache-origin-segment-type-design.md
-/home/chang/SourceCode/ClickHouse/port/2-file-cache/03-filecache-key-hash-design.md
-/home/chang/SourceCode/ClickHouse/port/2-file-cache/04-filecache-utils-design.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/2-file-cache/01-filecache-fwd-files-design.md
+<clickhouse_repo>/port/2-file-cache/02-filecache-origin-segment-type-design.md
+<clickhouse_repo>/port/2-file-cache/03-filecache-key-hash-design.md
+<clickhouse_repo>/port/2-file-cache/04-filecache-utils-design.md
 ```
 
 Use the ClickHouse implementations only as behavioral references:
 
 ```text
-/home/chang/SourceCode/ClickHouse/src/Common/SipHash.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCacheKey.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCacheKey.cpp
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileSegmentKeyType.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileSegmentKeyType.cpp
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCacheOriginInfo.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCache_fwd.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCache_fwd_internal.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCacheUtils.h
+<clickhouse_repo>/src/Common/SipHash.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileCacheKey.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileCacheKey.cpp
+<clickhouse_repo>/src/Interpreters/FileCache/FileSegmentKeyType.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileSegmentKeyType.cpp
+<clickhouse_repo>/src/Interpreters/FileCache/FileCacheOriginInfo.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileCache_fwd.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileCache_fwd_internal.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileCacheUtils.h
 ```
 
 ## File scope
@@ -234,26 +234,26 @@ Use the ClickHouse implementations only as behavioral references:
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Common/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/SipHash128.h
-/home/chang/OpenSource/velox/velox/ch/Common/SipHash128.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegmentKeyType.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegmentKeyType.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheOriginInfo.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCache_fwd.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCache_fwd_internal.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheKey.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheKey.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCacheUtils.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/LeafTypesTest.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/008-filecache-leaf-types-result.md
+<velox_repo>/velox/ch/Common/SipHash128.h
+<velox_repo>/velox/ch/Common/SipHash128.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/FileSegmentKeyType.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileSegmentKeyType.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheOriginInfo.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCache_fwd.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCache_fwd_internal.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheKey.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheKey.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCacheUtils.h
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/LeafTypesTest.cpp
+<clickhouse_repo>/port/task/result/008-filecache-leaf-types-result.md
 ```
 
 Every new Velox C++ and CMake file must begin with the Apache 2.0 license header
@@ -261,12 +261,16 @@ using the repository's existing comment form (`/* ... */` for C++, `#` for CMake
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -606,25 +610,19 @@ TEST(FileCacheUtilsTest, RoundUpActualOverflow)
 
 Reconfigure:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_008_leaf_types.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`. For `home-chang`, also add
+`-DVELOX_BUILD_TESTING=ON` (already present in the `root-oss` effective
+configuration). Redirect output to `<velox_build_dir>/configure_task_008_leaf_types.log`.
 
 Then try to build:
 
 ```bash
-if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+if <ninja> \
+  -C <velox_build_dir> \
   velox_ch_leaf_types_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_008_red.log 2>&1
+  > <velox_build_dir>/build_task_008_red.log 2>&1
 then
   echo "ERROR: red build unexpectedly succeeded"
   exit 1
@@ -1356,10 +1354,10 @@ The `add_subdirectory(tests)` block from Task 004 must remain.
 Reconfigure with the same command as Step 4, then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_leaf_types_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_008_leaf_types.log 2>&1
+  > <velox_build_dir>/build_task_008_leaf_types.log 2>&1
 ```
 
 Expected:
@@ -1372,10 +1370,10 @@ Exit code 0.
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_leaf_types_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_008_leaf_types.log 2>&1
+  > <velox_build_dir>/test_task_008_leaf_types.log 2>&1
 ```
 
 Expected:
@@ -1390,7 +1388,7 @@ Step 2 generator output with the test output and fix the implementation.
 - [ ] **Step 17: Inspect only task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -1423,7 +1421,7 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/008-filecache-leaf-types-result.md
+<clickhouse_repo>/port/task/result/008-filecache-leaf-types-result.md
 ```
 
 Use exactly this structure:
@@ -1456,10 +1454,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_008_leaf_types.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_008_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_008_leaf_types.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_008_leaf_types.log
+<velox_build_dir>/configure_task_008_leaf_types.log
+<velox_build_dir>/build_task_008_red.log
+<velox_build_dir>/build_task_008_leaf_types.log
+<velox_build_dir>/test_task_008_leaf_types.log
 ```
 
 ## Verification

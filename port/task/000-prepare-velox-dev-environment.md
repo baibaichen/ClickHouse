@@ -2,7 +2,7 @@
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task can run
 > in parallel with ClickHouse `FileCache` design review because it only touches the
-> Velox checkout/build directory under `/home/chang/OpenSource/velox`.
+> Velox checkout/build directory under `<velox_repo>`.
 
 ## Goal
 
@@ -14,23 +14,27 @@ Configure and verify the existing Velox Debug build directory that later
 Create or update only these generated artifacts:
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_filecache_env.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/cache_filecache_env.txt
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/targets_filecache_env.txt
-/home/chang/SourceCode/ClickHouse/port/task/result/000-prepare-velox-dev-environment-result.md
+<velox_build_dir>/configure_filecache_env.log
+<velox_build_dir>/cache_filecache_env.txt
+<velox_build_dir>/targets_filecache_env.txt
+<clickhouse_repo>/port/task/result/000-prepare-velox-dev-environment-result.md
 ```
 
 ## Steps
+
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
 
 - [ ] **Step 1: Confirm Velox checkout and tools**
 
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
-/usr/bin/cmake --version
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja --version
+<cmake> --version
+<ninja> --version
 ```
 
 Expected:
@@ -46,7 +50,7 @@ Ninja prints a version.
 Run:
 
 ```bash
-mkdir -p /home/chang/OpenSource/velox/cmake-build-debug-gcc13
+mkdir -p <velox_build_dir>
 ```
 
 Expected:
@@ -59,22 +63,16 @@ The command exits with code 0.
 
 Run:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  2>&1 | tee /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_filecache_env.log
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`, redirecting output to
+`<velox_build_dir>/configure_filecache_env.log`.
 
 Expected:
 
 ```text
 CMake generation completes successfully.
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build.ninja exists.
+<velox_build_dir>/build.ninja exists.
 ```
 
 - [ ] **Step 4: Capture the generated build configuration**
@@ -82,33 +80,39 @@ CMake generation completes successfully.
 Run:
 
 ```bash
-/usr/bin/cmake -LAH -N /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/cache_filecache_env.txt
+<cmake> -LAH -N <velox_build_dir> \
+  > <velox_build_dir>/cache_filecache_env.txt
 
 grep -E '^(CMAKE_BUILD_TYPE|CMAKE_MAKE_PROGRAM|VELOX_ENABLE_BENCHMARKS|CMAKE_C_COMPILER|CMAKE_CXX_COMPILER):' \
-  /home/chang/OpenSource/velox/cmake-build-debug-gcc13/cache_filecache_env.txt
+  <velox_build_dir>/cache_filecache_env.txt
 ```
 
 Expected:
 
 ```text
 CMAKE_BUILD_TYPE:STRING=Debug
-CMAKE_MAKE_PROGRAM:FILEPATH=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja
+CMAKE_MAKE_PROGRAM:FILEPATH=<ninja>
 VELOX_ENABLE_BENCHMARKS:BOOL=ON
 CMAKE_C_COMPILER and CMAKE_CXX_COMPILER are visible for later debugging.
 ```
+
+> **Note for `root-oss`:** CMake may auto-discover the Ninja executable and
+> populate `CMAKE_MAKE_PROGRAM` without an explicit `-DCMAKE_MAKE_PROGRAM`
+> flag on the configure command line. The cached resolved path must still equal
+> the selected profile's `<ninja>` value. If the two differ, reconfigure with
+> `-DCMAKE_MAKE_PROGRAM=<ninja>` appended to the profile recipe.
 
 - [ ] **Step 5: Capture available Ninja targets**
 
 Run:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   -t targets \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/targets_filecache_env.txt
+  > <velox_build_dir>/targets_filecache_env.txt
 
-wc -l /home/chang/OpenSource/velox/cmake-build-debug-gcc13/targets_filecache_env.txt
+wc -l <velox_build_dir>/targets_filecache_env.txt
 ```
 
 Expected:
@@ -122,10 +126,10 @@ targets_filecache_env.txt is non-empty.
 Create the result directory:
 
 ```bash
-mkdir -p /home/chang/SourceCode/ClickHouse/port/task/result
+mkdir -p <clickhouse_repo>/port/task/result
 ```
 
-Write `/home/chang/SourceCode/ClickHouse/port/task/result/000-prepare-velox-dev-environment-result.md`
+Write `<clickhouse_repo>/port/task/result/000-prepare-velox-dev-environment-result.md`
 with this structure:
 
 ````markdown
@@ -150,9 +154,9 @@ status: success
 ## Generated files
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_filecache_env.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/cache_filecache_env.txt
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/targets_filecache_env.txt
+<velox_build_dir>/configure_filecache_env.log
+<velox_build_dir>/cache_filecache_env.txt
+<velox_build_dir>/targets_filecache_env.txt
 ```
 
 ## CMake cache summary
@@ -182,7 +186,7 @@ under `Blocking errors` with the first actionable error, and still write the res
 Return a short message with:
 
 ```text
-Path to /home/chang/SourceCode/ClickHouse/port/task/result/000-prepare-velox-dev-environment-result.md
+Path to <clickhouse_repo>/port/task/result/000-prepare-velox-dev-environment-result.md
 One-line status
 ```
 

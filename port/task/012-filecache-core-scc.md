@@ -1,7 +1,7 @@
 # Task 012: `FileCache` Center SCC — Mandatory Compile/Link Closure
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
+> modifies the Velox checkout under `<velox_repo>` and writes one
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
@@ -101,7 +101,7 @@ link-time symbols. The single compile/link closure is required only for the
 ## Starting Point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected predecessors:
   Task 003: basic common shims (ClickHouseAliases, FileCacheBoundedQueue, etc.)
@@ -156,35 +156,35 @@ src/Interpreters/FileCache/QueryLimit.h / .cpp
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CacheUsage.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/IFileCachePriority.h / .cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/LRUFileCachePriority.h / .cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h / .cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SplitFileCachePriority.h / .cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/EvictionCandidates.h / .cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/CMakeLists.txt
+<velox_repo>/velox/ch/Interpreters/FileCache/CacheUsage.h
+<velox_repo>/velox/ch/Interpreters/FileCache/IFileCachePriority.h / .cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/LRUFileCachePriority.h / .cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h / .cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/SplitFileCachePriority.h / .cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/EvictionCandidates.h / .cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegmentInfo.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegment.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileSegment.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/Metadata.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/Metadata.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCache.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/FileCache.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/QueryLimit.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/QueryLimit.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/PriorityEvictionTest.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileSegmentInfoTest.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/MetadataTest.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/012-filecache-core-scc-result.md
+<velox_repo>/velox/ch/Interpreters/FileCache/FileSegmentInfo.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileSegment.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileSegment.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/Metadata.h
+<velox_repo>/velox/ch/Interpreters/FileCache/Metadata.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCache.h
+<velox_repo>/velox/ch/Interpreters/FileCache/FileCache.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/QueryLimit.h
+<velox_repo>/velox/ch/Interpreters/FileCache/QueryLimit.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/PriorityEvictionTest.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/FileSegmentInfoTest.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/MetadataTest.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp
+<clickhouse_repo>/port/task/result/012-filecache-core-scc-result.md
 ```
 
 Every new Velox C++ and CMake file must begin with the Apache 2.0 license
@@ -192,10 +192,14 @@ header. Use `/* ... */` for C++ and `#` for CMake, matching the repository style
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -505,25 +509,19 @@ which proves destruction occurred after lock release without using sleep.
 
 Configure:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_012_scc.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`. For `home-chang`, also add
+`-DVELOX_BUILD_TESTING=ON` (already present in the `root-oss` effective
+configuration). Redirect output to `<velox_build_dir>/configure_task_012_scc.log`.
 
 Then attempt the build, expecting failure:
 
 ```bash
-if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+if <ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_core_scc_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_red.log 2>&1
+  > <velox_build_dir>/build_task_012_red.log 2>&1
 then
   echo "ERROR: red build unexpectedly succeeded"
   exit 1
@@ -1094,10 +1092,10 @@ shared tests CMake file.
 Reconfigure using the same command as Step 8, then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_core_scc_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_scc.log 2>&1
+  > <velox_build_dir>/build_task_012_scc.log 2>&1
 ```
 
 Expected: exit code 0. This is the single compile/link closure that proves the
@@ -1107,10 +1105,10 @@ SCC is complete.
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_filecache_core_scc_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_012_scc.log 2>&1
+  > <velox_build_dir>/test_task_012_scc.log 2>&1
 ```
 
 Expected: `100% tests passed, 0 tests failed`.
@@ -1118,7 +1116,7 @@ Expected: `100% tests passed, 0 tests failed`.
 - [ ] **Step 18: Inspect task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -1160,7 +1158,7 @@ this task, changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/012-filecache-core-scc-result.md
+<clickhouse_repo>/port/task/result/012-filecache-core-scc-result.md
 ```
 
 Use exactly this structure:
@@ -1193,10 +1191,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_012_scc.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_012_scc.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_012_scc.log
+<velox_build_dir>/configure_task_012_scc.log
+<velox_build_dir>/build_task_012_red.log
+<velox_build_dir>/build_task_012_scc.log
+<velox_build_dir>/test_task_012_scc.log
 ```
 
 ## Verification

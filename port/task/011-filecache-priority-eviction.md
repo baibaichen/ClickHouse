@@ -7,7 +7,7 @@
 > and the only green build for this stage.
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies only `/home/chang/OpenSource/velox` plus its result handoff. Do not
+> modifies only `<velox_repo>` plus its result handoff. Do not
 > modify ClickHouse source. Do not stage or commit either repository.
 
 ## Goal
@@ -62,18 +62,18 @@ src/Interpreters/FileCache/EvictionCandidates.h / .cpp
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/CacheUsage.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/IFileCachePriority.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/IFileCachePriority.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/LRUFileCachePriority.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/LRUFileCachePriority.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SLRUFileCachePriority.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SplitFileCachePriority.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/SplitFileCachePriority.cpp
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/EvictionCandidates.h
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/EvictionCandidates.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/011-filecache-priority-eviction-result.md
+<velox_repo>/velox/ch/Interpreters/FileCache/CacheUsage.h
+<velox_repo>/velox/ch/Interpreters/FileCache/IFileCachePriority.h
+<velox_repo>/velox/ch/Interpreters/FileCache/IFileCachePriority.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/LRUFileCachePriority.h
+<velox_repo>/velox/ch/Interpreters/FileCache/LRUFileCachePriority.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/SLRUFileCachePriority.h
+<velox_repo>/velox/ch/Interpreters/FileCache/SLRUFileCachePriority.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/SplitFileCachePriority.h
+<velox_repo>/velox/ch/Interpreters/FileCache/SplitFileCachePriority.cpp
+<velox_repo>/velox/ch/Interpreters/FileCache/EvictionCandidates.h
+<velox_repo>/velox/ch/Interpreters/FileCache/EvictionCandidates.cpp
+<clickhouse_repo>/port/task/result/011-filecache-priority-eviction-result.md
 ```
 
 Do not create or modify CMake/test files in this task. Task 012 owns them.
@@ -145,7 +145,7 @@ EvictionCandidates:
 - [ ] **Step 1: Confirm the atomic-batch baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -225,7 +225,7 @@ structs. It is expected to remain unregistered until Task 012.
 - [ ] **Step 7: Run structural parity checks**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 
 for symbol in \
   'enum class EvictionCursor' \
@@ -239,7 +239,7 @@ for symbol in \
   'is_total_space_cleanup'
 do
   rg -n "$symbol" velox/ch/Interpreters/FileCache \
-    >> cmake-build-debug-gcc13/check_task_011_priority_symbols.log
+    >> <velox_build_dir>/check_task_011_priority_symbols.log
 done
 
 if rg -n 'FileCacheReserveStat.*stub|struct KeyMetadata.*stub|class FileCache.*stub' \
@@ -266,7 +266,7 @@ Task 012.
 - [ ] **Step 8: Inspect task-owned files**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short
 git --no-pager diff -- \
   velox/ch/Interpreters/FileCache/CacheUsage.h \
@@ -294,7 +294,7 @@ All changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/011-filecache-priority-eviction-result.md
+<clickhouse_repo>/port/task/result/011-filecache-priority-eviction-result.md
 ```
 
 Include:

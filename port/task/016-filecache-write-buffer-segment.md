@@ -8,7 +8,7 @@
 > before this task begins.
 >
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes
+> modifies the Velox checkout under `<velox_repo>` and writes
 > one result file under this ClickHouse checkout. Do not modify ClickHouse
 > source files. Do not commit or stage either repository.
 
@@ -96,7 +96,7 @@ Deliverable: `velox_ch_write_buffer_test` passes all scenarios.
 ## Starting point
 
 ```text
-Velox repository:    /home/chang/OpenSource/velox
+Velox repository:    <velox_repo>
 Required branch:     filecache
 Expected HEAD:       descendant of the task-014 result commit
                      (FileSegment, reserve, write, completePartAndResetDownloader,
@@ -111,18 +111,18 @@ is absent.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/2-file-cache/09-filecache-file-segment-design.md
-/home/chang/SourceCode/ClickHouse/port/01-filecache-port-order-design.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/2-file-cache/09-filecache-file-segment-design.md
+<clickhouse_repo>/port/01-filecache-port-order-design.md
   (section "阶段 4：中心 SCC 第二组：FileSegment", subsection "可以 stub 的内容")
-/home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
+<clickhouse_repo>/port/task/result/014-filecache-buffered-input-result.md
 ```
 
 Use the ClickHouse implementations **only** as behavioral references:
 
 ```text
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/WriteBufferToFileSegment.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/WriteBufferToFileSegment.cpp
+<clickhouse_repo>/src/Interpreters/FileCache/WriteBufferToFileSegment.h
+<clickhouse_repo>/src/Interpreters/FileCache/WriteBufferToFileSegment.cpp
 ```
 
 ## File scope
@@ -130,22 +130,22 @@ Use the ClickHouse implementations **only** as behavioral references:
 Modify in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/IO/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/IO/tests/CMakeLists.txt
+<velox_repo>/velox/ch/IO/CMakeLists.txt
+<velox_repo>/velox/ch/IO/tests/CMakeLists.txt
 ```
 
 Create in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/IO/WriteBufferToFileSegment.h
-/home/chang/OpenSource/velox/velox/ch/IO/WriteBufferToFileSegment.cpp
-/home/chang/OpenSource/velox/velox/ch/IO/tests/WriteBufferToFileSegmentTest.cpp
+<velox_repo>/velox/ch/IO/WriteBufferToFileSegment.h
+<velox_repo>/velox/ch/IO/WriteBufferToFileSegment.cpp
+<velox_repo>/velox/ch/IO/tests/WriteBufferToFileSegmentTest.cpp
 ```
 
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/016-filecache-write-buffer-segment-result.md
+<clickhouse_repo>/port/task/result/016-filecache-write-buffer-segment-result.md
 ```
 
 Every new Velox C++ file must begin with the Apache 2.0 Facebook license
@@ -153,10 +153,14 @@ header from `port/task/003-filecache-basic-common-shims.md`.
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 
@@ -302,20 +306,15 @@ TEST(WriteBufferToFileSegmentTest, ReadBackAfterFinalizeReturnsEmptyWhenNoBytesW
 Reconfigure and build the skeleton (must compile):
 
 ```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_016.log 2>&1
+# Follow the selected profile's configure recipe from ENVIRONMENT.md.
+# For root-oss: source <velox_env> first. For home-chang: add -DVELOX_BUILD_TESTING=ON
+# (already included in the root-oss effective configuration).
+# Redirect to <velox_build_dir>/configure_016.log.
 
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_write_buffer_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_red.log 2>&1
+  > <velox_build_dir>/build_016_red.log 2>&1
 echo "exit: $?"
 ```
 
@@ -693,7 +692,7 @@ Reject any skipped/disabled case before the final build:
 
 ```bash
 if rg -n 'GTEST_SKIP|DISABLED_' \
-  /home/chang/OpenSource/velox/velox/ch/IO/tests/WriteBufferToFileSegmentTest.cpp
+  <velox_repo>/velox/ch/IO/tests/WriteBufferToFileSegmentTest.cpp
 then
   echo "ERROR: skipped WriteBufferToFileSegment test remains"
   exit 1
@@ -703,10 +702,10 @@ fi
 Then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_write_buffer_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_write_buffer.log 2>&1
+  > <velox_build_dir>/build_016_write_buffer.log 2>&1
 echo "exit: $?"
 ```
 
@@ -716,10 +715,10 @@ Expected exit code: 0.
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_write_buffer_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_016_write_buffer.log 2>&1
+  > <velox_build_dir>/test_016_write_buffer.log 2>&1
 echo "exit: $?"
 ```
 
@@ -732,7 +731,7 @@ Expected:
 - [ ] **Step 9: Inspect task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -757,7 +756,7 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/016-filecache-write-buffer-segment-result.md
+<clickhouse_repo>/port/task/result/016-filecache-write-buffer-segment-result.md
 ```
 
 Use exactly this structure:
@@ -790,10 +789,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_016.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_016_write_buffer.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_016_write_buffer.log
+<velox_build_dir>/configure_016.log
+<velox_build_dir>/build_016_red.log
+<velox_build_dir>/build_016_write_buffer.log
+<velox_build_dir>/test_016_write_buffer.log
 ```
 
 ## Verification

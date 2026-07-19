@@ -39,7 +39,7 @@ Deliverables:
 ## Starting point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected HEAD:    descendant of the task-014 result commit
 ```
@@ -49,10 +49,10 @@ Expected HEAD:    descendant of the task-014 result commit
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/03-filecache-buffered-input-design.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/01-filecache-read-context-design.md
-/home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/3-consumers/03-filecache-buffered-input-design.md
+<clickhouse_repo>/port/3-consumers/01-filecache-read-context-design.md
+<clickhouse_repo>/port/task/result/014-filecache-buffered-input-result.md
 ```
 
 ## File scope
@@ -60,23 +60,23 @@ Read before editing:
 Create in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp
-/home/chang/OpenSource/velox/velox/ch/benchmarks/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/benchmarks/FileCacheSeekBenchmark.cpp
+<velox_repo>/velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp
+<velox_repo>/velox/ch/benchmarks/CMakeLists.txt
+<velox_repo>/velox/ch/benchmarks/FileCacheSeekBenchmark.cpp
 ```
 
 Modify in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/CMakeLists.txt
+<velox_repo>/velox/ch/CMakeLists.txt
+<velox_repo>/velox/ch/Disks/IO/CMakeLists.txt
+<velox_repo>/velox/ch/Disks/IO/tests/CMakeLists.txt
 ```
 
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-velox-e2e-result.md
+<clickhouse_repo>/port/task/result/015-filecache-velox-e2e-result.md
 ```
 
 Every new Velox C++ file must begin with the Apache 2.0 Facebook license
@@ -84,10 +84,14 @@ header from `port/task/003-filecache-basic-common-shims.md`.
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the baselines**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -280,17 +284,17 @@ contracts to verify per test:
 - [ ] **Step 5: Build and run the Velox E2E tests**
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_e2e_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_e2e.log 2>&1
+  > <velox_build_dir>/build_015_e2e.log 2>&1
 echo "exit: $?"
 
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_filecache_e2e_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_015_e2e.log 2>&1
+  > <velox_build_dir>/test_015_e2e.log 2>&1
 echo "exit: $?"
 ```
 
@@ -435,22 +439,22 @@ int main(int argc, char** argv) {
 Implement `setupFixture()` to initialize the benchmark context, then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_seek_benchmark \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_benchmark.log 2>&1
+  > <velox_build_dir>/build_015_benchmark.log 2>&1
 echo "exit: $?"
 ```
 
 Run the benchmark (short warmup to confirm it does not crash):
 
 ```bash
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/velox/ch/benchmarks/velox_ch_filecache_seek_benchmark \
+<velox_build_dir>/velox/ch/benchmarks/velox_ch_filecache_seek_benchmark \
   --bm_min_iters=3 \
   --file_size_mb=8 \
   --cache_size_mb=32 \
-  --cache_dir=/home/chang/OpenSource/velox/cmake-build-debug-gcc13/fc_bench \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/bench_015_seek.log 2>&1
+  --cache_dir=<velox_build_dir>/fc_bench \
+  > <velox_build_dir>/bench_015_seek.log 2>&1
 echo "exit: $?"
 ```
 
@@ -462,7 +466,7 @@ variants.
 Inspect the diff for Velox production files:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff -- \
   velox/ch/Disks/IO/FileCacheBufferedInput.cpp \
   velox/ch/Disks/IO/FileCacheInputStream.cpp \
@@ -476,7 +480,7 @@ file before stating `status: success`.
 - [ ] **Step 8: Inspect all task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 
@@ -495,7 +499,7 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-velox-e2e-result.md
+<clickhouse_repo>/port/task/result/015-filecache-velox-e2e-result.md
 ```
 
 Use exactly this structure:
@@ -528,10 +532,10 @@ Velox branch, HEAD, git status --short
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_e2e.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_015_e2e.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_benchmark.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/bench_015_seek.log
+<velox_build_dir>/build_015_e2e.log
+<velox_build_dir>/test_015_e2e.log
+<velox_build_dir>/build_015_benchmark.log
+<velox_build_dir>/bench_015_seek.log
 ```
 
 ## Test results

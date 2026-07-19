@@ -1,7 +1,7 @@
 # Task 001: Add `velox/ch` Skeleton Target
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task only
-> touches the Velox checkout under `/home/chang/OpenSource/velox`. Do not modify
+> touches the Velox checkout under `<velox_repo>`. Do not modify
 > ClickHouse source files for this task.
 
 ## Goal
@@ -16,9 +16,9 @@ CMake target that builds successfully. This unblocks later tasks that add
 Read these before editing Velox:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/00-filecache-velox-migration.md
-/home/chang/SourceCode/ClickHouse/port/01-filecache-port-order-design.md
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/00-filecache-velox-migration.md
+<clickhouse_repo>/port/01-filecache-port-order-design.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
 ```
 
 ## Files
@@ -26,30 +26,34 @@ Read these before editing Velox:
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/CMakeLists.txt
+<velox_repo>/velox/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.cpp
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.h
-/home/chang/OpenSource/velox/velox/ch/IO/.gitkeep
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/.gitkeep
-/home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/.gitkeep
-/home/chang/SourceCode/ClickHouse/port/task/result/001-velox-ch-skeleton-result.md
+<velox_repo>/velox/ch/CMakeLists.txt
+<velox_repo>/velox/ch/Common/CMakeLists.txt
+<velox_repo>/velox/ch/Common/FileCacheSkeleton.cpp
+<velox_repo>/velox/ch/Common/FileCacheSkeleton.h
+<velox_repo>/velox/ch/IO/.gitkeep
+<velox_repo>/velox/ch/Disks/IO/.gitkeep
+<velox_repo>/velox/ch/Interpreters/FileCache/.gitkeep
+<clickhouse_repo>/port/task/result/001-velox-ch-skeleton-result.md
 ```
 
 ## Steps
+
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
 
 - [ ] **Step 1: Confirm clean Velox starting point**
 
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 ```
 
@@ -66,15 +70,15 @@ Run:
 
 ```bash
 mkdir -p \
-  /home/chang/OpenSource/velox/velox/ch/Common \
-  /home/chang/OpenSource/velox/velox/ch/IO \
-  /home/chang/OpenSource/velox/velox/ch/Disks/IO \
-  /home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache
+  <velox_repo>/velox/ch/Common \
+  <velox_repo>/velox/ch/IO \
+  <velox_repo>/velox/ch/Disks/IO \
+  <velox_repo>/velox/ch/Interpreters/FileCache
 
 touch \
-  /home/chang/OpenSource/velox/velox/ch/IO/.gitkeep \
-  /home/chang/OpenSource/velox/velox/ch/Disks/IO/.gitkeep \
-  /home/chang/OpenSource/velox/velox/ch/Interpreters/FileCache/.gitkeep
+  <velox_repo>/velox/ch/IO/.gitkeep \
+  <velox_repo>/velox/ch/Disks/IO/.gitkeep \
+  <velox_repo>/velox/ch/Interpreters/FileCache/.gitkeep
 ```
 
 Expected:
@@ -85,7 +89,7 @@ Directories exist.
 
 - [ ] **Step 3: Add minimal source/header**
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.h`:
+Create `<velox_repo>/velox/ch/Common/FileCacheSkeleton.h`:
 
 ```cpp
 #pragma once
@@ -97,7 +101,7 @@ bool fileCacheSkeletonLinked();
 } // namespace facebook::velox::ch
 ```
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.cpp`:
+Create `<velox_repo>/velox/ch/Common/FileCacheSkeleton.cpp`:
 
 ```cpp
 #include "velox/ch/Common/FileCacheSkeleton.h"
@@ -119,13 +123,13 @@ Files compile without depending on future FileCache code.
 
 - [ ] **Step 4: Add `velox/ch` CMake files**
 
-Create `/home/chang/OpenSource/velox/velox/ch/CMakeLists.txt`:
+Create `<velox_repo>/velox/ch/CMakeLists.txt`:
 
 ```cmake
 add_subdirectory(Common)
 ```
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt`:
+Create `<velox_repo>/velox/ch/Common/CMakeLists.txt`:
 
 ```cmake
 velox_add_library(
@@ -147,7 +151,7 @@ Expected:
 
 - [ ] **Step 5: Register `velox/ch` in top-level Velox CMake**
 
-Modify `/home/chang/OpenSource/velox/velox/CMakeLists.txt`.
+Modify `<velox_repo>/velox/CMakeLists.txt`.
 
 Add this line after `add_subdirectory(common)`:
 
@@ -169,16 +173,10 @@ add_subdirectory(core)
 
 Run:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_001_velox_ch_skeleton.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`, redirecting output to
+`<velox_build_dir>/configure_task_001_velox_ch_skeleton.log`.
 
 Expected:
 
@@ -192,10 +190,10 @@ The log ends with "Build files have been written to".
 Run:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_001_velox_ch_skeleton.log 2>&1
+  > <velox_build_dir>/build_task_001_velox_ch_skeleton.log 2>&1
 ```
 
 Expected:
@@ -210,17 +208,17 @@ The build log shows `velox_ch_filecache` was built or was already up to date.
 Run:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   -t targets \
   | grep '^velox_ch_filecache:' \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/target_task_001_velox_ch_filecache.txt
+  > <velox_build_dir>/target_task_001_velox_ch_filecache.txt
 ```
 
 Expected:
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/target_task_001_velox_ch_filecache.txt
+<velox_build_dir>/target_task_001_velox_ch_filecache.txt
 contains a `velox_ch_filecache:` target line.
 ```
 
@@ -229,10 +227,10 @@ contains a `velox_ch_filecache:` target line.
 Create the result directory:
 
 ```bash
-mkdir -p /home/chang/SourceCode/ClickHouse/port/task/result
+mkdir -p <clickhouse_repo>/port/task/result
 ```
 
-Write `/home/chang/SourceCode/ClickHouse/port/task/result/001-velox-ch-skeleton-result.md`
+Write `<clickhouse_repo>/port/task/result/001-velox-ch-skeleton-result.md`
 with this structure:
 
 ````markdown
@@ -270,9 +268,9 @@ velox/ch/Interpreters/FileCache/.gitkeep
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_001_velox_ch_skeleton.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_001_velox_ch_skeleton.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/target_task_001_velox_ch_filecache.txt
+<velox_build_dir>/configure_task_001_velox_ch_skeleton.log
+<velox_build_dir>/build_task_001_velox_ch_skeleton.log
+<velox_build_dir>/target_task_001_velox_ch_filecache.txt
 ```
 
 ## Build result
@@ -302,7 +300,7 @@ under `Blocking errors` with the first actionable error, and still write the res
 Return a short message with:
 
 ```text
-Path to /home/chang/SourceCode/ClickHouse/port/task/result/001-velox-ch-skeleton-result.md
+Path to <clickhouse_repo>/port/task/result/001-velox-ch-skeleton-result.md
 One-line status
 ```
 

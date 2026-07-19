@@ -8,7 +8,7 @@
 > `FileCacheInputStream` must be implemented from task 014.
 >
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes
+> modifies the Velox checkout under `<velox_repo>` and writes
 > one result file under this ClickHouse checkout. Do not modify ClickHouse
 > source files. Do not commit or stage either repository.
 
@@ -48,7 +48,7 @@ Deliverable: `velox_ch_observability_test` and
 ## Starting point
 
 ```text
-Velox repository:    /home/chang/OpenSource/velox
+Velox repository:    <velox_repo>
 Required branch:     filecache
 Expected HEAD:       descendant of the task-016 result commit
 ```
@@ -59,10 +59,10 @@ Verify the four shims exist and are no-ops:
 
 ```bash
 grep -c "noreturn\|inline.*{}" \
-  /home/chang/OpenSource/velox/velox/ch/Common/QueryStatus.h \
-  /home/chang/OpenSource/velox/velox/ch/Common/CurrentMetrics.h \
-  /home/chang/OpenSource/velox/velox/ch/Common/ProfileEvents.h \
-  /home/chang/OpenSource/velox/velox/ch/Common/logger_useful.h
+  <velox_repo>/velox/ch/Common/QueryStatus.h \
+  <velox_repo>/velox/ch/Common/CurrentMetrics.h \
+  <velox_repo>/velox/ch/Common/ProfileEvents.h \
+  <velox_repo>/velox/ch/Common/logger_useful.h
 ```
 
 Record the output in the result file. Each file must show at least one
@@ -73,25 +73,25 @@ inline empty body `{}` indicating the current no-op stubs.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/02-filecache-basic-shims-design.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/03-filecache-metrics-debug-design.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/06-filecache-caller-token-design.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/03-filecache-buffered-input-design.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/1-dependencies/02-filecache-basic-shims-design.md
+<clickhouse_repo>/port/1-dependencies/03-filecache-metrics-debug-design.md
+<clickhouse_repo>/port/1-dependencies/06-filecache-caller-token-design.md
+<clickhouse_repo>/port/3-consumers/03-filecache-buffered-input-design.md
   (section "FileCacheInputStream::Next 的主调用关系")
-/home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
-/home/chang/SourceCode/ClickHouse/port/task/result/015-filecache-velox-e2e-result.md
+<clickhouse_repo>/port/task/result/014-filecache-buffered-input-result.md
+<clickhouse_repo>/port/task/result/015-filecache-velox-e2e-result.md
 ```
 
 Reference ClickHouse implementations for behavioral semantics only — do not
 copy CH-specific infrastructure:
 
 ```text
-/home/chang/SourceCode/ClickHouse/src/Common/logger_useful.h
-/home/chang/SourceCode/ClickHouse/src/Common/CurrentMetrics.h
-/home/chang/SourceCode/ClickHouse/src/Common/ProfileEvents.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/EvictionCandidates.cpp
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/SLRUFileCachePriority.cpp
+<clickhouse_repo>/src/Common/logger_useful.h
+<clickhouse_repo>/src/Common/CurrentMetrics.h
+<clickhouse_repo>/src/Common/ProfileEvents.h
+<clickhouse_repo>/src/Interpreters/FileCache/EvictionCandidates.cpp
+<clickhouse_repo>/src/Interpreters/FileCache/SLRUFileCachePriority.cpp
 ```
 
 ## File scope
@@ -99,40 +99,44 @@ copy CH-specific infrastructure:
 Modify in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/logger_useful.h
-/home/chang/OpenSource/velox/velox/ch/Common/CurrentMetrics.h
-/home/chang/OpenSource/velox/velox/ch/Common/ProfileEvents.h
-/home/chang/OpenSource/velox/velox/ch/Common/QueryStatus.h
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheInputStream.cpp
+<velox_repo>/velox/ch/Common/logger_useful.h
+<velox_repo>/velox/ch/Common/CurrentMetrics.h
+<velox_repo>/velox/ch/Common/ProfileEvents.h
+<velox_repo>/velox/ch/Common/QueryStatus.h
+<velox_repo>/velox/ch/Disks/IO/FileCacheInputStream.cpp
 ```
 
 Modify in the Velox checkout (add tests subdirectory if absent):
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Common/tests/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Common/CMakeLists.txt
+<velox_repo>/velox/ch/Common/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Disks/IO/tests/CMakeLists.txt
 ```
 
 Create in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/tests/ObservabilityTest.cpp
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheCancellationTest.cpp
+<velox_repo>/velox/ch/Common/tests/ObservabilityTest.cpp
+<velox_repo>/velox/ch/Disks/IO/tests/FileCacheCancellationTest.cpp
 ```
 
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/017-filecache-observability-cancellation-result.md
+<clickhouse_repo>/port/task/result/017-filecache-observability-cancellation-result.md
 ```
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -309,21 +313,16 @@ TEST(FileCacheCancellationTest, CancellationDoesNotLeakDownloaderLease) {
 Build the skeleton (must compile):
 
 ```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_017.log 2>&1
+# Follow the selected profile's configure recipe from ENVIRONMENT.md.
+# For root-oss: source <velox_env> first. For home-chang: add -DVELOX_BUILD_TESTING=ON
+# (already included in the root-oss effective configuration).
+# Redirect to <velox_build_dir>/configure_017.log.
 
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_observability_test \
   velox_ch_cancellation_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_skeleton.log 2>&1
+  > <velox_build_dir>/build_017_skeleton.log 2>&1
 echo "exit: $?"
 ```
 
@@ -880,8 +879,8 @@ Reject any skipped/disabled case before the final build:
 
 ```bash
 if rg -n 'GTEST_SKIP|DISABLED_' \
-  /home/chang/OpenSource/velox/velox/ch/Common/tests/ObservabilityTest.cpp \
-  /home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheCancellationTest.cpp
+  <velox_repo>/velox/ch/Common/tests/ObservabilityTest.cpp \
+  <velox_repo>/velox/ch/Disks/IO/tests/FileCacheCancellationTest.cpp
 then
   echo "ERROR: skipped observability/cancellation test remains"
   exit 1
@@ -891,19 +890,19 @@ fi
 Then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_observability_test \
   velox_ch_cancellation_test \
   velox_ch_common_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_observability.log 2>&1
+  > <velox_build_dir>/build_017_observability.log 2>&1
 echo "exit: $?"
 
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^(velox_ch_observability_test|velox_ch_cancellation_test|velox_ch_common_test)$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_observability.log 2>&1
+  > <velox_build_dir>/test_017_observability.log 2>&1
 echo "exit: $?"
 ```
 
@@ -918,17 +917,17 @@ Also build the E2E test from Task 015 to confirm the shim changes do not
 break existing coverage:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_e2e_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_regression.log 2>&1
+  > <velox_build_dir>/build_017_regression.log 2>&1
 echo "exit: $?"
 
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_filecache_e2e_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_regression.log 2>&1
+  > <velox_build_dir>/test_017_regression.log 2>&1
 echo "exit: $?"
 ```
 
@@ -942,7 +941,7 @@ Build exit code: 0.
 - [ ] **Step 11: Inspect task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -976,7 +975,7 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/017-filecache-observability-cancellation-result.md
+<clickhouse_repo>/port/task/result/017-filecache-observability-cancellation-result.md
 ```
 
 Use exactly this structure:
@@ -1009,12 +1008,12 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_017.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_skeleton.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_observability.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_observability.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_017_regression.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_017_regression.log
+<velox_build_dir>/configure_017.log
+<velox_build_dir>/build_017_skeleton.log
+<velox_build_dir>/build_017_observability.log
+<velox_build_dir>/test_017_observability.log
+<velox_build_dir>/build_017_regression.log
+<velox_build_dir>/test_017_regression.log
 ```
 
 ## Test results

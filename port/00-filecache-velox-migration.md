@@ -2,7 +2,7 @@
 
 ## 目标
 
-把 ClickHouse `FileCache` 的核心算法和语义迁移到 `/home/chang/OpenSource/velox`，
+把 ClickHouse `FileCache` 的核心算法和语义迁移到 `<velox_repo>`，
 但不使用 Velox `AsyncDataCache` / `SsdCache` 重新实现这些算法。
 
 迁移后需要保留：

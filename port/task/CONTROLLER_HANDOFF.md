@@ -13,6 +13,7 @@ replace stale snapshot data with:
 latest accepted task
 latest implementation and receipt commit SHAs
 next task and its state
+active environment_profile (re-verify after acceptance or interruption)
 current dirty files, logs, and receipt status when work is in progress
 new Controller amendments or unresolved blockers
 ```
@@ -25,18 +26,23 @@ history.
 ````text
 Continue the FileCache port as the Controller, using file-only coordination.
 
+Before acting on any instruction below: read `port/task/ENVIRONMENT.md` in this
+ClickHouse checkout (the directory you are currently in — no absolute path
+required), select the active profile, and resolve all logical keys
+(`<clickhouse_repo>`, `<velox_repo>`, `<ninja>`, etc.) to their concrete values.
+
 Repositories:
-- Protocol and receipts: /home/chang/SourceCode/ClickHouse
-- Implementation:       /home/chang/OpenSource/velox
-- Future Gluten work:   /home/chang/SourceCode/gluten1
+- Protocol and receipts: <clickhouse_repo>
+- Implementation:       <velox_repo>
+- Future Gluten work:   <gluten_repo>
 
 Read before any action:
-- /home/chang/SourceCode/ClickHouse/port/task/EXECUTION_PROTOCOL.md
-- /home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-- /home/chang/SourceCode/ClickHouse/port/task/CONTROLLER_HANDOFF.md
+- <clickhouse_repo>/port/task/EXECUTION_PROTOCOL.md
+- <clickhouse_repo>/port/task/ENVIRONMENT.md
+- <clickhouse_repo>/port/task/CONTROLLER_HANDOFF.md
 - the current numbered task file
 - every accepted prerequisite receipt under
-  /home/chang/SourceCode/ClickHouse/port/task/result/
+  <clickhouse_repo>/port/task/result/
 - applicable repository-local instruction files
 
 Authority order:
@@ -68,24 +74,26 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after corrected Task 003 acceptance:
+Current verified snapshot after corrected Task 004 acceptance:
+
+environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
-- ClickHouse accepted receipt HEAD:
-    Task 008 receipt commit containing this handoff update; resolve with
-    `git log -1 --oneline` because a commit cannot contain its own SHA.
+- ClickHouse accepted receipt HEAD: 6c57283d31775c1bcf8e53b251829a0c4a767a3c
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    c755512a8 Task 003: Correct FileCache common shims
+    5ed26f9413f4e52ef95830b8e4d6a1d91d1a7fe7 Task 004: Correct StatusFile diagnostics
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
       ClickHouse: c30a218c481
       Corrective Velox: c755512a8
-      Corrective ClickHouse: this acceptance commit
+      Corrective ClickHouse: 172d11361df
     Task 004
       Velox:      f948fb6a4
       ClickHouse: d20e9b241d4
+      Corrective Velox: 5ed26f9413f4e52ef95830b8e4d6a1d91d1a7fe7
+      Corrective ClickHouse: 6c57283d31775c1bcf8e53b251829a0c4a767a3c
     Task 005
       Velox:      b21177a51
       ClickHouse: dbe95a0fc7b
@@ -94,17 +102,17 @@ Current verified snapshot after corrected Task 003 acceptance:
       ClickHouse: 5af6ab908fe
     Task 007
       Velox:      711a84850
-     ClickHouse: c9a5c35be06
-   Task 008
-     Velox:      4b14de7f1
-     ClickHouse: this Task 008 receipt commit
-- The original acceptance history remains in the receipts, but Tasks 003, 004,
-  006, 007, and 008 are reopened by the source-contract review.
+      ClickHouse: c9a5c35be06
+    Task 008
+      Velox:      4b14de7f1
+      ClickHouse: 1275836e76a
+- Tasks 003 and 004 corrected and accepted.
+- Tasks 006, 007, and 008 remain reopened by the source-contract review;
+  corrective passes required before Task 009.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
-- Task 009 and Task 011 task contracts passed the read-only audit, but no Worker
-  may start while the documentation repair is under user review.
-- The Task 003 dependency preflight and corrective implementation are complete.
-  The accepted implementation preserves:
+- Task 009 and Task 011 task contracts passed the read-only audit.
+- Task 009 is not_started.
+- The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
    Velox-style filesystem exceptions without structured errno;
@@ -114,42 +122,27 @@ Current verified snapshot after corrected Task 003 acceptance:
 
 Current task:
 
-- Corrected Task 003 is accepted at Velox `c755512a8`.
-- Velox is clean at `c755512a8`.
-- Reopened Task 004 dependency preflight is complete and blocked before coding.
-- Task 009 is `not_started`.
-- The Task 004 guards contract is clear and needs no corrective change.
-- The user approved all Task 004 `StatusFile::writeFullInfo` dependency
-  decisions:
-    generate a private revision header from explicit `VELOX_BUILD_REVISION` or
-    full configure-time Git HEAD and fail when neither is available;
-    follow CH construction-time local `YYYY-MM-DD HH:MM:SS`;
-    use `folly::writeFull` for both fills and propagate failures;
-    and retain same-process coverage plus add `fork`/`waitpid` cross-process
-    coverage.
-- The canonical shim design and the sole corrective Task 004 contract now
-  contain those decisions. Execution is paused for user review of the revised
-  documents; do not modify Velox code before approval.
-- Persistent Task 003 corrective logs belong under:
-    /home/chang/OpenSource/velox/cmake-build-debug-gcc13/
+- Corrected Tasks 003 and 004 are accepted.
+- Velox is clean at `5ed26f9413f4e52ef95830b8e4d6a1d91d1a7fe7`.
+- Task 005 remains accepted.
+- Corrected Task 006 is the next work item, followed by corrected Tasks 007
+  and 008, before dispatching Task 009.
+- Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Stay paused until the user approves the revised Task 004 design/task
-   documents.
-2. After approval, repair Task 004 with a new corrective commit.
-3. Continue with reopened Tasks 006, 007, and 008 under the same dependency gate;
-   do not rewrite existing commits or receipt history.
-4. Run the accumulated Task 003-008 regression and complete Controller review.
-5. Only then dispatch Task 009.
-6. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
-7. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
+1. Dispatch corrective Task 006 worker.
+2. After Task 006 acceptance, dispatch corrective Task 007, then Task 008.
+3. Run the accumulated Task 003-008 regression and complete Controller review.
+4. Only then dispatch Task 009.
+5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
+6. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: user review of revised Task 004 documents.
-- Corrected Task 003 is accepted. Repair reopened Tasks 004, 006, 007, and 008
-  before starting Task 009.
+- Current stop condition: none; execution may proceed.
+- Corrected Tasks 003 and 004 are accepted. Repair reopened Tasks 006, 007,
+  and 008 before starting Task 009.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
@@ -189,7 +182,7 @@ Special task rules:
 
 Controller review requirements:
 
-- Follow /home/chang/SourceCode/ClickHouse/.claude/skills/review/SKILL.md.
+- Follow <clickhouse_repo>/.claude/skills/review/SKILL.md.
 - Verify contract, impacted surface, failure paths, ownership, concurrency,
   lifecycle, error propagation, CMake registration, test discovery, skipped or
   disabled tests, and false-green risks.

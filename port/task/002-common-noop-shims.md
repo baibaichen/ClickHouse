@@ -1,7 +1,7 @@
 # Task 002: Replace Skeleton with Common No-op Shims
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task only
-> touches the Velox checkout under `/home/chang/OpenSource/velox`.
+> touches the Velox checkout under `<velox_repo>`.
 
 ## Goal
 
@@ -15,7 +15,7 @@ sites compilable during the algorithm port.
 Work in Velox:
 
 ```text
-Repository: /home/chang/OpenSource/velox
+Repository: <velox_repo>
 Branch:     filecache
 Base commit to amend: 9f7652f64 Add initial `velox/ch` FileCache skeleton
 ```
@@ -30,9 +30,9 @@ Do not add `.gitkeep` files.
 Read these before editing Velox:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/03-filecache-metrics-debug-design.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/02-filecache-basic-shims-design.md
-/home/chang/SourceCode/ClickHouse/port/task/result/001-velox-ch-skeleton-result.md
+<clickhouse_repo>/port/1-dependencies/03-filecache-metrics-debug-design.md
+<clickhouse_repo>/port/1-dependencies/02-filecache-basic-shims-design.md
+<clickhouse_repo>/port/task/result/001-velox-ch-skeleton-result.md
 ```
 
 ## Files
@@ -40,36 +40,40 @@ Read these before editing Velox:
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
+<velox_repo>/velox/ch/Common/CMakeLists.txt
 ```
 
 Delete:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.cpp
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.h
+<velox_repo>/velox/ch/Common/FileCacheSkeleton.cpp
+<velox_repo>/velox/ch/Common/FileCacheSkeleton.h
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/ProfileEvents.h
-/home/chang/OpenSource/velox/velox/ch/Common/CurrentMetrics.h
-/home/chang/OpenSource/velox/velox/ch/Common/OpenTelemetryTraceContext.h
-/home/chang/OpenSource/velox/velox/ch/Common/FailPoint.h
-/home/chang/OpenSource/velox/velox/ch/Common/FilesystemCacheLog.h
-/home/chang/OpenSource/velox/velox/ch/Common/QueryStatus.h
-/home/chang/SourceCode/ClickHouse/port/task/result/002-common-noop-shims-result.md
+<velox_repo>/velox/ch/Common/ProfileEvents.h
+<velox_repo>/velox/ch/Common/CurrentMetrics.h
+<velox_repo>/velox/ch/Common/OpenTelemetryTraceContext.h
+<velox_repo>/velox/ch/Common/FailPoint.h
+<velox_repo>/velox/ch/Common/FilesystemCacheLog.h
+<velox_repo>/velox/ch/Common/QueryStatus.h
+<clickhouse_repo>/port/task/result/002-common-noop-shims-result.md
 ```
 
 ## Steps
+
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
 
 - [ ] **Step 1: Confirm Velox branch**
 
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -89,8 +93,8 @@ Run:
 
 ```bash
 rm -f \
-  /home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.cpp \
-  /home/chang/OpenSource/velox/velox/ch/Common/FileCacheSkeleton.h
+  <velox_repo>/velox/ch/Common/FileCacheSkeleton.cpp \
+  <velox_repo>/velox/ch/Common/FileCacheSkeleton.h
 ```
 
 Expected:
@@ -101,7 +105,7 @@ The skeleton files are removed from the working tree.
 
 - [ ] **Step 3: Add `ProfileEvents` shim**
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/ProfileEvents.h`:
+Create `<velox_repo>/velox/ch/Common/ProfileEvents.h`:
 
 ```cpp
 #pragma once
@@ -150,7 +154,7 @@ class ProfileEventTimeIncrement {
 
 - [ ] **Step 4: Add `CurrentMetrics` shim**
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/CurrentMetrics.h`:
+Create `<velox_repo>/velox/ch/Common/CurrentMetrics.h`:
 
 ```cpp
 #pragma once
@@ -186,7 +190,7 @@ class Increment {
 
 - [ ] **Step 5: Add `OpenTelemetry` shim**
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/OpenTelemetryTraceContext.h`:
+Create `<velox_repo>/velox/ch/Common/OpenTelemetryTraceContext.h`:
 
 ```cpp
 #pragma once
@@ -212,7 +216,7 @@ class SpanHolder {
 
 - [ ] **Step 6: Add `FailPoint` shim**
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/FailPoint.h`:
+Create `<velox_repo>/velox/ch/Common/FailPoint.h`:
 
 ```cpp
 #pragma once
@@ -224,7 +228,7 @@ Create `/home/chang/OpenSource/velox/velox/ch/Common/FailPoint.h`:
 
 - [ ] **Step 7: Add `FilesystemCacheLog` shim**
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/FilesystemCacheLog.h`:
+Create `<velox_repo>/velox/ch/Common/FilesystemCacheLog.h`:
 
 ```cpp
 #pragma once
@@ -252,7 +256,7 @@ class FilesystemCacheLog {
 
 - [ ] **Step 8: Add `QueryStatus` shim**
 
-Create `/home/chang/OpenSource/velox/velox/ch/Common/QueryStatus.h`:
+Create `<velox_repo>/velox/ch/Common/QueryStatus.h`:
 
 ```cpp
 #pragma once
@@ -273,7 +277,7 @@ using QueryStatusPtr = std::shared_ptr<QueryStatus>;
 
 - [ ] **Step 9: Update CMake target**
 
-Modify `/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt` to:
+Modify `<velox_repo>/velox/ch/Common/CMakeLists.txt` to:
 
 ```cmake
 velox_add_library(
@@ -293,16 +297,10 @@ velox_add_library(
 
 Run:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_002_common_noop_shims.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`, redirecting output to
+`<velox_build_dir>/configure_task_002_common_noop_shims.log`.
 
 Expected:
 
@@ -317,14 +315,14 @@ Because these shims are header-only and `VELOX_MONO_LIBRARY=ON`, there is no sou
 object to compile in this task. Verify CMake registered the target/header set:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   -t targets \
   | grep 'velox_ch_filecache' \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/target_task_002_velox_ch_filecache.txt || true
+  > <velox_build_dir>/target_task_002_velox_ch_filecache.txt || true
 
-grep -R "ProfileEvents.h" /home/chang/OpenSource/velox/cmake-build-debug-gcc13/CMakeFiles \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/headers_task_002_common_noop_shims.txt || true
+grep -R "ProfileEvents.h" <velox_build_dir>/CMakeFiles \
+  > <velox_build_dir>/headers_task_002_common_noop_shims.txt || true
 ```
 
 Expected:
@@ -341,7 +339,7 @@ headers_task_002_common_noop_shims.txt should show ProfileEvents.h registered in
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 test ! -e velox/ch/Common/FileCacheSkeleton.cpp
 test ! -e velox/ch/Common/FileCacheSkeleton.h
 test ! -e velox/ch/Common/FileCacheNoopShims.cpp
@@ -361,7 +359,7 @@ No .gitkeep files are added.
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git add \
   velox/ch/Common/CMakeLists.txt \
   velox/ch/Common/ProfileEvents.h \
@@ -388,10 +386,10 @@ The branch remains filecache.
 Create the result directory:
 
 ```bash
-mkdir -p /home/chang/SourceCode/ClickHouse/port/task/result
+mkdir -p <clickhouse_repo>/port/task/result
 ```
 
-Write `/home/chang/SourceCode/ClickHouse/port/task/result/002-common-noop-shims-result.md`
+Write `<clickhouse_repo>/port/task/result/002-common-noop-shims-result.md`
 with this structure:
 
 ````markdown
@@ -430,9 +428,9 @@ deleted: velox/ch/Common/FileCacheSkeleton.h
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_002_common_noop_shims.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/target_task_002_velox_ch_filecache.txt
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/headers_task_002_common_noop_shims.txt
+<velox_build_dir>/configure_task_002_common_noop_shims.log
+<velox_build_dir>/target_task_002_velox_ch_filecache.txt
+<velox_build_dir>/headers_task_002_common_noop_shims.txt
 ```
 
 ## Build result
@@ -462,6 +460,6 @@ under `Blocking errors` with the first actionable error, and still write the res
 Return a short message with:
 
 ```text
-Path to /home/chang/SourceCode/ClickHouse/port/task/result/002-common-noop-shims-result.md
+Path to <clickhouse_repo>/port/task/result/002-common-noop-shims-result.md
 One-line status
 ```

@@ -1,7 +1,7 @@
 # Task 003: Correct `FileCache` Basic Common Shims
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and appends
+> modifies the Velox checkout under `<velox_repo>` and appends
 > corrective evidence to one result file under this ClickHouse checkout. Do not
 > modify ClickHouse source files. Do not commit or stage either repository.
 
@@ -210,7 +210,7 @@ velox_ch_chassert_sanitizer_gate_test
 ## Starting point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected HEAD:    4b14de7f1 or a direct descendant created by the user
 ```
@@ -224,20 +224,20 @@ editing.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/task/EXECUTION_PROTOCOL.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/01-filecache-infra-mapping.md
-/home/chang/SourceCode/ClickHouse/port/1-dependencies/02-filecache-basic-shims-design.md
-/home/chang/SourceCode/ClickHouse/port/task/result/003-filecache-basic-common-shims-result.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/task/EXECUTION_PROTOCOL.md
+<clickhouse_repo>/port/1-dependencies/01-filecache-infra-mapping.md
+<clickhouse_repo>/port/1-dependencies/02-filecache-basic-shims-design.md
+<clickhouse_repo>/port/task/result/003-filecache-basic-common-shims-result.md
 ```
 
 Use these CH files as behavioral sources of truth:
 
 ```text
-/home/chang/SourceCode/ClickHouse/src/Common/ConcurrentBoundedQueue.h
-/home/chang/SourceCode/ClickHouse/base/base/MoveOrCopyIfThrow.h
-/home/chang/SourceCode/ClickHouse/base/base/defines.h
-/home/chang/SourceCode/ClickHouse/src/Interpreters/FileCache/FileCache.cpp
+<clickhouse_repo>/src/Common/ConcurrentBoundedQueue.h
+<clickhouse_repo>/base/base/MoveOrCopyIfThrow.h
+<clickhouse_repo>/base/base/defines.h
+<clickhouse_repo>/src/Interpreters/FileCache/FileCache.cpp
 ```
 
 ## File scope
@@ -245,27 +245,27 @@ Use these CH files as behavioral sources of truth:
 Modify in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheBoundedQueue.h
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheException.h
-/home/chang/OpenSource/velox/velox/ch/Common/FileCacheFilesystem.h
-/home/chang/OpenSource/velox/velox/ch/Common/logger_useful.h
-/home/chang/OpenSource/velox/velox/ch/Common/tests/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Common/tests/BasicShimsTest.cpp
+<velox_repo>/velox/ch/Common/CMakeLists.txt
+<velox_repo>/velox/ch/Common/FileCacheBoundedQueue.h
+<velox_repo>/velox/ch/Common/FileCacheException.h
+<velox_repo>/velox/ch/Common/FileCacheFilesystem.h
+<velox_repo>/velox/ch/Common/logger_useful.h
+<velox_repo>/velox/ch/Common/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Common/tests/BasicShimsTest.cpp
 ```
 
 Create in the Velox checkout:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Common/ClickHouseAssert.h
-/home/chang/OpenSource/velox/velox/ch/Common/tests/ChassertReleaseProbe.cpp
-/home/chang/OpenSource/velox/velox/ch/Common/tests/ChassertSanitizerGateTest.cpp
+<velox_repo>/velox/ch/Common/ClickHouseAssert.h
+<velox_repo>/velox/ch/Common/tests/ChassertReleaseProbe.cpp
+<velox_repo>/velox/ch/Common/tests/ChassertSanitizerGateTest.cpp
 ```
 
 Append a corrective section in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/003-filecache-basic-common-shims-result.md
+<clickhouse_repo>/port/task/result/003-filecache-basic-common-shims-result.md
 ```
 
 Every new Velox C++ file must use the repository's Apache 2.0 license header and
@@ -273,12 +273,16 @@ Allman-style braces.
 
 ## Corrective steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -337,28 +341,22 @@ still aborts.
 
 Configure the existing Debug build:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_003_corrective.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`. For `home-chang`, also add
+`-DVELOX_BUILD_TESTING=ON` (already present in the `root-oss` effective
+configuration). Redirect output to `<velox_build_dir>/configure_task_003_corrective.log`.
 
 Build all three targets and require a failure caused by the missing corrective
 API or behavior:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_common_test \
   velox_ch_chassert_release_probe \
   velox_ch_chassert_sanitizer_gate_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_003_corrective_red.log 2>&1
+  > <velox_build_dir>/build_task_003_corrective_red.log 2>&1
 ```
 
 If the build unexpectedly succeeds, run the three CTest entries and require at
@@ -418,12 +416,12 @@ provides the normalized Folly macro from its configured toolchain.
 Reconfigure with the Step 3 command, then run:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_common_test \
   velox_ch_chassert_release_probe \
   velox_ch_chassert_sanitizer_gate_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_003_corrective.log 2>&1
+  > <velox_build_dir>/build_task_003_corrective.log 2>&1
 ```
 
 Expected exit code: 0. Do not pass `-j`.
@@ -434,10 +432,10 @@ Run:
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_(common_test|chassert_release_probe|chassert_sanitizer_gate_test)$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_003_corrective.log 2>&1
+  > <velox_build_dir>/test_task_003_corrective.log 2>&1
 ```
 
 Expected:
@@ -451,7 +449,7 @@ Expected:
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \

@@ -1,19 +1,27 @@
 # `FileCache` Velox Port Task Environment
 
-这个文件是所有 `port/task` handoff task 的共享环境说明。每个 task 都应先读这个文件，
-再读自己的任务文件。
+This file is the shared environment source for `port/task` handoff tasks.
+Before acting, an executor must explicitly name one profile and then use every
+value from that same profile. Do not mix values between profiles and do not
+infer a profile from hostname.
 
-## Repositories
+## Profiles
 
-```text
-ClickHouse design repo: /home/chang/SourceCode/ClickHouse
-Velox source repo:      /home/chang/OpenSource/velox
-Velox build dir:        /home/chang/OpenSource/velox/cmake-build-debug-gcc13
-```
+| Key | `home-chang` | `root-oss` |
+|---|---|---|
+| `<clickhouse_repo>` | `/home/chang/SourceCode/ClickHouse` | `/root/oss/clickhouse` |
+| `<velox_repo>` | `/home/chang/OpenSource/velox` | `/root/oss/velox` |
+| `<gluten_repo>` | `/home/chang/SourceCode/gluten1` | `/root/oss/gluten` |
+| `<velox_build_dir>` | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13` | `/root/oss/velox/_build/debug` |
+| `<cmake>` | `/usr/bin/cmake` | `/usr/bin/cmake` |
+| `<ninja>` | `/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja` | `/usr/local/bin/ninja` |
+| `<velox_env>` | Not required by the existing profile | `/root/oss/velox-helper/env.sh` |
+| `<velox_helper>` | Not used | `/root/oss/velox-helper/build.sh` |
+| `<vcpkg_toolchain>` | Not used by the existing profile | `/root/oss/gluten/dev/vcpkg/toolchain.cmake` |
 
-## CMake configuration
+## `home-chang`
 
-Velox 当前使用这个 CMake 配置：
+Keep the existing configure command:
 
 ```bash
 /usr/bin/cmake \
@@ -25,38 +33,85 @@ Velox 当前使用这个 CMake 配置：
   -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13
 ```
 
-## Tools
+## `root-oss`
+
+The environment source is `/root/oss/velox-helper/README.md`, backed by
+`/root/oss/velox-helper/build.sh` and `/root/oss/velox-helper/env.sh`.
+`build.sh` is the canonical daily developer convenience documented there; it
+selects parallelism internally.
+
+Canonical helper commands:
+
+```bash
+bash /root/oss/velox-helper/build.sh config
+bash /root/oss/velox-helper/build.sh <target>
+```
+
+For FileCache port Worker/Controller acceptance executions, source
+`<velox_env>` and run the helper-equivalent CMake/configuration directly
+instead of using `build.sh` as evidence. Do not pass `-j`; redirect each
+configure/build/test command to a unique log under `<velox_build_dir>` and
+report the log path in the handoff.
+
+Effective `root-oss` configuration:
 
 ```text
-CMake: /usr/bin/cmake
-Ninja: /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja
+CMAKE_TOOLCHAIN_FILE=/root/oss/gluten/dev/vcpkg/toolchain.cmake
+FETCHCONTENT_FULLY_DISCONNECTED=ON
+VELOX_GFLAGS_TYPE=static
+VELOX_BUILD_TESTING=ON
+VELOX_ENABLE_BENCHMARKS=ON
+VELOX_ENABLE_EXEC=ON
+VELOX_ENABLE_PARQUET=OFF
+VELOX_ENABLE_REMOTE_FUNCTIONS=ON
+VELOX_ENABLE_GROUPED_TESTS=OFF
+VELOX_MONO_LIBRARY=ON
+VELOX_BUILD_RUNNER=OFF
+VELOX_ENABLE_GEO=OFF
+VELOX_BUILD_MINIMAL=OFF
+VELOX_SIMDJSON_SKIPUTF8VALIDATION=ON
+MAX_HIGH_MEM_JOBS=16
+MAX_LINK_JOBS=16
+VELOX_FORCE_COLORED_OUTPUT=ON
 ```
+
+Port execution commands must source `<velox_env>` and use the same
+configuration. Keep the port protocol's stricter rules: no `-j` argument and
+configure/build/test logs under `<velox_build_dir>`.
+
+`root-oss` uses Gluten's vcpkg dependencies even before Tasks 018-019, but
+selecting this profile does not authorize modifying the existing dirty Gluten
+worktree. Tasks 018-019 are still the only tasks that modify Gluten.
 
 ## Rules
 
-- Do not modify ClickHouse source files from Velox implementation tasks unless the task explicitly says so.
+- Do not modify ClickHouse source files from Velox implementation tasks unless
+  the task explicitly says so.
 - Do not commit anything unless explicitly asked.
-- Do not delete or recreate `/home/chang/OpenSource/velox`.
+- Do not delete or recreate `<velox_repo>`.
 - Do not use `-j` with Ninja; let Ninja decide parallelism.
-- Put build/configuration logs under `/home/chang/OpenSource/velox/cmake-build-debug-gcc13`.
-- For long builds/tests, redirect output to a log in the build directory and report the log path.
-- If a command fails, stop and report the first actionable error plus the log path.
-- Result files under `port/task/result/` are handoff artifacts. Do not commit them unless explicitly asked.
-- CH production source and its real `FileCache` callers are authoritative for behavior.
-  A task snippet or accepted receipt cannot weaken that contract.
-- If migration reaches a CH dependency, macro, type, API, no-op, fallback, or Velox
-  substitution that has not been explicitly reviewed in an approved design/task,
-  stop the current task and the task pipeline. Record the source and callers, then
-  wait for user review. Do not infer a mapping or continue an independent later task.
-- Comment-only tests, fixtures that return null, disabled tests, and unregistered tests are
-  false-green evidence and cannot satisfy a task gate.
+- For long builds/tests, redirect output to a unique log under
+  `<velox_build_dir>` and report the log path.
+- If a command fails, stop and report the first actionable error plus the log
+  path.
+- Result files under `port/task/result/` are handoff artifacts. Do not commit
+  them unless explicitly asked.
+- CH production source and its real `FileCache` callers are authoritative for
+  behavior. A task snippet or accepted receipt cannot weaken that contract.
+- If migration reaches a CH dependency, macro, type, API, no-op, fallback, or
+  Velox substitution that has not been explicitly reviewed in an approved
+  design/task, stop the current task and the task pipeline. Record the source
+  and callers, then wait for user review. Do not infer a mapping or continue
+  an independent later task.
+- Comment-only tests, fixtures that return null, disabled tests, and
+  unregistered tests are false-green evidence and cannot satisfy a task gate.
 
 ## Result handoff
 
 Each task must write its final result back under:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/
+<clickhouse_repo>/port/task/result/
 ```
 
 Use this naming pattern:
@@ -81,7 +136,7 @@ recommended next task
 The ClickHouse-side design docs live under:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port
+<clickhouse_repo>/port
 ```
 
 Start with:

@@ -1,7 +1,7 @@
 # Task 014: `FileCacheBufferedInput` and `FileCacheInputStream` (Velox only)
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
+> modifies the Velox checkout under `<velox_repo>` and writes one
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. **Do not modify any Gluten file.** Do not commit or stage either
 > repository.
@@ -91,7 +91,7 @@ separate task. The deliverable is a compiled and tested
 ## Starting Point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected predecessors:
   Task 007: ReadBufferFromVeloxReadFile, WriteBufferFromVeloxWriteFile
@@ -120,23 +120,23 @@ created or modified.**
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/CMakeLists.txt
+<velox_repo>/velox/ch/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/Disks/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheRequestContext.h
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheFileIdentity.h
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheBufferedInput.h
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheBufferedInput.cpp
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheInputStream.h
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheInputStream.cpp
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
+<velox_repo>/velox/ch/Disks/CMakeLists.txt
+<velox_repo>/velox/ch/Disks/IO/CMakeLists.txt
+<velox_repo>/velox/ch/Disks/IO/FileCacheRequestContext.h
+<velox_repo>/velox/ch/Disks/IO/FileCacheFileIdentity.h
+<velox_repo>/velox/ch/Disks/IO/FileCacheBufferedInput.h
+<velox_repo>/velox/ch/Disks/IO/FileCacheBufferedInput.cpp
+<velox_repo>/velox/ch/Disks/IO/FileCacheInputStream.h
+<velox_repo>/velox/ch/Disks/IO/FileCacheInputStream.cpp
+<velox_repo>/velox/ch/Disks/IO/tests/CMakeLists.txt
+<velox_repo>/velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp
+<clickhouse_repo>/port/task/result/014-filecache-buffered-input-result.md
 ```
 
 Every new Velox C++ and CMake file must begin with the Apache 2.0 license
@@ -276,10 +276,14 @@ The builder test must verify both cases.
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -332,25 +336,19 @@ production classes.
 
 Configure:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_014_buffered_input.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`. For `home-chang`, also add
+`-DVELOX_BUILD_TESTING=ON` (already present in the `root-oss` effective
+configuration). Redirect output to `<velox_build_dir>/configure_task_014_buffered_input.log`.
 
 Then:
 
 ```bash
-if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+if <ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_buffered_input_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_014_red.log 2>&1
+  > <velox_build_dir>/build_task_014_red.log 2>&1
 then
   echo "ERROR: red build unexpectedly succeeded"
   exit 1
@@ -918,10 +916,10 @@ Do not duplicate either `add_subdirectory`.
 Reconfigure (same CMake command, updated log path), then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_filecache_buffered_input_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_014_buffered_input.log 2>&1
+  > <velox_build_dir>/build_task_014_buffered_input.log 2>&1
 ```
 
 Expected: exit code 0.
@@ -930,10 +928,10 @@ Expected: exit code 0.
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_filecache_buffered_input_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_014_buffered_input.log 2>&1
+  > <velox_build_dir>/test_task_014_buffered_input.log 2>&1
 ```
 
 Expected: `100% tests passed, 0 tests failed`.
@@ -941,7 +939,7 @@ Expected: `100% tests passed, 0 tests failed`.
 - [ ] **Step 12: Inspect task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -961,7 +959,7 @@ git --no-pager diff -- \
 Also verify no Gluten files were modified:
 
 ```bash
-cd /home/chang/SourceCode/gluten1
+cd <gluten_repo>
 git --no-pager status --short
 ```
 
@@ -976,7 +974,7 @@ changed by this task, changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
+<clickhouse_repo>/port/task/result/014-filecache-buffered-input-result.md
 ```
 
 Use exactly this structure:
@@ -997,7 +995,7 @@ status: success
 ## Gluten status
 
 ```text
-<paste git status --short from /home/chang/SourceCode/gluten1>
+<paste git status --short from <gluten_repo>>
 ```
 
 ## Files changed
@@ -1015,10 +1013,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_014_buffered_input.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_014_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_014_buffered_input.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_014_buffered_input.log
+<velox_build_dir>/configure_task_014_buffered_input.log
+<velox_build_dir>/build_task_014_red.log
+<velox_build_dir>/build_task_014_buffered_input.log
+<velox_build_dir>/test_task_014_buffered_input.log
 ```
 
 ## Verification

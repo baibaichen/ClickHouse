@@ -3,7 +3,7 @@
 > **Deferred Gluten task.** Do not dispatch in the current Velox-only phase.
 >
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Gluten checkout under `/home/chang/SourceCode/gluten1` and
+> modifies the Gluten checkout under `<gluten_repo>` and
 > writes one result file under this ClickHouse checkout. Do not modify
 > ClickHouse source files. Do not commit or stage either repository.
 
@@ -24,12 +24,12 @@ Deliverables:
 ## Starting point
 
 ```text
-Velox repository:    /home/chang/OpenSource/velox
+Velox repository:    <velox_repo>
 Required branch:     filecache
 Expected HEAD:       descendant of the commit where FileCacheBufferedInput
                      was added (task 014 result)
 
-Gluten repository:   /home/chang/SourceCode/gluten1
+Gluten repository:   <gluten_repo>
 Required branch:     main (or an active feature branch for this work)
 Expected HEAD:       23ed0c154 or a direct descendant
 ```
@@ -42,15 +42,15 @@ result file.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/02-filecache-manager-design.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/03-filecache-buffered-input-design.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/01-filecache-read-context-design.md
-/home/chang/SourceCode/ClickHouse/port/task/result/014-filecache-buffered-input-result.md
-/home/chang/SourceCode/gluten1/cpp/velox/compute/VeloxBackend.h
-/home/chang/SourceCode/gluten1/cpp/velox/compute/VeloxBackend.cc
-/home/chang/SourceCode/gluten1/cpp/velox/memory/GlutenBufferedInputBuilder.h
-/home/chang/SourceCode/gluten1/cpp/velox/config/VeloxConfig.h
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/3-consumers/02-filecache-manager-design.md
+<clickhouse_repo>/port/3-consumers/03-filecache-buffered-input-design.md
+<clickhouse_repo>/port/3-consumers/01-filecache-read-context-design.md
+<clickhouse_repo>/port/task/result/014-filecache-buffered-input-result.md
+<gluten_repo>/cpp/velox/compute/VeloxBackend.h
+<gluten_repo>/cpp/velox/compute/VeloxBackend.cc
+<gluten_repo>/cpp/velox/memory/GlutenBufferedInputBuilder.h
+<gluten_repo>/cpp/velox/config/VeloxConfig.h
 ```
 
 Do not modify any Velox headers from this task. They are read-only inputs.
@@ -60,23 +60,23 @@ Do not modify any Velox headers from this task. They are read-only inputs.
 Modify in the Gluten checkout:
 
 ```text
-/home/chang/SourceCode/gluten1/cpp/velox/config/VeloxConfig.h
-/home/chang/SourceCode/gluten1/cpp/velox/compute/VeloxBackend.h
-/home/chang/SourceCode/gluten1/cpp/velox/compute/VeloxBackend.cc
-/home/chang/SourceCode/gluten1/cpp/velox/memory/GlutenBufferedInputBuilder.h
-/home/chang/SourceCode/gluten1/cpp/velox/tests/CMakeLists.txt
+<gluten_repo>/cpp/velox/config/VeloxConfig.h
+<gluten_repo>/cpp/velox/compute/VeloxBackend.h
+<gluten_repo>/cpp/velox/compute/VeloxBackend.cc
+<gluten_repo>/cpp/velox/memory/GlutenBufferedInputBuilder.h
+<gluten_repo>/cpp/velox/tests/CMakeLists.txt
 ```
 
 Create in the Gluten checkout:
 
 ```text
-/home/chang/SourceCode/gluten1/cpp/velox/tests/FileCacheGlutenLifecycleTest.cpp
+<gluten_repo>/cpp/velox/tests/FileCacheGlutenLifecycleTest.cpp
 ```
 
 Create in the ClickHouse checkout:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/018-filecache-gluten-integration-result.md
+<clickhouse_repo>/port/task/result/018-filecache-gluten-integration-result.md
 ```
 
 Every new Gluten C++ file must start with the Apache 2.0 ASF license header
@@ -85,16 +85,20 @@ form).
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the baselines**
 
 Run:
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 
-cd /home/chang/SourceCode/gluten1
+cd <gluten_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -112,27 +116,27 @@ Gluten must compile against the Task-014 Velox checkout, not its bundled
 preserving its other cached options:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_018_external_velox.log 2>&1
+  > <velox_build_dir>/build_task_018_external_velox.log 2>&1
 
-/usr/bin/cmake \
-  -S /home/chang/SourceCode/gluten1/cpp \
-  -B /home/chang/SourceCode/gluten1/cpp/build \
-  -DVELOX_HOME=/home/chang/OpenSource/velox \
-  -DVELOX_BUILD_PATH=/home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/SourceCode/gluten1/cpp/build/configure_task_018_external_velox.log 2>&1
+<cmake> \
+  -S <gluten_repo>/cpp \
+  -B <gluten_repo>/cpp/build \
+  -DVELOX_HOME=<velox_repo> \
+  -DVELOX_BUILD_PATH=<velox_build_dir> \
+  > <gluten_repo>/cpp/build/configure_task_018_external_velox.log 2>&1
 
 grep -E '^(VELOX_HOME|VELOX_BUILD_PATH):' \
-  /home/chang/SourceCode/gluten1/cpp/build/CMakeCache.txt
+  <gluten_repo>/cpp/build/CMakeCache.txt
 ```
 
 Expected:
 
 ```text
-VELOX_HOME points to /home/chang/OpenSource/velox.
-VELOX_BUILD_PATH points to /home/chang/OpenSource/velox/cmake-build-debug-gcc13.
+VELOX_HOME points to <velox_repo>.
+VELOX_BUILD_PATH points to <velox_build_dir>.
 That build contains lib/libvelox.a with Tasks 003-014 sources.
 ```
 
@@ -141,7 +145,7 @@ Stop if either cache entry still points to `ep/build-velox`.
 - [ ] **Step 2: Create a failing focused test**
 
 Create
-`/home/chang/SourceCode/gluten1/cpp/velox/tests/FileCacheGlutenLifecycleTest.cpp`
+`<gluten_repo>/cpp/velox/tests/FileCacheGlutenLifecycleTest.cpp`
 with the following content:
 
 ```cpp
@@ -347,9 +351,9 @@ add_velox_test(
 Build the test target (red build):
 
 ```bash
-cmake --build /home/chang/SourceCode/gluten1/cpp/build \
+<cmake> --build <gluten_repo>/cpp/build \
   --target velox_file_cache_gluten_lifecycle_test \
-  > /home/chang/SourceCode/gluten1/cpp/build/build_018_red.log 2>&1
+  > <gluten_repo>/cpp/build/build_018_red.log 2>&1
 echo "exit: $?"
 ```
 
@@ -358,10 +362,10 @@ Expected: build fails with missing-include or missing-symbol errors.
 If it unexpectedly succeeds, record the binary path, run it with:
 
 ```bash
-ctest --test-dir /home/chang/SourceCode/gluten1/cpp/build \
+ctest --test-dir <gluten_repo>/cpp/build \
   -R '^velox_file_cache_gluten_lifecycle_test$' \
   --output-on-failure \
-  > /home/chang/SourceCode/gluten1/cpp/build/test_018_red.log 2>&1
+  > <gluten_repo>/cpp/build/test_018_red.log 2>&1
 ```
 
 and record the result. Proceed only if either the build or tests fail.
@@ -622,9 +626,9 @@ Add the required include at the top of `GlutenBufferedInputBuilder.h`:
 - [ ] **Step 9: Build the focused test**
 
 ```bash
-cmake --build /home/chang/SourceCode/gluten1/cpp/build \
+<cmake> --build <gluten_repo>/cpp/build \
   --target velox_file_cache_gluten_lifecycle_test \
-  > /home/chang/SourceCode/gluten1/cpp/build/build_018_lifecycle.log 2>&1
+  > <gluten_repo>/cpp/build/build_018_lifecycle.log 2>&1
 echo "exit: $?"
 ```
 
@@ -636,10 +640,10 @@ Do not proceed to run until the build is clean.
 - [ ] **Step 10: Run the focused test**
 
 ```bash
-ctest --test-dir /home/chang/SourceCode/gluten1/cpp/build \
+ctest --test-dir <gluten_repo>/cpp/build \
   -R '^velox_file_cache_gluten_lifecycle_test$' \
   --output-on-failure \
-  > /home/chang/SourceCode/gluten1/cpp/build/test_018_lifecycle.log 2>&1
+  > <gluten_repo>/cpp/build/test_018_lifecycle.log 2>&1
 echo "exit: $?"
 ```
 
@@ -661,7 +665,7 @@ is needed.
 - [ ] **Step 12: Inspect task-owned changes**
 
 ```bash
-cd /home/chang/SourceCode/gluten1
+cd <gluten_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -686,7 +690,7 @@ Changes remain unstaged and uncommitted.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/018-filecache-gluten-integration-result.md
+<clickhouse_repo>/port/task/result/018-filecache-gluten-integration-result.md
 ```
 
 Use exactly this structure:
@@ -720,9 +724,9 @@ Gluten branch, HEAD, and git status --short
 ## Generated logs
 
 ```text
-/home/chang/SourceCode/gluten1/cpp/build/build_018_red.log
-/home/chang/SourceCode/gluten1/cpp/build/build_018_lifecycle.log
-/home/chang/SourceCode/gluten1/cpp/build/test_018_lifecycle.log
+<gluten_repo>/cpp/build/build_018_red.log
+<gluten_repo>/cpp/build/build_018_lifecycle.log
+<gluten_repo>/cpp/build/test_018_lifecycle.log
 ```
 
 ## Verification

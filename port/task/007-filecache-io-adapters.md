@@ -1,7 +1,7 @@
 # Task 007: Add `ReadBufferFromVeloxReadFile` and `WriteBufferFromVeloxWriteFile`
 
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
-> modifies the Velox checkout under `/home/chang/OpenSource/velox` and writes one
+> modifies the Velox checkout under `<velox_repo>` and writes one
 > result file under this ClickHouse checkout. Do not modify any ClickHouse source
 > files outside `port/task/result/`. Do not commit or stage either repository.
 
@@ -346,7 +346,7 @@ Add focused TDD coverage for:
 ## Starting point
 
 ```text
-Velox repository: /home/chang/OpenSource/velox
+Velox repository: <velox_repo>
 Required branch:  filecache
 Expected HEAD:    Task 006 completed (FileCacheScheduler + QueryIdScope added)
 ```
@@ -359,23 +359,23 @@ if the branch is not `filecache`.
 Read before editing:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/ENVIRONMENT.md
-/home/chang/SourceCode/ClickHouse/port/01-filecache-port-order-design.md
-/home/chang/SourceCode/ClickHouse/port/3-consumers/03-filecache-buffered-input-design.md
-/home/chang/SourceCode/ClickHouse/port/task/result/006-filecache-scheduler-and-caller-scope-result.md
+<clickhouse_repo>/port/task/ENVIRONMENT.md
+<clickhouse_repo>/port/01-filecache-port-order-design.md
+<clickhouse_repo>/port/3-consumers/03-filecache-buffered-input-design.md
+<clickhouse_repo>/port/task/result/006-filecache-scheduler-and-caller-scope-result.md
 ```
 
 Use the ClickHouse implementations only as behavioral references:
 
 ```text
-/home/chang/SourceCode/ClickHouse/src/IO/ReadBufferFromFileBase.h
-/home/chang/SourceCode/ClickHouse/src/IO/WriteBufferFromFile.h
+<clickhouse_repo>/src/IO/ReadBufferFromFileBase.h
+<clickhouse_repo>/src/IO/WriteBufferFromFile.h
 ```
 
 Velox APIs:
 
 ```text
-/home/chang/OpenSource/velox/velox/common/file/File.h   (ReadFile, WriteFile)
+<velox_repo>/velox/common/file/File.h   (ReadFile, WriteFile)
 ```
 
 ## File scope
@@ -383,20 +383,20 @@ Velox APIs:
 Modify:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/CMakeLists.txt
+<velox_repo>/velox/ch/CMakeLists.txt
 ```
 
 Create:
 
 ```text
-/home/chang/OpenSource/velox/velox/ch/IO/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/IO/ReadBufferFromVeloxReadFile.h
-/home/chang/OpenSource/velox/velox/ch/IO/ReadBufferFromVeloxReadFile.cpp
-/home/chang/OpenSource/velox/velox/ch/IO/WriteBufferFromVeloxWriteFile.h
-/home/chang/OpenSource/velox/velox/ch/IO/WriteBufferFromVeloxWriteFile.cpp
-/home/chang/OpenSource/velox/velox/ch/IO/tests/CMakeLists.txt
-/home/chang/OpenSource/velox/velox/ch/IO/tests/IoAdaptersTest.cpp
-/home/chang/SourceCode/ClickHouse/port/task/result/007-filecache-io-adapters-result.md
+<velox_repo>/velox/ch/IO/CMakeLists.txt
+<velox_repo>/velox/ch/IO/ReadBufferFromVeloxReadFile.h
+<velox_repo>/velox/ch/IO/ReadBufferFromVeloxReadFile.cpp
+<velox_repo>/velox/ch/IO/WriteBufferFromVeloxWriteFile.h
+<velox_repo>/velox/ch/IO/WriteBufferFromVeloxWriteFile.cpp
+<velox_repo>/velox/ch/IO/tests/CMakeLists.txt
+<velox_repo>/velox/ch/IO/tests/IoAdaptersTest.cpp
+<clickhouse_repo>/port/task/result/007-filecache-io-adapters-result.md
 ```
 
 Every new Velox C++ and CMake file must begin with the Apache 2.0 license
@@ -404,10 +404,14 @@ header in the repository's comment form.
 
 ## Steps
 
+> **Environment setup:** Before running any configure, build, or test command in this task,
+> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
+> `<velox_env>` first.
+
 - [ ] **Step 1: Confirm the Velox baseline**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager status --short --branch
 git --no-pager log -1 --oneline
 ```
@@ -811,25 +815,19 @@ add_subdirectory(IO)
 
 Reconfigure:
 
-```bash
-/usr/bin/cmake \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_BUILD_TESTING=ON \
-  -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_007_io.log 2>&1
-```
+Follow the selected profile's environment setup from `ENVIRONMENT.md` (for
+`root-oss`, source `<velox_env>` first), then run the selected profile's
+configure recipe from `ENVIRONMENT.md`. For `home-chang`, also add
+`-DVELOX_BUILD_TESTING=ON` (already present in the `root-oss` effective
+configuration). Redirect output to `<velox_build_dir>/configure_task_007_io.log`.
 
 Try to build:
 
 ```bash
-if /home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+if <ninja> \
+  -C <velox_build_dir> \
   velox_ch_io_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_007_red.log 2>&1
+  > <velox_build_dir>/build_task_007_red.log 2>&1
 then
   echo "ERROR: red build unexpectedly succeeded"
   exit 1
@@ -1311,10 +1309,10 @@ counted bytes to the `WriteFile`; it must not update `totalWritten_`.
 Reconfigure using the same command as Step 4, then build:
 
 ```bash
-/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
-  -C /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+<ninja> \
+  -C <velox_build_dir> \
   velox_ch_io_test \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_007_io.log 2>&1
+  > <velox_build_dir>/build_task_007_io.log 2>&1
 ```
 
 Expected: exit code 0.  Do not add `-j`.
@@ -1323,10 +1321,10 @@ Expected: exit code 0.  Do not add `-j`.
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^velox_ch_io_test$' \
   --output-on-failure \
-  > /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_007_io.log 2>&1
+  > <velox_build_dir>/test_task_007_io.log 2>&1
 ```
 
 Expected: `100% tests passed, 0 tests failed.`
@@ -1335,10 +1333,10 @@ Expected: `100% tests passed, 0 tests failed.`
 
 ```bash
 ctest \
-  --test-dir /home/chang/OpenSource/velox/cmake-build-debug-gcc13 \
+  --test-dir <velox_build_dir> \
   -R '^(velox_ch_common_test|velox_ch_guards_test|velox_ch_threadpool_test|velox_ch_scheduler_test)$' \
   --output-on-failure \
-  >> /home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_007_io.log 2>&1
+  >> <velox_build_dir>/test_task_007_io.log 2>&1
 ```
 
 Expected: all four tests pass.
@@ -1346,7 +1344,7 @@ Expected: all four tests pass.
 - [ ] **Step 12: Inspect only task-owned changes**
 
 ```bash
-cd /home/chang/OpenSource/velox
+cd <velox_repo>
 git --no-pager diff --check
 git --no-pager status --short
 git --no-pager diff -- \
@@ -1368,7 +1366,7 @@ changes remain unstaged.
 Create:
 
 ```text
-/home/chang/SourceCode/ClickHouse/port/task/result/007-filecache-io-adapters-result.md
+<clickhouse_repo>/port/task/result/007-filecache-io-adapters-result.md
 ```
 
 Use exactly this structure:
@@ -1401,10 +1399,10 @@ status: success
 ## Generated logs
 
 ```text
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/configure_task_007_io.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_007_red.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_007_io.log
-/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_007_io.log
+<velox_build_dir>/configure_task_007_io.log
+<velox_build_dir>/build_task_007_red.log
+<velox_build_dir>/build_task_007_io.log
+<velox_build_dir>/test_task_007_io.log
 ```
 
 ## Verification
