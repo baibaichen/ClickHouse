@@ -1256,3 +1256,370 @@ unresolved findings:
 ## Commits
 
 No implementation or acceptance commit was created.
+
+## Worker attempt 5
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 008
+```
+
+Attempt 5 adds three focused parser-parity tests to `LeafTypesTest.cpp` and records the behavioral
+mutation proof required by Controller review 4. No production C++ changed. No prior receipt section
+was altered.
+
+## Repository baselines (attempt 5 start)
+
+| Repository | Branch | HEAD | Dirty status at attempt-5 start |
+|---|---|---|---|
+| `/root/oss/velox` | `filecache` | `7e7f157fc50c0945067184dd2ac55be82213bc1b` | three unstaged Task-008 files from attempt 4 (`FileCacheKey.cpp`, `FileCacheUtils.h`, `LeafTypesTest.cpp`) |
+| `/root/oss/clickhouse` | `ch-filecache` | `7a0fa86eeea` | clean (no tracked dirty files; this receipt is the only write) |
+
+Baselines verified with `git status --short --branch` and `git log -1 --oneline` in both repos.
+
+## Preflight dependency check
+
+No new dependencies. Attempt 5 touches only `LeafTypesTest.cpp` (test-only, within the three
+declared Task-008 files). The production `+` accumulation and `nibble` returning `uint64_t{0xFF}`
+were already reviewed and accepted in attempt 4. `checkedAdd` is unchanged. No new Velox APIs,
+no new CH dependencies, no new CMake files.
+
+## CH `base/base/hex.h` verification
+
+`unhexDigit` indexes `hex_char_to_digit_table[static_cast<UInt8>(c)]`. The 256-byte table maps:
+- `'0'`-`'9'` → 0x00-0x09
+- `'A'`-`'F'` → 0x0A-0x0F
+- `'a'`-`'f'` → 0x0A-0x0F
+- All other bytes (including `'g'` = 0x67) → 0xFF
+
+`unhexUInt<UInt128>` uses the `sizeof(TUInt) / 8` path, calling `HexConversionUInt<UInt64>::unhex`
+for each 8-byte chunk. `unhex` for `UInt64` uses the `sizeof(TUInt) <= 8` loop:
+`res <<= 4; res += unhexDigit(*data++)`. Accumulation is `+`, not `|`.
+
+The Velox `nibble` lambda (cast to `unsigned char`, range checks, return `uint64_t{0xFF}` fallback)
+and the `(hi << 4) + nibble(char)` loops in `FileCacheKey.cpp` exactly reproduce this behavior.
+
+## Carry arithmetic verification
+
+`fg000000000000000000000000000000` → high-word loop over chars 0–15:
+```
+i=0: hi = (0    << 4) + nibble('f') = 0 + 15          = 0x0F
+i=1: hi = (0x0F << 4) + nibble('g') = 0xF0 + 0xFF     = 0x1EF
+i=2: hi = (0x1EF << 4) + 0          = 0x1EF0
+...
+i=15: hi = 0x1EF << 56 (mod 2^64)  = 0xEF00000000000000
+```
+lo = 0 (all '0'). `toString` → "ef000000000000000000000000000000". ✓
+
+With `|` mutation at i=1: `0xF0 | 0xFF = 0xFF` (no carry), after 14 more shifts:
+`hi = 0xFF << 56 = 0xFF00000000000000` → "ff000000000000000000000000000000". RED. ✓
+
+Low-word carry: chars 16–31 of `0000000000000000fg00000000000000` → lo accumulates identically.
+Result "0000000000000000ef00000000000000" (production) vs "0000000000000000ff00000000000000" (mutation). ✓
+
+## Tests-first protocol
+
+Tests were added to `LeafTypesTest.cpp` before any production edit.
+Since production was already correct (attempt 4), the three new tests passed immediately.
+Mutation proof was captured by temporarily editing `FileCacheKey.cpp` (+ → |), running the
+two carry tests (FAILED for ef-vs-ff reason), then restoring `+` and verifying all 42 tests pass.
+
+## Files changed (attempt 5)
+
+```text
+Modified (Velox — test-only, within declared Task-008 scope):
+  velox/ch/Interpreters/FileCache/tests/LeafTypesTest.cpp
+
+  (FileCacheKey.cpp and FileCacheUtils.h were already dirty from attempt 4;
+   no additional production change was made in attempt 5.)
+
+Modified (ClickHouse):
+  port/task/result/008-filecache-leaf-types-result.md  (this receipt)
+```
+
+No CMake changes. No new files. Task 009 not started.
+
+## Commands and outcomes (attempt 5)
+
+All Ninja invocations without `-j`/`nproc`. Logs under `<velox_build_dir>`.
+
+### A. Mono — `/root/oss/velox/_build/debug`
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| touch FileCacheKey.cpp + LeafTypesTest.cpp; build `velox_ch_leaf_types_test` (production, 5 steps) | 0 | `build_task_008_attempt5_leaf_types.log` |
+| ctest focused `^velox_ch_leaf_types_test$` (production) | 0 | `test_task_008_attempt5_leaf_types.log` |
+| gtest direct run (production, 42/42) | 0 | `run_task_008_attempt5_leaf_types.log` |
+| gtest list_tests | 0 | `list_task_008_attempt5_leaf_types.log` |
+| touch FileCacheKey.cpp; build `velox_ch_leaf_types_test` (mutation `\|`) | 0 | `build_task_008_attempt5_mutation.log` |
+| gtest direct run carry tests only (mutation RED) | 1 | `run_task_008_attempt5_mutation_red.log` |
+| touch FileCacheKey.cpp + LeafTypesTest.cpp; fresh rebuild (restored `+`, 5 steps) | 0 | `build_task_008_attempt5_fresh.log` |
+| gtest direct run (restored, 42/42) | 0 | `run_task_008_attempt5_final_leaf_types.log` |
+| ctest focused (restored) | 0 | `test_task_008_attempt5_leaf_types.log` (overwritten) |
+| build Tasks 003-008 regression targets | 0 | `build_task_008_attempt5_regression.log` |
+| ctest regression (6 suites) | 0 | `test_task_008_attempt5_regression.log` |
+
+### B. Non-mono — `/root/oss/velox/_build/debug-task008-nonmono`
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| configure (VELOX_MONO_LIBRARY=OFF) | 0 | `configure_task_008_attempt5_nonmono.log` |
+| touch FileCacheKey.cpp + LeafTypesTest.cpp; build `velox_ch_leaf_types_test` (5 steps, real libvelox_ch_filecache.a) | 0 | `build_task_008_attempt5_nonmono_leaf_types.log` |
+| ctest focused | 0 | `test_task_008_attempt5_nonmono_leaf_types.log` |
+| gtest list_tests | 0 | `list_task_008_attempt5_nonmono_leaf_types.log` |
+| gtest direct run | 0 | `run_task_008_attempt5_nonmono_leaf_types.log` |
+
+Exact commands (representative):
+
+```bash
+source /root/oss/velox-helper/env.sh
+BUILD=/root/oss/velox/_build/debug
+NONMONO=/root/oss/velox/_build/debug-task008-nonmono
+TESTBIN="$BUILD/velox/ch/Interpreters/FileCache/tests/velox_ch_leaf_types_test"
+
+# Mono: fresh build + production tests
+touch velox/ch/Interpreters/FileCache/FileCacheKey.cpp
+touch velox/ch/Interpreters/FileCache/tests/LeafTypesTest.cpp
+/usr/local/bin/ninja -C "$BUILD" velox_ch_leaf_types_test
+"$TESTBIN"
+"$TESTBIN" --gtest_list_tests
+ctest --test-dir "$BUILD" -R '^velox_ch_leaf_types_test$' --output-on-failure
+
+# Mutation proof (+  ->  |  in both loops in FileCacheKey.cpp)
+# [Edit FileCacheKey.cpp: (hi << 4) | nibble, (lo << 4) | nibble]
+touch velox/ch/Interpreters/FileCache/FileCacheKey.cpp
+/usr/local/bin/ninja -C "$BUILD" velox_ch_leaf_types_test
+"$TESTBIN" --gtest_filter="FileCacheKeyTest.MalformedCarryHighWord:FileCacheKeyTest.MalformedCarryLowWord:FileCacheKeyTest.UppercaseParserRoundTrip"
+# [Restore FileCacheKey.cpp: (hi << 4) + nibble, (lo << 4) + nibble]
+
+# Regression (Tasks 003-008)
+/usr/local/bin/ninja -C "$BUILD" velox_ch_common_test velox_ch_guards_test \
+  velox_ch_threadpool_test velox_ch_scheduler_test velox_ch_io_test velox_ch_leaf_types_test
+ctest --test-dir "$BUILD" \
+  -R '^(velox_ch_common_test|velox_ch_guards_test|velox_ch_threadpool_test|velox_ch_scheduler_test|velox_ch_io_test|velox_ch_leaf_types_test)$' \
+  --output-on-failure
+
+# Non-mono
+/usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/usr/local/bin/ninja \
+  -DCMAKE_TOOLCHAIN_FILE=/root/oss/gluten/dev/vcpkg/toolchain.cmake \
+  -DFETCHCONTENT_FULLY_DISCONNECTED=ON -DVELOX_GFLAGS_TYPE=static \
+  -DVELOX_BUILD_TESTING=ON -DVELOX_ENABLE_BENCHMARKS=ON -DVELOX_ENABLE_EXEC=ON \
+  -DVELOX_ENABLE_PARQUET=OFF -DVELOX_ENABLE_REMOTE_FUNCTIONS=ON \
+  -DVELOX_ENABLE_GROUPED_TESTS=OFF -DVELOX_MONO_LIBRARY=OFF \
+  -DVELOX_BUILD_RUNNER=OFF -DVELOX_ENABLE_GEO=OFF -DVELOX_BUILD_MINIMAL=OFF \
+  -DVELOX_SIMDJSON_SKIPUTF8VALIDATION=ON -DMAX_HIGH_MEM_JOBS=16 -DMAX_LINK_JOBS=16 \
+  -DVELOX_FORCE_COLORED_OUTPUT=ON -G Ninja \
+  -S /root/oss/velox -B "$NONMONO"
+/usr/local/bin/ninja -C "$NONMONO" velox_ch_leaf_types_test
+ctest --test-dir "$NONMONO" -R '^velox_ch_leaf_types_test$' --output-on-failure
+```
+
+## Acceptance evidence (attempt 5)
+
+```text
+Preflight:
+  No new dependencies or scope expansion.
+  Three new tests are test-only additions within the declared LeafTypesTest.cpp scope.
+  Production FileCacheKey.cpp uses + accumulation with nibble returning uint64_t{0xFF} —
+  verified correct against CH hex.h unhexDigit + unhexUInt<UInt128> semantics.
+
+Tests-first confirmation:
+  New tests added to LeafTypesTest.cpp before any production edit (production was already correct).
+  All 42 tests PASSED immediately after adding the three new tests (production GREEN).
+
+Mutation RED evidence (run_task_008_attempt5_mutation_red.log):
+  Filter: FileCacheKeyTest.MalformedCarryHighWord:FileCacheKeyTest.MalformedCarryLowWord:
+          FileCacheKeyTest.UppercaseParserRoundTrip
+  [ RUN ] FileCacheKeyTest.UppercaseParserRoundTrip         [  OK  ] (expected: valid nibbles, + ≡ |)
+  [ RUN ] FileCacheKeyTest.MalformedCarryHighWord           [ FAIL ]
+    Expected: key.toString() == "ef000000000000000000000000000000"
+    Actual:   key.toString() == "ff000000000000000000000000000000"
+  [ RUN ] FileCacheKeyTest.MalformedCarryLowWord            [ FAIL ]
+    Expected: key.toString() == "0000000000000000ef00000000000000"
+    Actual:   key.toString() == "0000000000000000ff00000000000000"
+  2 FAILED TESTS — exit 1  (genuine behavioral RED for ef-vs-ff reason)
+  `+` restored immediately; no mutation marker or `|` remains in production code.
+
+Fresh compile proof (build_task_008_attempt5_leaf_types.log, production):
+  [1/5] Building CXX .../FileCacheKey.cpp.o
+  [2/5] Building CXX .../LeafTypesTest.cpp.o
+  [3/5] Linking CXX static library lib/libvelox.a
+  [4/5] Linking CXX executable .../velox_ch_leaf_types_test
+  exit 0
+
+Fresh compile proof (build_task_008_attempt5_fresh.log, after mutation restore):
+  [1/5] Building CXX .../FileCacheKey.cpp.o
+  [2/5] Building CXX .../LeafTypesTest.cpp.o
+  [3/5] Linking CXX static library lib/libvelox.a
+  [4/5] Linking CXX executable .../velox_ch_leaf_types_test
+  exit 0
+
+Mono focused test (velox_ch_leaf_types_test):
+  ctest: 1/1 Passed
+  gtest: 42 tests from 7 test suites; 42 PASSED, 0 failed
+    (= 39 preserved attempt-4 tests + UppercaseParserRoundTrip
+       + MalformedCarryHighWord + MalformedCarryLowWord)
+
+Non-mono build proof (build_task_008_attempt5_nonmono_leaf_types.log):
+  [1/5] Building CXX .../velox_ch_filecache.dir/FileCacheKey.cpp.o
+  [2/5] Linking CXX static library velox/ch/Common/libvelox_ch_filecache.a
+  [3/5] Building CXX .../velox_ch_leaf_types_test.dir/LeafTypesTest.cpp.o
+  [4/5] Linking CXX executable .../velox_ch_leaf_types_test
+  exit 0  — real static lib, reduced deps (test links only velox_ch_filecache + GTest)
+
+Non-mono focused test:
+  ctest: 1/1 Passed
+  gtest: 42 tests from 7 test suites; 42 PASSED, 0 failed
+
+Test discovery (mono + non-mono):
+  FileCacheKeyTest suite has 14 cases including:
+    UppercaseParserRoundTrip, MalformedCarryHighWord, MalformedCarryLowWord
+  No DISABLED* tests in either mode.
+  No "YOU HAVE N DISABLED TESTS" banner.
+  0 skipped/disabled tests in both modes.
+
+Regression gate (Tasks 003-008, mono): 6/6 ctest PASSED, 0 failed
+  #427 velox_ch_common_test      Passed  0.38s
+  #428 velox_ch_threadpool_test  Passed  1.02s
+  #429 velox_ch_scheduler_test   Passed  0.03s
+  #432 velox_ch_guards_test      Passed  0.03s
+  #433 velox_ch_leaf_types_test  Passed  0.01s
+  #434 velox_ch_io_test          Passed  0.02s
+  100% tests passed (6/6)
+
+git diff --check:
+  Velox tracked (3 files): no whitespace errors (exit 0).
+  ClickHouse: clean (no tracked dirty files).
+
+Scope:
+  Velox: exactly 3 tracked-modified files. No staged files, no new untracked files.
+  ClickHouse: only this receipt modified.
+  No Task 009 / ShardedMap code present.
+```
+
+## Worker review (attempt 5)
+
+```text
+review subagent: one fresh read-only code-review subagent ("task-008-attempt5-review",
+  type code-review). Verdict: no significant issues found.
+
+Independently confirmed by the reviewer:
+- (1) `nibble` lambda: `unsigned char` cast guards sign-extension on signed-char platforms;
+  returns exactly `uint64_t{0xFF}` for non-hex bytes — matches CH hex_char_to_digit_table.
+- (2) Carry arithmetic verified step-by-step: 'f','g','0'×14 → hi = 0xEF00000000000000
+  via 0x0F → 0x1EF → 14 shifts. With `|`: 0x0F → 0xFF → 14 shifts → 0xFF00000000000000.
+  Test `MalformedCarryHighWord` correctly distinguishes the operators.
+- (3) Low-word loop is structurally identical; `MalformedCarryLowWord` exercises the `lo`
+  accumulator with the same character pair — result verified as 0xEF00000000000000 (lo).
+- (4) Uppercase: `nibble` handles A-F → 10-15; for valid nibbles (0-15), `(val<<4) + n`
+  = `(val<<4) | n` (no carry in lower 4 bits after shift). `UppercaseParserRoundTrip`
+  correctly passes under both operators. This is expected and stated in the test comment.
+- (5) `checkedAdd`: `__builtin_add_overflow` correct primitive; `VELOX_FAIL` throws
+  `VeloxRuntimeError`; `std::string_view` by value safe (format happens in same frame).
+- (6) No false-green: `ASSERT_NO_THROW` ensures the key is assigned before `EXPECT_EQ`;
+  assertions would fail if production threw or returned a wrong value.
+- (7) Scope: exactly 3 files modified. No CMake changes, no new files.
+
+findings: none actionable.
+resolutions: none required.
+unresolved findings: none.
+```
+
+## Blockers (attempt 5)
+
+```text
+None.
+```
+
+## Worker declaration (attempt 5)
+
+```text
+Only Task 008 was attempted. Task 009 was NOT started.
+Changes are unstaged and uncommitted in both repositories.
+No mutation marker (`|`) remains in FileCacheKey.cpp; production uses `+` (verified).
+Prior Worker attempts 1-4, Controller reviews 1-4, and the Controller acceptance were
+not modified.
+The worker stopped after appending this Worker attempt 5 section.
+```
+
+## Controller review 5
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+task: 008
+worker_attempt_reviewed: 5
+```
+
+## Review evidence
+
+```text
+scope review:
+  The final corrective diff contains exactly FileCacheKey.cpp,
+  FileCacheUtils.h, LeafTypesTest.cpp, and this appended receipt. Task 009 was
+  not started and no CMake change was needed.
+
+source-contract review:
+  CH FileCacheKey::fromKeyString rejects only non-32 lengths and delegates all
+  32 bytes to unhexUInt<UInt128>. The Velox unsigned-char nibble mapping matches
+  CH's 256-byte table, including 0xFF for every non-hex byte. The high/low
+  uint64 loops, addition, natural wrap, and 128-bit word ordering match CH.
+
+  checkedAdd returns the exact uint64 sum or throws VeloxRuntimeError with the
+  operation text. It neither wraps, saturates, nor falls back and is exposed
+  through the public FileCacheUtils header for Tasks 013/014.
+
+test and false-green review:
+  The parser compatibility RED proves the old per-character rejection. The
+  checkedAdd API RED plus unchecked-add mutation prove overflow handling. The
+  high- and low-word fg vectors distinguish CH addition from OR; the mutation
+  produces ff instead of ef in both words. The uppercase round trip exercises
+  A-F and proves lowercase canonical output. Wrong-length, lowercase round trip,
+  g000 compatibility, golden hashes, aliases, enums, default construction, and
+  rounding coverage remain intact.
+
+mono/non-mono and Controller gate:
+  Worker evidence passes 42/42 in both modes, zero disabled/skipped, and the
+  mono Task 003-008 regression 6/6. The non-mono leaf target consumes only
+  velox_ch_filecache plus GTest directly and builds a real
+  libvelox_ch_filecache.a.
+
+  Controller logs:
+    /root/oss/velox/_build/debug/configure_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug/build_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug/test_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug/discovery_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug/test_task_008_precommit_mono_retry.log
+    /root/oss/velox/_build/debug-task008-nonmono/configure_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug-task008-nonmono/build_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug-task008-nonmono/test_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug-task008-nonmono/discovery_task_008_controller_corrective.log
+    /root/oss/velox/_build/debug-task008-nonmono/test_task_008_precommit_nonmono.log
+
+  Controller mono CTest passed 6/6 and directly listed/ran 42/42 tests. Non-mono
+  CTest passed 1/1 and directly listed/ran 42/42 tests with
+  VELOX_MONO_LIBRARY=OFF. The first mono precommit helper invocation used an
+  incorrect env path and ran no test; the persisted retry with the exact
+  velox-helper env path passed 6/6 and closes that harness-only gap.
+
+independent review:
+  A fresh read-only Controller review exhaustively checked parser parity across
+  all byte values/positions, checkedAdd behavior, header/link propagation, and
+  mutation evidence and reported no finding.
+
+unresolved findings:
+  None.
+```
+
+## Required changes
+
+```text
+None.
+```
+
+## Corrective commits
+
+| Repository | Commit |
+|---|---|
+| `/root/oss/velox` | `24686d2c68831566439911eec8a69287e6fa39e3` |

@@ -74,17 +74,17 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after corrected Task 007 acceptance:
+Current verified snapshot after corrected Task 008 acceptance:
 
 environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    Corrective Task 007 receipt commit containing this handoff update; resolve
+    Corrective Task 008 receipt commit containing this handoff update; resolve
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    7e7f157fc50c0945067184dd2ac55be82213bc1b Task 007: Restore IO adapter compatibility
+    24686d2c68831566439911eec8a69287e6fa39e3 Task 008: Restore key parser compatibility
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -112,9 +112,9 @@ environment_profile: root-oss
     Task 008
       Velox:      4b14de7f1
       ClickHouse: 1275836e76a
-- Tasks 003, 004, 006, and 007 corrected and accepted.
-- Task 008 remains reopened by the source-contract review;
-  corrective passes required before Task 009.
+      Corrective Velox: 24686d2c68831566439911eec8a69287e6fa39e3
+      Corrective ClickHouse: this acceptance commit
+- Tasks 003, 004, 006, 007, and 008 corrected and accepted.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
 - Task 009 and Task 011 task contracts passed the read-only audit.
 - Task 009 is not_started.
@@ -128,8 +128,8 @@ environment_profile: root-oss
 
 Current task:
 
-- Corrected Tasks 003, 004, 006, and 007 are accepted.
-- Velox is clean at `7e7f157fc50c0945067184dd2ac55be82213bc1b`.
+- Corrected Tasks 003, 004, 006, 007, and 008 are accepted.
+- Velox is clean at `24686d2c68831566439911eec8a69287e6fa39e3`.
 - Task 005 remains accepted.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
@@ -137,27 +137,20 @@ Current task:
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
-- User resumed the pipeline. Corrective Task 008 is the next work item and is
-  in progress.
-- Task 008 Worker attempt 4 stopped `ready_for_controller`; Controller review 4
-  requested parser-evidence rework. Production parser/checkedAdd logic is
-  correct, but upper-hex and high/low malformed-carry parity are not proven.
-- Worker attempt 5 is ready to dispatch. Task 009 is not started.
+- Corrective remediation through Task 008 is complete. Task 009 is the next
+  work item and is not started.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch corrective Task 008 Worker attempt 5.
-2. Run the accumulated Task 003-008 regression and complete Controller review.
-3. Only then dispatch Task 009.
-4. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
-5. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
+1. Dispatch Task 009.
+2. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
+3. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: none; corrective Task 008 Worker attempt 5 may proceed.
-- Corrected Tasks 003, 004, 006, and 007 are accepted. Repair reopened Task 008
-  before starting Task 009.
+- Current stop condition: none; Task 009 may proceed.
+- Corrected Tasks 003, 004, 006, 007, and 008 are accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
