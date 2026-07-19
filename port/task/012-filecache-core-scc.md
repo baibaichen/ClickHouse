@@ -654,19 +654,6 @@ TEST(PathLayoutTest, EphemeralFilename)
         "0_temporary");
 }
 
-TEST(LockedKeyTest, LockReleasesBeforeHolderDrops)
-{
-    // Behavioral replacement for an offsetof-based member-order assertion
-    // (forbidden: applying offsetof to LockedKey, a non-standard-layout type
-    // with a shared_ptr member and a non-trivial lock member, is only
-    // conditionally supported and triggers -Winvalid-offsetof under a
-    // -Werror build). Member declaration order is instead verified
-    // structurally (see Step 18) and behaviorally here: acquiring a fresh
-    // LockedKey for the same key must succeed immediately after the prior
-    // LockedKey is destroyed, proving its lock released before the holder's
-    // KeyMetadata shared reference was the last one dropped.
-}
-
 } // namespace
 } // namespace facebook::velox::ch
 ```
@@ -921,15 +908,12 @@ private:
 Do not verify this with `offsetof(LockedKey, ...)`: `LockedKey` is not a
 standard-layout type (it holds a `shared_ptr` member and a non-trivial lock
 member), so `offsetof` on it is only conditionally supported and typically
-raises `-Winvalid-offsetof` under a `-Werror` build. Verify it instead with:
-
-```text
-a structural check (Step 18) confirming key_metadata is declared textually
-  before lock in the class body of Metadata.h;
-the FileSegmentTest.cpp/MetadataTest.cpp behavioral test
-  LockReleasesBeforeHolderDrops (Step 5) proving the observable release
-  ordering through the real locking API, not raw memory offsets.
-```
+raises `-Winvalid-offsetof` under a `-Werror` build. Verify it instead with
+the structural check (Step 18) confirming `key_metadata` is declared
+textually before `lock` in the class body of `Metadata.h`, including its
+false-green mutation probe (temporarily swap the two declaration lines,
+confirm the check fails, restore, confirm it passes again). A comment-only
+gtest sketch is not evidence and must not be added in its place.
 
 `LockedKey` provides: map iteration/lower_bound, `get`/`tryGet` by offset,
 `removeFileSegment` variants, `removeAllReleasableSegments`,

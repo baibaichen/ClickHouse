@@ -29,9 +29,13 @@ This is the exact, non-negotiable scope reopened by the cross-profile review.
 Apply it in addition to the "Approved dependency decisions" below. Do not
 reinterpret or shrink either name list.
 
-### B1 — 31 `ProfileEvents` names
+### B1 — 34 `ProfileEvents` names
 
-Add these 31 names, referenced by CH `src/Interpreters/FileCache/*` and
+Add these 34 names: 31 referenced by CH `src/Interpreters/FileCache/*`, plus
+3 (`OpenedFileCacheHits`, `OpenedFileCacheMisses`,
+`OpenedFileCacheMicroseconds`) referenced by CH `src/IO/OpenedFileCache.h` and
+required by the Task-013 `OpenedFileCache` dependency mapping recorded in
+`port/task/fullreview/cross-profile/1/003-010-review-decisions.md`. All 34 are
 currently absent from `velox/ch/Common/ProfileEvents.h`:
 
 ```text
@@ -66,7 +70,13 @@ FilesystemCacheLockKeyMicroseconds
 FilesystemCacheLockMetadataMicroseconds
 FilesystemCacheLockOriginPoolMicroseconds
 FilesystemCacheUnusedHoldFileSegments
+OpenedFileCacheHits
+OpenedFileCacheMisses
+OpenedFileCacheMicroseconds
 ```
+
+Task 013's `OpenedFileCache` migration consumes these last 3 names as no-op
+`ProfileEvents`; Task 013 must not edit `ProfileEvents.h` itself.
 
 ### B2 — five `CurrentMetrics` names
 
@@ -399,7 +409,7 @@ Extend `BasicShimsTest.cpp` with tests for every row below:
 | Logger no-op | all `LOG_*` macros leave side-effect counters unchanged |
 | Exception helper | `throwFileCacheException` throws `VeloxRuntimeError`, not `VeloxUserError` |
 | Filesystem helper | context, path, numeric error, and error message are present in the runtime exception |
-| B1 `ProfileEvents` coverage | a compile-coverage test references every one of the 31 required names; deleting one name from `ProfileEvents.h` fails compilation |
+| B1 `ProfileEvents` coverage | a compile-coverage test references every one of the 34 required names; deleting one name from `ProfileEvents.h` fails compilation |
 | B2 `CurrentMetrics` coverage | a compile-coverage test references every one of the 5 required names; deleting one name from `CurrentMetrics.h` fails compilation |
 
 Use promises/futures or condition variables to coordinate threads. Do not use
@@ -429,7 +439,7 @@ still aborts.
 Add the B1/B2 compile-coverage test to `BasicShimsTest.cpp`:
 
 ```text
-one function/test body that references (odr-uses) every one of the 31 B1
+one function/test body that references (odr-uses) every one of the 34 B1
   ProfileEvents::Event names and every one of the 5 B2 CurrentMetrics::Metric
   names, e.g. by passing each enumerator through ProfileEvents::increment or
   CurrentMetrics::add.

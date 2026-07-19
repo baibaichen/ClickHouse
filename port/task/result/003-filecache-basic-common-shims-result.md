@@ -588,18 +588,23 @@ task: 003
 The Tasks 003-010 cross-profile review (round 1) reopened Task 003 a second
 time. It found the accepted implementation still lacks the required no-op
 `ProfileEvents`/`CurrentMetrics` name surfaces used by real CH `FileCache`
-source (`src/Interpreters/FileCache/*`):
+and `OpenedFileCache` source:
 
-B1: 31 ProfileEvents::Event names referenced by CH FileCache but absent from
-    velox/ch/Common/ProfileEvents.h.
+B1: 34 ProfileEvents::Event names absent from velox/ch/Common/ProfileEvents.h:
+    31 referenced by CH FileCache (src/Interpreters/FileCache/*), plus 3
+    (OpenedFileCacheHits, OpenedFileCacheMisses, OpenedFileCacheMicroseconds)
+    referenced by CH src/IO/OpenedFileCache.h and required by the
+    user-approved Task-013 OpenedFileCache dependency mapping recorded in
+    port/task/fullreview/cross-profile/1/003-010-review-decisions.md.
 B2: 5 CurrentMetrics::Metric names referenced by CH FileCache but absent from
     velox/ch/Common/CurrentMetrics.h (excluding the three constructor-only
     eviction-thread metrics and FilesystemCacheOvercommitUsers, which remain
     out of scope).
 
-Absent these names, Task 011 (priority/eviction) and Task 012 (center SCC)
-cannot reference the full no-op event/metric surface their migrated CH source
-expects, which would force an unreviewed workaround at implementation time.
+Absent these names, Task 011 (priority/eviction), Task 012 (center SCC), and
+Task 013 (OpenedFileCache) cannot reference the full no-op event/metric
+surface their migrated CH source expects, which would force an unreviewed
+workaround at implementation time.
 ```
 
 ### Corrective contract

@@ -59,8 +59,9 @@ does not win because it is newer or because it found more issues.
 
 ### Task 003 B1 — no-op `ProfileEvents` names
 
-- Add these 31 names referenced by the current CH FileCache source and absent
-  from the Velox shim:
+- Add these 34 names referenced by the current CH `FileCache`/`IO` source and
+  absent from the Velox shim (31 `FileCache`-prefixed names plus the 3
+  `OpenedFileCache` names required by the Task-013 dependency mapping below):
 
 ```text
 FileSegmentFailToIncreasePriority
@@ -94,6 +95,9 @@ FilesystemCacheLockKeyMicroseconds
 FilesystemCacheLockMetadataMicroseconds
 FilesystemCacheLockOriginPoolMicroseconds
 FilesystemCacheUnusedHoldFileSegments
+OpenedFileCacheHits
+OpenedFileCacheMisses
+OpenedFileCacheMicroseconds
 ```
 
 - Keep event increments and timers no-op in this phase.
@@ -279,6 +283,39 @@ shutdown metadata
 - Preserve reverse member-destruction order and global-instance publication.
 - F14 registry/set values are `shared_ptr`; pointees remain stable across
   rehash.
+
+### `OpenedFileCache` dependency mapping (user-approved)
+
+`OpenedFileCache` is a Task-013 dependency: no earlier task ports CH
+`src/IO/OpenedFileCache.h`, and `FileCacheManager` is its only consumer. The
+user explicitly approved this mapping; it is binding on the Task-013 Worker
+and is not open to reinterpretation:
+
+- Preserve CH's structure exactly: a fixed 1024-bucket
+  `std::vector<OpenedFileMap>` where each `OpenedFileMap` wraps one
+  bucket-local map keyed by `(path, flags)` (CH: `std::map` via
+  `MapWithMemoryTracking`, verified in `src/IO/OpenedFileCache.h`), guarded by
+  its own `std::mutex`, holding `std::weak_ptr<OpenedFile>` values.
+- Use Velox `memory::StlAllocator<T>` (`velox/common/memory/MemoryPool.h`) as
+  the allocator for both the bucket vector and every per-bucket map, so every
+  container allocation is charged to the `MemoryPool` injected into
+  `FileCacheManager`/`OpenedFileCache`. A plain, untracked
+  `std::vector`/`std::map`/`std::unordered_map` (no `MemoryPool`-backed
+  allocator) is forbidden; it silently drops CH's memory-tracking contract
+  rather than replacing it with an equivalent one.
+- The bucket-selection hash may be substituted: CH `CityHash_v1_0_2::CityHash64(path)`
+  -> `std::hash<std::string>{}(path)`, for internal bucket-index selection
+  only. This is approved because the bucket number is never externally
+  observed or persisted (no caller depends on which physical bucket an entry
+  lands in, only on `get`/`remove` correctness and weak-pointer sharing). This
+  substitution does not extend to any other CH primitive `OpenedFileCache`
+  exposes; stop at the gate for anything else.
+- `ProfileEvents::OpenedFileCacheHits`, `OpenedFileCacheMisses`, and
+  `OpenedFileCacheMicroseconds` are added to the Task-003 B1 no-op name list
+  above (34 names total). Task 013 consumes these existing no-op names; Task
+  013 must not edit `ProfileEvents.h` (that file remains Task-003 scope only).
+  Task 013 may create its own FileCache-side `OpenedFileCache.h` under
+  `velox/ch/Interpreters/FileCache/`.
 
 ## Task-014 contract decisions
 
