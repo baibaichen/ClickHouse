@@ -122,17 +122,19 @@ environment_profile: root-oss
     Task 010
       Velox:      89039901aa4287ce811a3b1628867b0796c76678
       ClickHouse: this acceptance commit
-- Tasks 003, 004, 006, 007, and 008 corrected and accepted; Tasks 009 and 010 accepted.
+    Task 011
+      Velox:      72b77cc2f995c9a6e1d3bb82cd28bfc0beade9a4
+      ClickHouse: this acceptance commit
+- Tasks 003, 004, 006, 007, and 008 corrected and accepted; Tasks 009, 010, and 011 accepted.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
-- Task 011 contract passed the read-only audit.
+- Task 011 migration-only source is accepted; Task 012 owns its first build.
 - The mandatory Tasks 003-010 full review completed with
   `controller_status: reopen_proposed`.
-- The user approved the final decisions in
-  `port/task/fullreview/root-oss/1/003-010-review-decisions.md`.
-- Task 003 alone requires corrective implementation for B1/B2. Tasks 006 and
-  009 remain accepted under the approved defer/deviation decisions.
-- Task 011 is not started and must not start until the findings are resolved,
-  the review reaches zero unresolved findings, and the user explicitly approves.
+- The user approved the final cross-profile decisions in
+  `port/task/fullreview/cross-profile/1/003-010-review-decisions.md`.
+- Task 003 B1/B2 is corrected and accepted. Tasks 006 and 009 remain accepted
+  under the approved defer/deviation decisions.
+- Task 011 is accepted and Task 012 must run immediately.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
@@ -144,7 +146,7 @@ environment_profile: root-oss
 Current task:
 
 - Task 003 B1/B2 is corrected and accepted.
-- Velox is clean at `1b41f73382668ffdc8d902e6dc5268e2e22832e2`.
+- Velox is clean at `72b77cc2f995c9a6e1d3bb82cd28bfc0beade9a4`.
 - Task 005 remains accepted.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
@@ -180,7 +182,8 @@ Current task:
   removed or superseded in place.
 - The cross-profile review has zero unresolved findings.
 - The user explicitly approved continuous execution through Task 014.
-- Task 011 is not started and is the next Worker dispatch.
+- Task 011 is accepted without a build claim.
+- Task 012 is the next Worker dispatch and must close the full SCC.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
@@ -189,14 +192,14 @@ Resume procedure:
 2. The approved Task-011/012/013/014 authoring amendments and structure
    deviation registrations are written in place (done by the Task-1
    authoring wave).
-3. Dispatch and review the Task-011 priority/eviction Worker next.
-4. Continue directly through Tasks 012, 013, and 014 after each Controller
+3. Dispatch and review the Task-012 center-SCC Worker next.
+4. Continue directly through Tasks 013 and 014 after each Controller
    acceptance.
 5. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: none before the next Worker; Task 011 may proceed.
+- Current stop condition: none before the next Worker; Task 012 must proceed.
 - Task 015 remains prohibited until the post-Task-014 full review.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
