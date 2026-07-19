@@ -256,3 +256,312 @@ evidence:
 
 redispatch same task: yes
 ```
+
+## Worker attempt 2
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 009
+```
+
+Redispatched after `Controller unblock response 1` (`blocker_resolved`,
+`redispatch same task: yes`). The attempt-1 blocker — the parent
+`FileCache/CMakeLists.txt` was outside the declared file scope needed to register
+the new public header — is resolved by the Controller amendment now present in
+`port/task/009-filecache-sharded-map.md` ("Controller amendment after Worker
+attempt 1"), which adds that file to `Modify`, requires appending
+`${CMAKE_CURRENT_SOURCE_DIR}/ShardedMap.h` to the existing non-mono `PUBLIC
+HEADERS` file set, reduces the focused test's direct links to `velox_ch_filecache`
++ GTest, and mandates a separate non-mono consumer build/test.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/clickhouse` | `ch-filecache` | `83b5521a2de` | clean |
+| `/root/oss/velox` | `filecache` | `24686d2c68831566439911eec8a69287e6fa39e3` | clean |
+
+`git log -1 --oneline`:
+- ClickHouse: `83b5521a2de Task 009: Resolve public header registration scope`
+- Velox: `24686d2c6 Task 008: Restore key parser compatibility`
+
+HEADs are unchanged at completion (no commit/stage performed).
+
+## Preflight: contract re-derivation and blocker resolution
+
+Re-derived the `ShardedMap` contract independently from the CH source
+(`src/Interpreters/FileCache/ShardedMap.h`) and its two real callers
+(`CacheMetadata::origins` in `Metadata.cpp` `getOrCreateSharedOrigin` /
+`removeSharedOrigins`, and `CacheUsagePerUser::clients_map` in `CacheUsage.h`),
+matching design `05-filecache-sharded-map-design.md`:
+
+- `template<typename Key, typename Value, size_t num_shards=32, typename
+  Hash=std::hash<Key>>`; `static_assert(num_shards>0)`.
+- `Map = folly::F14FastMap<Key,Value,Hash>`; same `Hash` for shard selection and
+  F14 internal hashing; `shards_[Hash{}(key) % num_shards]`.
+- one `std::mutex` per shard; lock covers the callback only, never spans shards.
+- `withShard` const: lock owning shard, record `size_before`, install
+  exception-safe size guard (fires even if the callback throws), invoke `f(map)`,
+  return the callback result **by value**.
+- `forEachShard` const: iterate shards in array order, lock ONE shard at a time
+  (sequential, not simultaneous), same accounting, void.
+- `size()` const noexcept: `total_count_.load(relaxed)`.
+- `accountSizeDelta`: `after>before`→`fetch_add`; `after<before`→`fetch_sub`
+  (relaxed, noexcept).
+- copy ctor + copy assignment deleted; `ProfileEvents::Event lock_wait_event`
+  stored (no-op first phase; not removed).
+- callback contract documented: mutate-only-under-lock, no same-map recursion, no
+  escaping iterator/reference/pointer, results returned by value.
+
+Real-caller confirmation: `getOrCreateSharedOrigin` returns a **copied**
+`OriginInfoPtr` by value (nothing escapes the lock); `removeSharedOrigins` is a
+per-shard best-effort erase in `forEachShard`. No same-map recursion, no escaping
+handles.
+
+Dependency review — every external dependency has an explicit reviewed mapping;
+no new unreviewed dependency or scope issue exists:
+
+```text
+folly::F14FastMap                 design 05; already used by FileCacheOriginInfo.h (Task 008)
+ProfileEvents::Event + no-op       design 05; exists in velox/ch/Common/ProfileEvents.h
+OriginPoolKey/OriginPoolKeyHash    design 02; exists in FileCacheOriginInfo.h (user_id-only hash)
+boost::noncopyable -> deleted ops  design 05
+ProfiledMutexLock -> std::unique_lock + no-op shim   design 05
+SCOPE_EXIT -> local RAII guard, same exception behavior   design 05
+parent CMakeLists non-mono FILE_SET registration     Controller amendment (scope resolved)
+reduced test link (velox_ch_filecache + GTest)       Controller amendment; matches velox_ch_leaf_types_test
+```
+
+Proceeded (no re-block): the only attempt-1 blocker is resolved by the amendment.
+
+## Files changed
+
+```text
+/root/oss/velox/velox/ch/Interpreters/FileCache/ShardedMap.h                  (new)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/ShardedMapTest.cpp      (new)
+/root/oss/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt                (modified: non-mono FILE_SET += ShardedMap.h)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt          (modified: velox_ch_sharded_map_test target)
+/root/oss/clickhouse/port/task/result/009-filecache-sharded-map-result.md     (this receipt append)
+```
+
+Exactly the five declared artifacts. `git status --short` (velox) shows only the
+two `M` CMake files and two `??` new files; ClickHouse shows only this receipt.
+
+## Commands and outcomes
+
+Environment: `source /root/oss/velox-helper/env.sh`, then the full selected-profile
+CMake configuration directly (no `build.sh`), Ninja without `-j`.
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| mono configure (full root config) | 0 | `/root/oss/velox/_build/debug/configure_task_009_attempt2.log` |
+| RED build (missing header) | 1 (expected) | `/root/oss/velox/_build/debug/build_task_009_attempt2_red.log` |
+| GREEN build focused test | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt2_sharded_map.log` |
+| focused `ctest -R ^velox_ch_sharded_map_test$` | 0 | `/root/oss/velox/_build/debug/test_task_009_attempt2_sharded_map.log` |
+| discovery (`--gtest_list_tests`, count) | 0 | `/root/oss/velox/_build/debug/list_task_009_attempt2_sharded_map.log` |
+| direct gtest run | 0 | `/root/oss/velox/_build/debug/run_task_009_attempt2_sharded_map.log` |
+| MUTATION1 build+run (exception-safety) | 0 / 1 | `/root/oss/velox/_build/debug/build_task_009_attempt2_mut1_exc.log`, `test_task_009_attempt2_mut1_exc.log` |
+| MUTATION2 build+run (hash routing) | 0 / 1 | `/root/oss/velox/_build/debug/build_task_009_attempt2_mut2_hash.log`, `test_task_009_attempt2_mut2_hash.log` |
+| MUTATION3 build+run (concurrency lock) | 0 / 124 | `/root/oss/velox/_build/debug/build_task_009_attempt2_mut3_lock.log`, `test_task_009_attempt2_mut3_lock.log` |
+| SameKey non-vacuous probe (post-review) | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt2_samekey_probe.log` |
+| regression build Tasks 003-009 (7 targets) | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt2_regression.log` |
+| regression `ctest` Tasks 003-009 (7 entries) | 0 | `/root/oss/velox/_build/debug/test_task_009_attempt2_regression.log` |
+| non-mono configure (`VELOX_MONO_LIBRARY=OFF`) | 0 | `/root/oss/velox/_build/debug-task009-nonmono/configure_task_009_attempt2_nonmono.log` |
+| non-mono build (real `libvelox_ch_filecache.a`) | 0 | `/root/oss/velox/_build/debug-task009-nonmono/build_task_009_attempt2_nonmono_sharded_map.log` |
+| non-mono focused `ctest` + discovery | 0 | `/root/oss/velox/_build/debug-task009-nonmono/test_task_009_attempt2_nonmono_sharded_map.log`, `list_task_009_attempt2_nonmono.log`, `run_task_009_attempt2_nonmono.log` |
+
+## RED evidence (pre-implementation)
+
+Added the test target + `ShardedMapTest.cpp` + the non-mono FILE_SET
+registration FIRST, then built `velox_ch_sharded_map_test` before creating
+`ShardedMap.h`:
+
+```text
+ShardedMapTest.cpp:17:10: fatal error:
+  velox/ch/Interpreters/FileCache/ShardedMap.h: No such file or directory
+```
+
+Per protocol, the missing-header compile RED is necessary but NOT sufficient; the
+behavioral mutation proofs below establish runtime semantics.
+
+## Behavioral mutation proofs (post-implementation; all reverted, no markers)
+
+Pristine `ShardedMap.h` SHA1 `f01a1d5f5504a8896e1b7b8e7326c50a982a56b2`; header
+restored to that exact SHA after every mutation; final `grep` for `MUTATION`/`TMP`
+markers is empty.
+
+1. Exception-safe size accounting — changed the `withShard` `SizeGuard` to skip
+   accounting during stack unwinding (`if (std::uncaught_exceptions()==0)`), i.e.
+   account only on normal return. Result: the two normal size tests still PASS
+   (`InsertUpdatesSize`, `EraseUpdatesSize`) but both throw-after-mutation tests
+   FAIL (`ExceptionAfterInsertUpdatesSize`, `ExceptionAfterEraseUpdatesSize`).
+   Proves those tests specifically validate that the guard fires on `throw`.
+
+2. Shard/hash routing and same-hash use — changed shard selection from a pure
+   function of `Hash{}(key)` to `(Hash{}(key)+total_count_) % num_shards` so
+   same-hash keys diverge. Result: `OriginPoolKeyHashSameUserSameShard` FAILS
+   (`found` = 0; k1 not visible from k2's callback), while the direct
+   `hasher(k1)%32 == hasher(k2)%32` check still holds. Proves the test validates
+   that same-hash keys co-locate via the modulo/hash routing.
+
+3. Sequential lock traversal / concurrency — pre-implementation runtime RED is
+   impossible (header absent → compile-only). Removing the shard lock did NOT
+   reliably fail (200 short-lived threads across 32 shards rarely overlap on one
+   shard: 0/8). A deterministic proof was used instead: replacing the per-shard
+   mutex with a single global lock (`shards_[0].mutex`) serializes all shards, so
+   `DifferentShardsConcurrent` DEADLOCKS (3/3, `timeout` exit 124) while the other
+   11 tests still PASS. Proves cross-shard concurrency depends on independent
+   per-shard mutexes, and that `DifferentShardsConcurrent` genuinely distinguishes
+   a per-shard-lock implementation from a serializing one.
+
+## Acceptance evidence
+
+```text
+mono focused test count: 12 (0 disabled, 0 skipped); 100% passed, determinism 30/30
+non-mono focused test count: 12 (0 disabled, 0 skipped); 100% passed, determinism 15/15
+Tasks 003-009 regression: exactly 7 ctest entries, 100% passed, 0 failed
+  (velox_ch_common_test, velox_ch_guards_test, velox_ch_threadpool_test,
+   velox_ch_scheduler_test, velox_ch_io_test, velox_ch_leaf_types_test,
+   velox_ch_sharded_map_test)
+git diff --check: no whitespace errors
+scope: only the 5 declared artifacts changed
+```
+
+Fresh builds:
+- mono `/root/oss/velox/_build/debug`: header-only `ShardedMap.h` + `ShardedMapTest.cpp`
+  compiled fresh and `velox_ch_sharded_map_test` relinked; `libvelox.a` relinked.
+- non-mono `/root/oss/velox/_build/debug-task009-nonmono` (`VELOX_MONO_LIBRARY=OFF`):
+  real `libvelox_ch_filecache.a` built; the reduced consumer (links only
+  `velox_ch_filecache` + GTest) linked and ran, proving the `velox_ch_filecache`
+  PUBLIC interface propagates Folly and the other public-header dependencies.
+  CMake file-API codemodel confirms `ShardedMap.h` is a member of the
+  `velox_ch_filecache` `HEADERS` file set (visibility PUBLIC) with the same
+  backtrace/source-group as the sibling public headers
+  (`FileCacheOriginInfo.h`, `FileCacheUtils.h`, `Guards.h`).
+
+## Worker review
+
+```text
+review subagent: one read-only code-review subagent over the complete task-owned
+  diff (four Velox files) against CH source, real callers, design 05, and both
+  build modes.
+findings:
+  - No blocker or major issues. Port judged a faithful, correct translation of CH
+    ShardedMap.h; delivered header identical to the task-approved reference plus
+    the parent-requested return-by-value documentation paragraph. Correctness,
+    per-shard concurrency, exception-safety (guard destroyed before lock while
+    holding it), reference/iterator lifetime (auto return decays under the lock),
+    and CMake interface all PASS. The DifferentShardsConcurrent fix judged a
+    legitimate, non-weakening, deterministic strengthening.
+  - Minor 1: SameKeyAlwaysSameShard was effectively assertion-free (only proved
+    no-deadlock).
+  - Minor 2: dead local std::atomic<bool> overlap_detected in that test.
+resolutions:
+  - Minor 1+2 resolved together using the reviewer's own suggested approach
+    ("assert a monotonic enter/exit counter never exceeds 1"): rewrote
+    SameKeyAlwaysSameShard to track peak concurrent occupancy and
+    EXPECT_EQ(max_active, 1), and removed the dead variable. This is deterministic
+    on the correct per-shard-lock implementation (occupancy can never exceed 1).
+    A probe confirmed same-shard overlap cannot be *forced* without deadlocking a
+    correct implementation (0/40), which is inherent; the deterministic FAILURE
+    proof for the locking contract therefore remains mutation 3 (single global
+    lock -> DifferentShardsConcurrent deadlock). Reran mono focused (30/30),
+    discovery (12, 0 disabled), Tasks 003-009 regression (7/7), and the non-mono
+    build/test (15/15) after the change.
+  - The DifferentShardsConcurrent fix (deviation from the task's literal test
+    body) was forced by correctness: the declared version failed deterministically
+    (15/15) on the correct implementation because std::latch::arrive_and_wait
+    releases the two threads asymmetrically (the last arriver proceeds while the
+    earlier arriver wakes from a futex), so the post-latch fetch_add/load==2 window
+    never overlapped. The fix asserts a shared both_inside flag set only after both
+    callbacks reach a latch while holding their (different) shard locks; it passes
+    deterministically on correct code and deadlocks on a serializing implementation.
+unresolved findings: none
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 009 was attempted.
+Changes are unstaged and uncommitted; both repository HEADs are unchanged.
+No scratch files remain (the temporary pristine-header copy under a tmp/ scratch
+directory was removed).
+The worker stopped after writing this receipt.
+```
+
+## Controller review 1
+
+```text
+controller_status: changes_requested
+environment_profile: root-oss
+task: 009
+worker_attempt_reviewed: 2
+```
+
+## Review evidence
+
+```text
+scope and CMake review:
+  Attempt 2 changed exactly the two declared CMake files, created ShardedMap.h
+  and ShardedMapTest.cpp, and appended this receipt. The public header is in the
+  non-mono PUBLIC HEADERS file set; the reduced focused consumer links only
+  velox_ch_filecache plus GTest and passes in both modes.
+
+implementation review:
+  Lock order, per-shard concurrency, exception-safe size accounting, relaxed
+  snapshot size, Hash-based routing, F14 lifetime restrictions, and OriginPool
+  hashing match CH and the design.
+
+  One generic API divergence remains. CH's forwarding-reference parameter is a
+  named lvalue at the call site (`f(shard.map)`). The port invokes
+  `std::forward<F>(f)(shard.map)` in withShard and on every forEachShard
+  iteration. A ref-qualified callable therefore selects operator() && instead
+  of CH's operator() &, and forEachShard repeatedly invokes the rvalue-qualified
+  path. Current lambda callers hide this divergence.
+
+test/evidence review:
+  No test calls withShard for its return value, so the explicit return-by-value
+  contract is unproven. No test uses a ref-qualified functor. The existing
+  exception/hash/global-lock mutations are valid but do not cover these APIs.
+  Same-key serialization and different-shard concurrency are otherwise
+  sufficiently exercised.
+
+log review:
+  Worker logs prove 12/12 focused tests in mono/non-mono, zero disabled/skipped,
+  7/7 accumulated regression, exception/hash/locking mutation failures, and the
+  public header interface. They contain no callback invocation/return proof.
+
+independent review:
+  A fresh read-only review judged current callers safe but confirmed the generic
+  return behavior is untested. The Controller applies the stricter exact-port
+  contract: current caller limitations do not authorize changing public generic
+  API semantics.
+
+unresolved findings:
+  1. Named callback invocation differs from CH for ref-qualified functors.
+  2. Return-by-value/reference decay is not covered by a focused test.
+```
+
+## Required changes
+
+```text
+1. Invoke the named callback as `f(shard.map)` in withShard and forEachShard.
+2. Add genuine RED tests with distinct lvalue/rvalue-qualified overloads for
+   both methods; the current forwarding implementation must select the wrong
+   overload and fail.
+3. Add a callback returning Value& and prove the ShardedMap return is a detached
+   copy. Capture a mutation proof with reference-preserving return semantics.
+4. Rerun mono/non-mono focused gates and Task 003-009 regression; launch one
+   fresh read-only review and append Worker attempt 3.
+```
+
+## Commits
+
+No implementation or acceptance commit was created.

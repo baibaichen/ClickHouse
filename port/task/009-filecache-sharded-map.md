@@ -64,6 +64,35 @@ with the full selected-profile configuration and
 `-DVELOX_MONO_LIBRARY=OFF`. Build, discover, and run
 `velox_ch_sharded_map_test`; persist all logs in that build directory.
 
+### Exact callback invocation and return semantics
+
+CH accepts `F &&` but invokes the named parameter as an lvalue:
+
+```cpp
+return f(shard.map);
+f(shard.map);
+```
+
+Do not use `std::forward<F>(f)` at the invocation sites. Perfect-forwarding the
+named callable changes ref-qualified functor behavior and repeatedly invokes an
+rvalue-qualified callable in `forEachShard`, which is not an exact port.
+
+Add focused tests that:
+
+```text
+pass a temporary functor with distinct operator() & and operator() &&
+prove withShard invokes the lvalue-qualified overload
+prove forEachShard invokes the lvalue-qualified overload for every shard
+
+return Value & from a withShard callback
+prove ShardedMap's auto return copies the value while the lock is held
+mutating the returned result must not mutate the map element
+```
+
+Capture behavioral RED against a `std::forward<F>(f)` implementation and a
+mutation proof for changing the `auto` return contract to reference-preserving
+`decltype(auto)`.
+
 ## Starting point
 
 ```text

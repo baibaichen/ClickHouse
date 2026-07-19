@@ -141,20 +141,22 @@ Current task:
 - Task 009 Worker attempt 1 blocked before edits because the public
   `ShardedMap.h` registration required the parent FileCache CMakeLists outside
   the original scope.
-- Controller resolved the blocker from repository evidence: canonical design
-  and Task 009 now require PUBLIC HEADERS registration, a reduced-dependency
-  focused consumer, and a separate non-mono gate. Worker attempt 2 is ready.
+- Controller resolved the registration blocker and Worker attempt 2 implemented
+  the map, but Controller review 1 requested callback-API rework:
+    invoke named `f` as an lvalue exactly like CH;
+    prove return-by-value/reference decay.
+- Worker attempt 3 is ready. Task 010 is not started.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch Task 009 Worker attempt 2.
+1. Dispatch Task 009 Worker attempt 3.
 2. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
 3. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: none; Task 009 Worker attempt 2 may proceed.
+- Current stop condition: none; Task 009 Worker attempt 3 may proceed.
 - Corrected Tasks 003, 004, 006, 007, and 008 are accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
