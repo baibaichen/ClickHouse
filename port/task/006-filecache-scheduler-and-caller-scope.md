@@ -5,6 +5,36 @@
 > result file under this ClickHouse checkout. Do not modify any ClickHouse source
 > files outside `port/task/result/`. Do not commit or stage either repository.
 
+## Whole-port review registration (2026-07-20)
+
+The post-Task-010 whole-port review recorded three items on this task. Task 006
+**remains accepted**; none blocks Tasks 011/012.
+
+- **SD7 (forced remap, no change).** The scheduler replaces CH's 4-boolean state +
+  `std::multimap` delayed queue + delay-thread with `enum class State` +
+  `folly::Timekeeper` + per-task `Future`. Forced (no CH `BackgroundSchedulePool`
+  / Poco `NotificationQueue` in Velox); transitions verified equivalent.
+- **SD8 (deferred implementation).** The scheduler uses one `std::recursive_mutex`
+  where CH uses two `std::mutex` (`exec_mutex` + `schedule_mutex`), permitting
+  re-entrant locking. The interface semantics are correct and tested; this is an
+  implementation deviation whose justification is only a code comment
+  (`FileCacheScheduler.h` inline-future-under-lock). Deferred: a later task should
+  attach the continuation off-lock (`.via(workerPool)` or after releasing the
+  lock) and revert to `std::mutex`, matching CH 1:1 — OR register the hard
+  constraint with a reentrancy RED + false-green probe and human sign-off.
+- **F-CALLERID (deferred, diagnostic only).** `getCallerId` produces
+  `None:<tid>` where CH produces `None:<threadname>:<tid>`
+  (`FileSegment.cpp:254-259`). Functionally correct — downloader ownership uses
+  `caller_id == downloader_id` equality and `tid` is per-thread-unique — so the
+  only loss is a thread-name field in diagnostic logs. Deferred with SD8 /
+  pre-release: native-map `getThreadName` → `folly::getCurrentThreadName`, restore
+  the three-field format, and replace the prefix-only test
+  (`SchedulerAndScopeTest.cpp` `NoScopeProducesNonePrefix`, which passes for both
+  formats) with a full-structure RED + false-green probe.
+
+Authoritative record: `port/task/fullreview/root-oss/1/003-010-review-decisions.md`
+and `port/task/fullview/home-chang/1/003-010-review-decisions.md`.
+
 ## Post-acceptance source-contract audit — task reopened
 
 The original Task 006 lifetime fixes remain required. This amendment corrects one

@@ -14,6 +14,81 @@ All comment-only test bodies and fixture placeholders later in this file are
 non-authoritative and must not be copied. A test name or a green empty body is not
 evidence.
 
+### Approved deviations and native mappings (whole-port review, 2026-07-20)
+
+The post-Task-010 whole-port review approved these. The Worker must apply them
+exactly; discovering another unreviewed dependency or changing one of these
+triggers the `EXECUTION_PROTOCOL.md` unreviewed-dependency gate. Authoritative
+decision record: `port/task/fullreview/root-oss/1/003-010-review-decisions.md`
+(approved) and `port/task/fullview/home-chang/1/003-010-review-decisions.md`.
+
+**Native mappings the Worker must use (recording them here forbids "pick the
+closest Velox API"):**
+
+| CH dependency | Approved Velox mapping | Limits |
+|---|---|---|
+| `Memory<>` + `DBMS_DEFAULT_BUFFER_SIZE` (D3) | MemoryPool-charged `BufferPtr` (reuse `FileCacheBufferState`/SD9) | preserve buffer size, reuse, lifetime, memory accounting; pin the `DBMS_DEFAULT_BUFFER_SIZE` value |
+| `SCOPE_EXIT` (D9) | Folly scope guard | must run on normal return and exception unwind |
+| `Stopwatch` (D11) | `using Stopwatch = facebook::velox::DeltaCpuWallTimeStopWatch` | call-site-limited: construct + read one wall-time snapshot; convert `elapsed().wallNanos / 1'000'000`; NOT a general `stop`/`reset`/`restart` replacement |
+| `callOnce`/`OnceFlag` (D8) | `std::call_once`/`std::once_flag` | exact mapping; already recorded elsewhere in this file |
+
+**Structured errno contract (R6/007-2 + E1).** Task 012 must implement the
+CH-shaped error path against a stable, FileCache-owned typed exception:
+
+```text
+FileCacheErrnoException
+  getErrno() -> int   // numeric POSIX errno; callers must NOT parse exception text
+```
+
+`FileSegment::write` behavior:
+
+```text
+catch FileCacheErrnoException:
+  mark download failed
+  if errno is ENOSPC or EDQUOT:
+    read physical file size
+    require downloaded_size <= physical_size <= reserved_size
+    update downloaded_size to physical_size
+  rethrow the original exception
+catch any other exception:
+  mark download failed
+  rethrow the original exception
+```
+
+Do NOT add a temporary "reconcile every exception" fallback for the current
+`LocalWriteFile`. The absence of an errno producer is a separate pre-release
+gap and must not change the final `FileSegment` state machine.
+
+**Settings apply (R2/010-1).** `applySettingsIfPossible` MUST decide per field by
+value comparison `new_settings[X] != actual_settings[X]` (matching CH
+`FileCache.cpp:2800`). It MUST NOT depend on per-field `.changed`/presence
+tracking; restoring per-field presence would be over-port.
+
+**Error-code identity (R7/003-1).** The pervasive `throw Exception(ErrorCodes::…)`
+→ single `VELOX_FAIL` collapse is accepted. But any 012 path that must
+distinguish `NOT_ENOUGH_SPACE` from `LOGICAL_ERROR` (e.g. reserve failure vs a
+logic fault) MUST reintroduce a typed distinction at that call site rather than
+relying on the collapsed category.
+
+**Container structures the Worker must NOT change (§3):**
+- SD3 — `KeyMetadata` stays an ordered `std::map` (range/`lower_bound`/node
+  stability are load-bearing).
+- SD5 — LRU queues and the `FileSegments` container stay `std::list` (iterator
+  stability + `splice`).
+- SD4 — an F14 metadata bucket is allowed ONLY if review proves no iterator,
+  mapped-value reference, or mapped-value address survives a bucket mutation
+  (the stored `shared_ptr<KeyMetadata>` keeps the pointee stable; the slot is not).
+- SD1 — `ShardedMap` keeps `folly::F14FastMap` under the locked invariant: no
+  `Value&`/iterator escapes `withShard`/`forEachShard` across a mutation
+  (Task 011/012 review MUST enforce this).
+
+**Forced platform remaps already registered (no implementation change):** SD6
+(Task 005 thread pool → folly executor + backlog + futures), SD7 (Task 006
+scheduler → `folly::Timekeeper` + per-task `Future`), SD9 (Task 007 owned buffer
+→ MemoryPool-charged `BufferPtr`). SD8 (scheduler `recursive_mutex`) is an
+accepted-interface / deferred-implementation item; see the deferred-work note in
+Task 006 / Task 017.
+
 ### Mandatory executable tests
 
 Each case below must contain real setup, execute the production path, and assert the

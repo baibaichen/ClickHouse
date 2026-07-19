@@ -143,8 +143,12 @@ environment_profile: home-chang
   accepted under the approved defer/deviation decisions.
 - Task 011 remains not started. The remaining pre-011 work is the documentation
   registrations (SD1 sign-off, SD6/SD7/SD9, Task-012 D3/D9/D11 mappings, signed
-  deviations R2/R6/R7/R8/R10); once those are recorded with zero unresolved
-  findings and the user approves, Task 011 may start.
+  deviations R2/R6/R7/R8/R10) — **now recorded** into the live task documents
+  (Task 010 R2/R10; Task 011 SD1/SD2/SD3/SD4/SD5; Task 012 D3/D9/D11 + errno +
+  R2/R7; Task 005 SD6; Task 006 SD7/SD8/F-CALLERID; Task 007 SD9; Task 009
+  receipt SD1 sign-off). With Task 003 B1/B2 accepted and these registrations
+  landed, the pre-011 whole-port gate is at zero unresolved findings; Task 011
+  starts only on explicit user approval.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;

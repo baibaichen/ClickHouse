@@ -5,6 +5,17 @@
 > result file under this ClickHouse checkout. Do not modify any ClickHouse source
 > files outside `port/task/result/`. Do not commit or stage either repository.
 
+## Whole-port review registration (2026-07-20)
+
+SD6 — this task's thread pool replaces CH `ThreadPoolImpl` (job-priority-queue +
+worker list + 2 CVs) and `ThreadFromGlobalPool` with a `folly` executor +
+`MeteredExecutor` + backlog deque + futures. The post-Task-010 whole-port review
+classified this as a **forced platform remap** (no CH `GlobalThreadPool` in
+Velox); consumer guarantees (throw-on-full, `wait` barrier over in-flight +
+backlog, join-rethrow, destroy-joinable abort, completion-lambda draining) were
+verified preserved. **No implementation change required.** Authoritative record:
+`port/task/fullreview/root-oss/1/003-010-review-decisions.md` (§4 SD6, approved).
+
 ## Goal
 
 Implement the two-layer thread-pool infrastructure needed by every background

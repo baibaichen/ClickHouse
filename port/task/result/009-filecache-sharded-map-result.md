@@ -822,3 +822,56 @@ None.
 | Repository | Commit |
 |---|---|
 | `/root/oss/velox` | `096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a` |
+
+## Whole-port review sign-off — SD1 F14 deviation (2026-07-20)
+
+```text
+task: 009
+status: accepted (deviation signed off; no implementation change)
+environment_profile: home-chang
+reviewed: 2026-07-20
+```
+
+### Decision
+
+`ShardedMap` keeps `folly::F14FastMap` (`ShardedMap.h:60`) instead of CH's
+`std::unordered_map` (`ShardedMap.h:24`). This is a §3 guarantee-changing
+deviation (F14 relocates mapped values on rehash; `std::unordered_map` does not)
+with **no hard platform constraint** — it therefore requires an explicit human
+sign-off, which is recorded here (user, 2026-07-20).
+
+### Why it is safe for the current consumer
+
+The sole in-scope consumer, `CacheMetadata::getOrCreateSharedOrigin` /
+`removeSharedOrigins` (`Metadata.cpp:105-130`), copies an `OriginInfoPtr` out of
+the locked callback and never retains a map iterator or mapped-value reference
+across a mutation. `ShardedMap::withShard`'s `auto` return decays the callback's
+reference to a value copy before the lock is released.
+
+### Locked invariant (enforced by Tasks 011/012 review, not by a runtime test)
+
+```text
+No mapped-value reference, iterator, or mapped-value address may survive a
+mutation (insert/erase/rehash) of the same F14 shard map. Values must be copied
+out (or held via the stored shared_ptr/unique_ptr) before the locked callback
+returns.
+```
+
+Registered in the Task 011 (`## Structural deviations — review-enforced`) and
+Task 012 (`### Approved deviations and native mappings`) contracts.
+
+### Test coverage
+
+Existing `ShardedMapTest.WithShardReturnCopiesValue` proves the API layer does
+not leak a live reference to a caller (the `auto` return is a value copy). Per
+the user decision (2026-07-20), this API-layer guard plus the review-enforced
+invariant is sufficient; a demonstrative "reference-survives-rehash" test is not
+added, consistent with treating the invariant as a review-enforced contract
+rather than a runtime-provable property.
+
+### Note
+
+The accepted implementation commit above (`096ba0c9…`) is on the `root-oss`
+machine's `filecache` branch; the identical baseline is present on this
+`home-chang` checkout's `filecache2` branch at HEAD's ancestor. No code changed
+for this sign-off.

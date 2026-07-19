@@ -100,6 +100,34 @@ Cloud-only distributed-cache branches
 SQL/system-table presentation
 ```
 
+## Structural deviations — review-enforced (whole-port review 2026-07-20)
+
+The `absl flat maps/sets -> folly F14` substitution above (SD2) and the inherited
+`ShardedMap` F14 (SD1) are **flat/non-node** containers: they relocate
+mapped values, references, and iterators on rehash, unlike CH's node-based
+`std::unordered_map`. They are approved ONLY under this locked invariant, which
+**this task's implementation and its review MUST enforce**:
+
+```text
+No mapped-value reference, iterator, or mapped-value address may survive a
+mutation (insert/erase/rehash) of the same F14 map. Copy the value out (or hold
+it via the stored unique_ptr/shared_ptr) before the locked callback returns.
+```
+
+Confirmed-safe current values (do not silently change them):
+
+```text
+QueueID           -> unique_ptr<QueueEvictionInfo>   (pointee stable)
+set<shared_ptr<CacheUsage>>                          (pointee stable)
+FileCacheKey      -> KeyCandidates   (no reference retained across insert/rehash)
+original_queue_types                                 (stays std::unordered_map)
+```
+
+Structures that MUST stay CH-exact (no F14 swap): SD3 `KeyMetadata` = ordered
+`std::map`; SD5 LRU queues + `FileSegments` = `std::list` (splice + iterator
+stability). SD4 (metadata bucket) is a Task-012 decision. Authoritative record:
+`port/task/fullreview/root-oss/1/003-010-review-decisions.md` (SD1/SD2/SD3/SD4/SD5).
+
 ## Exact invariants
 
 The port is incomplete unless all of these are visible in the migrated source:

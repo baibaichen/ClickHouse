@@ -154,6 +154,26 @@ Capture focused mutation proofs that misroute at least one numeric mapping and
 one boolean mapping; the corresponding tests must fail. Restore production
 before final validation.
 
+### Whole-port review sign-offs (2026-07-20)
+
+Task 010 **remains accepted**. Two review items are recorded here:
+
+- **R10 / 010-2 (signed).** The Velox settings loader **adds** an allowed-root
+  path authorization check (`FileCacheSettings.cpp:211-263`) with no CH
+  counterpart. Signed off as an intended additive security policy, not scope
+  creep.
+- **R2 / 010-1 (signed).** Collapsing CH's per-field `.changed` tracking to
+  presence bools for `path`/`max_size`/`max_size_ratio_to_total_space` is
+  accepted. CH reads `.changed` only in validate, only for those three fields;
+  CH dynamic resize (`FileCache.cpp:2800 applySettingsIfPossible`) uses per-field
+  **value comparison** `new != actual`, not presence. **Constraint carried into
+  Task 012:** `applySettingsIfPossible` must use per-field value comparison and
+  must not depend on per-field presence; restoring full per-field presence would
+  be over-port.
+
+Authoritative record:
+`port/task/fullreview/root-oss/1/003-010-review-decisions.md`.
+
 ## Goal
 
 Port `FileCacheSettings.h` and `FileCacheSettings.cpp` from ClickHouse to Velox

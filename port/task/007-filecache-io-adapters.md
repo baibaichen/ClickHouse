@@ -5,6 +5,25 @@
 > result file under this ClickHouse checkout. Do not modify any ClickHouse source
 > files outside `port/task/result/`. Do not commit or stage either repository.
 
+## Whole-port review registration (2026-07-20)
+
+The post-Task-010 whole-port review recorded two items; Task 007 **remains
+accepted** and neither blocks Tasks 011/012.
+
+- **SD9 (forced mapping, no change).** The owned IO buffer maps CH
+  `Memory<>` / `std::vector<char>` to a MemoryPool-charged `BufferPtr`. The
+  buffer-state layout (`internal_`/`working_`/`position_`/`bytes_`) is 1:1; the
+  only delta is that owned memory is now Velox-MemoryPool-charged (accounting +
+  lifetime). Forced by the Velox MemoryPool allocation model. Task 012's D3
+  download-scratch mapping must stay consistent with this.
+- **R6 / 007-2 (signed hard-constraint deviation).** Velox `WriteFile` exposes no
+  errno, so a failed append is reconciled by physical file size (`fs::file_size`)
+  rather than typed errno. This is the one deviation backed by a hard Velox
+  primitive constraint (§E probe). The production reconcile + typed
+  `FileCacheErrnoException` consumer path is owned by Task 012.
+
+Authoritative record: `port/task/fullreview/root-oss/1/003-010-review-decisions.md`.
+
 ## Post-acceptance source-contract audit — task reopened and contract replaced
 
 The original Task 007 implementation and acceptance remain in history, but the task
