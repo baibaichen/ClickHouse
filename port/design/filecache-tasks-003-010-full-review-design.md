@@ -30,16 +30,17 @@ findings have been validated and discussed.
 
 ## Outputs
 
-The review produces two durable artifacts:
+The review produces three durable artifacts:
 
 ```text
-port/task/011-012-consumer-contract-ledger.md
-port/task/result/003-010-full-review-result.md
+port/task/fullreview/root-oss/1/003-010-review-decisions.md
+port/task/fullreview/root-oss/1/evidence/011-012-consumer-contract-ledger.md
+port/task/fullreview/root-oss/1/evidence/003-010-full-review-result.md
 ```
 
-The first artifact is the CH-derived source of truth for the Task 011/012 stage.
-The second records the comparison against the accepted Tasks 003-010 Velox
-implementation.
+The decisions file is authoritative after user review. The ledger is the
+CH-derived source of truth for the Task 011/012 stage, and the evidence report
+records the comparison against the accepted Tasks 003-010 Velox implementation.
 
 ## Exact dispatch prompts
 
@@ -214,7 +215,7 @@ Invalid citations or incomplete coverage return the report to the same D agent.
 
 ## Final report
 
-`port/task/result/003-010-full-review-result.md` contains:
+`port/task/fullreview/root-oss/1/evidence/003-010-full-review-result.md` contains:
 
 1. frozen baselines and blind spots;
 2. the approved A ledger and A/D reconciliation;

@@ -123,9 +123,14 @@ environment_profile: root-oss
 - Tasks 003, 004, 006, 007, and 008 corrected and accepted; Tasks 009 and 010 accepted.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
 - Task 011 contract passed the read-only audit.
-- The mandatory Tasks 003-010 full review is not started.
-- Task 011 is not started and must not start before that review is accepted
-  with zero unresolved findings and explicit user approval.
+- The mandatory Tasks 003-010 full review completed with
+  `controller_status: reopen_proposed`.
+- The user approved the final decisions in
+  `port/task/fullreview/root-oss/1/003-010-review-decisions.md`.
+- Task 003 alone requires corrective implementation for B1/B2. Tasks 006 and
+  009 remain accepted under the approved defer/deviation decisions.
+- Task 011 is not started and must not start until the findings are resolved,
+  the review reaches zero unresolved findings, and the user explicitly approves.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
@@ -136,7 +141,8 @@ environment_profile: root-oss
 
 Current task:
 
-- Corrected Tasks 003, 004, 006, 007, and 008 plus Tasks 009 and 010 are accepted.
+- Existing accepted implementation commits remain the baseline. Task 003 is
+  selected for a corrective reopen; its task/receipt amendment is the next step.
 - Velox is clean at `89039901aa4287ce811a3b1628867b0796c76678`.
 - Task 005 remains accepted.
 - User approved the Task-007/Task-012 boundary:
@@ -145,26 +151,42 @@ Current task:
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
-- Tasks 009 and 010 are accepted.
-- The mandatory Tasks 003-010 full review has not started because the user
-  requested a pause at this boundary.
-- Task 011 is not started and is prohibited until the review gate is satisfied.
+- The mandatory Tasks 003-010 full review is complete. Its durable artifacts are:
+    `port/task/fullreview/root-oss/1/003-010-review-decisions.md`;
+    `port/task/fullreview/root-oss/1/evidence/011-012-consumer-contract-ledger.md`;
+    `port/task/fullreview/root-oss/1/evidence/003-010-full-review-result.md`.
+- Task 003 must add the approved no-op `ProfileEvents` and `CurrentMetrics` name
+  surfaces with compile-coverage and false-green evidence.
+- Task 006 remains accepted. F-CALLERID and SD8 are deferred to Task 017.
+- Task 009 remains accepted. SD1 is an explicitly approved `F14FastMap`
+  deviation; SD2 is confirmed as the Task-011 flat-container mapping.
+- SD6, SD7, and SD9 are approved platform mappings recorded by the decisions.
+- Task 012 requires the approved mappings for `Memory<>`, `SCOPE_EXIT`,
+  `Stopwatch`, and `callOnce`, plus the typed `FileCacheErrnoException`
+  consumer path. It must not add an errno-unavailable fallback.
+- Structured errno production in the FileCache concrete writer is a separate
+  pre-release gate and does not block Tasks 011/012 development.
+- No implementation was modified and Task 003 has not yet been marked
+  `reopened_by_contract_audit` in its task/receipt.
+- Task 011 is not started and remains prohibited.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Resume only when the user requests the mandatory Tasks 003-010 whole-port
-   source-contract review.
-2. Complete that review before starting any Task 011 work.
-3. Continue to Task 011 only with zero unresolved findings and explicit user
+1. Mark Task 003 and its receipt `reopened_by_contract_audit`; write the exact
+   B1/B2 corrective contract and RED/false-green requirements.
+2. Apply the approved Task-012 and Task-017 authoring amendments and structure
+   deviation registrations.
+3. Dispatch and re-review the Task-003 corrective Worker.
+4. Continue to Task 011 only with zero unresolved findings and explicit user
    approval.
-4. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
+5. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: user-requested pause before the mandatory Tasks
-  003-010 full review.
-- Corrected Tasks 003, 004, 006, 007, and 008 plus Tasks 009 and 010 are accepted.
+- Current stop condition: approved Task-003 corrective contract and
+  implementation are pending.
+- Task 011 and Task 012 are prohibited.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
