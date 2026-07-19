@@ -25,6 +25,45 @@ lock_wait_event constructor parameter preserved (no-op shim first phase)
 The deliverable is `velox/ch/Interpreters/FileCache/ShardedMap.h` plus a
 focused `velox_ch_sharded_map_test` test executable.
 
+## Controller amendment after Worker attempt 1
+
+### Public-header registration and non-mono proof
+
+`ShardedMap.h` is a public header used by the later `Metadata` and
+`CacheUsagePerUser` implementations. Register it immediately in the existing
+non-mono `PUBLIC HEADERS` file set, following the Task-008 convention.
+
+Add this file to the declared `Modify` scope:
+
+```text
+<velox_repo>/velox/ch/Interpreters/FileCache/CMakeLists.txt
+```
+
+Append the header to the existing non-mono file set:
+
+```cmake
+${CMAKE_CURRENT_SOURCE_DIR}/ShardedMap.h
+```
+
+Do not create another file set or call `target_sources` in mono mode.
+
+The focused test must be a real consumer of the public interface. Override the
+literal dependency list below and link it directly only to:
+
+```cmake
+velox_ch_filecache
+GTest::gtest
+GTest::gtest_main
+```
+
+The `velox_ch_filecache` PUBLIC interface must provide Folly and other public
+header dependencies; direct test links must not mask missing propagation.
+
+In addition to the mono gates, configure `<velox_build_dir>-task009-nonmono`
+with the full selected-profile configuration and
+`-DVELOX_MONO_LIBRARY=OFF`. Build, discover, and run
+`velox_ch_sharded_map_test`; persist all logs in that build directory.
+
 ## Starting point
 
 ```text
@@ -73,6 +112,7 @@ Create:
 Modify:
 
 ```text
+<velox_repo>/velox/ch/Interpreters/FileCache/CMakeLists.txt
 <velox_repo>/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
 ```
 

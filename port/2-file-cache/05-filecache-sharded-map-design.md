@@ -121,6 +121,24 @@ all-shard cleanup erases only inside callback
 如果未来 callback 需要把 map element pointer/reference留到锁外，必须重新 review并考虑
 `F14NodeMap`；当前不要提前使用 node container。
 
+## build registration
+
+`ShardedMap.h` 是 later `Metadata` / `CacheUsagePerUser` 直接 include 的 public
+header。创建时即加入 `velox_ch_filecache` 现有 non-mono `PUBLIC HEADERS`
+file set，与 `FileCacheOriginInfo.h` / `FileCacheUtils.h` 一致：
+
+```text
+mono:
+  source-tree include path; do not call target_sources on the alias
+
+non-mono:
+  existing FILE_SET HEADERS += ShardedMap.h
+  focused consumer links velox_ch_filecache + GTest only
+```
+
+必须运行独立 non-mono focused build/test，防止 mono alias 或 focused test 的
+直接 Folly/fmt/exception 依赖掩盖 public interface 缺失。
+
 ## hash consistency
 
 target保存/构造同一种 `Hash` 用于：

@@ -137,19 +137,24 @@ Current task:
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
-- Corrective remediation through Task 008 is complete. Task 009 is the next
-  work item and is not started.
+- Corrective remediation through Task 008 is complete.
+- Task 009 Worker attempt 1 blocked before edits because the public
+  `ShardedMap.h` registration required the parent FileCache CMakeLists outside
+  the original scope.
+- Controller resolved the blocker from repository evidence: canonical design
+  and Task 009 now require PUBLIC HEADERS registration, a reduced-dependency
+  focused consumer, and a separate non-mono gate. Worker attempt 2 is ready.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch Task 009.
+1. Dispatch Task 009 Worker attempt 2.
 2. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
 3. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: none; Task 009 may proceed.
+- Current stop condition: none; Task 009 Worker attempt 2 may proceed.
 - Corrected Tasks 003, 004, 006, 007, and 008 are accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
