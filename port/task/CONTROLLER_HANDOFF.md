@@ -138,12 +138,16 @@ Current task:
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
 - User resumed the pipeline. Corrective Task 008 is the next work item and is
-  not yet started.
+  in progress.
+- Task 008 Worker attempt 4 stopped `ready_for_controller`; Controller review 4
+  requested parser-evidence rework. Production parser/checkedAdd logic is
+  correct, but upper-hex and high/low malformed-carry parity are not proven.
+- Worker attempt 5 is ready to dispatch. Task 009 is not started.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch corrective Task 008.
+1. Dispatch corrective Task 008 Worker attempt 5.
 2. Run the accumulated Task 003-008 regression and complete Controller review.
 3. Only then dispatch Task 009.
 4. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
@@ -151,7 +155,7 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: none; corrective Task 008 may proceed.
+- Current stop condition: none; corrective Task 008 Worker attempt 5 may proceed.
 - Corrected Tasks 003, 004, 006, and 007 are accepted. Repair reopened Task 008
   before starting Task 009.
 - For every task:

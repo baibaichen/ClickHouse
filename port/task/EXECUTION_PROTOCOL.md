@@ -7,7 +7,7 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:       Corrective migration active; corrected Task 008 next
+Current state:       Corrective Task 008 Worker attempt 5 ready to dispatch
 Repair before resume: Task 008
 Then dispatch:       Tasks 009-014, subject to Task 010 and Task 014 review gates
 Optional Velox work: Tasks 016-017, only after a separate decision

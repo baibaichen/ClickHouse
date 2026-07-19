@@ -960,3 +960,299 @@ logs:
 
 unresolved findings: none
 ```
+
+## Post-acceptance source-contract audit — task reopened
+
+The controller reopened this task by appending a post-acceptance source-contract audit at the
+top of `port/task/008-filecache-leaf-types.md` (lines 8–39). Two corrective changes are required:
+
+1. `FileCacheKey::fromKeyString` per-character rejection must be removed; CH delegates all 32-byte
+   input to `unhexUInt<UInt128>` without throwing for non-hex chars.
+2. A shared `checkedAdd` helper must be added to `FileCacheUtils.h` for Tasks 013 and 014.
+
+## Worker attempt 4
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 008
+```
+
+## Repository baselines (attempt 4)
+
+| Repository | Branch | HEAD | Dirty status at attempt-4 start |
+|---|---|---|---|
+| `/root/oss/velox` | `filecache` | `7e7f157fc50c0945067184dd2ac55be82213bc1b` | clean |
+| `/root/oss/clickhouse` | `ch-filecache` | `73bdaf3ccc05293af1af7e0da0707a4483d65c73` | clean |
+
+Both repositories were verified clean at dispatch. Task 008 source files (`FileCacheKey.cpp`,
+`FileCacheUtils.h`, `LeafTypesTest.cpp`) are tracked in the Velox HEAD commit (from prior accepted
+`4b14de7f1 Task 008: Add FileCache leaf types`). No prior attempt sections were modified.
+
+## Dependency/contract table
+
+| Dependency | Source | Velox substitution | Status |
+|---|---|---|---|
+| `unhexUInt<UInt128>` nibble semantics | `base/base/hex.h` `HexConversionUInt::unhex` + `unhexDigit` | inline `nibble` lambda with `uint64_t{0xFF}` fallback + `+` accumulation | reviewed |
+| `VeloxRuntimeError` via `VELOX_FAIL` | `velox/common/base/Exceptions.h` | `VELOX_FAIL("{}: {} + {} overflows uint64_t", op, lhs, rhs)` | reviewed |
+| `velox_exception` PUBLIC link dep | `Common/CMakeLists.txt` already has `PUBLIC velox_exception` | no new CMake change needed | reviewed |
+| `std::string_view operation` parameter | corrective contract line 32 | `std::string_view` + `<string_view>` include | reviewed |
+
+## Root cause
+
+The accepted attempt 3 included `FromKeyStringInvalidHexChar` (EXPECT_THROW for 'g' input) which
+was correct under the then-current amendment. The post-acceptance source-contract audit of CH
+`hex.h:unhexDigit` revealed that `unhexUInt<UInt128>` silently maps invalid chars to `0xFF` via a
+lookup table without throwing; the Velox implementation diverged. Additionally, `checkedAdd` was
+needed as a shared helper by Tasks 013 and 014, and belonged in `FileCacheUtils.h`.
+
+## TDD sequence
+
+### Parser compatibility RED
+
+Action: Replace `FromKeyStringInvalidHexChar` (EXPECT_THROW) with `FromKeyStringMalformedCharCompatibility`
+(ASSERT_NO_THROW + EXPECT_EQ). No production change.
+
+Build: exit 0 (test compiles fine).
+
+Run: BEHAVIORAL RED — `FromKeyStringMalformedCharCompatibility` fails:
+```
+Expected: key = FileCacheKey::fromKeyString("g0000000000000000000000000000000")
+          doesn't throw an exception.
+  Actual: it throws VeloxRuntimeError
+          "Invalid hex character 'g' in cache key string"
+```
+
+Log: `/root/oss/velox/_build/debug/run_task_008_attempt4_parser_red.log`
+
+### `checkedAdd` API-shape RED
+
+Action: Add five `FileCacheUtilsTest.CheckedAdd*` tests. No API yet.
+
+Build: COMPILE RED — `'checkedAdd' is not a member of 'facebook::velox::ch::FileCacheUtils'`
+
+Log: `/root/oss/velox/_build/debug/build_task_008_attempt4_checkedadd_api_red.log`
+
+### `checkedAdd` behavioral mutation RED
+
+Action: Add stub unchecked `checkedAdd` (`return lhs + rhs`). Build: exit 0 (compile GREEN).
+Run overflow tests: BEHAVIORAL RED — unchecked addition wraps silently, no exception thrown:
+
+```
+[ FAILED  ] FileCacheUtilsTest.CheckedAddOverflow
+  Expected: ... throws VeloxRuntimeError. Actual: it throws nothing.
+[ FAILED  ] FileCacheUtilsTest.CheckedAddOperationInMessage
+  Failed: Expected VeloxRuntimeError to be thrown
+```
+
+Log: `/root/oss/velox/_build/debug/run_task_008_attempt4_mutation_red.log`
+
+### Production corrections
+
+1. `FileCacheKey.cpp`: Remove `hexDigit` lambda and per-char `throwFileCacheException`. Add
+   `nibble` lambda returning `uint64_t{0xFF}` for invalid chars. Change accumulation from `|` to `+`.
+
+2. `FileCacheUtils.h`: Add `#include "velox/common/base/Exceptions.h"`, `<cstdint>`, `<string_view>`.
+   Replace stub with correct `checkedAdd` using `__builtin_add_overflow` + `VELOX_FAIL`.
+
+## Files changed
+
+```text
+Modified (Velox):
+  velox/ch/Interpreters/FileCache/FileCacheKey.cpp
+  velox/ch/Interpreters/FileCache/FileCacheUtils.h
+  velox/ch/Interpreters/FileCache/tests/LeafTypesTest.cpp
+
+Modified (ClickHouse):
+  port/task/result/008-filecache-leaf-types-result.md  (this receipt)
+```
+
+No CMake changes. `FileCacheUtils.h` is already in the non-mono `FILE_SET HEADERS` list.
+The `velox_exception` PUBLIC link in `Common/CMakeLists.txt` already propagates `Exceptions.h`
+to consumers; no additional target change needed.
+
+## Commands and outcomes (attempt 4)
+
+### Mono build/test — `/root/oss/velox/_build/debug`
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| Parser RED: build (test-only change) | 0 | `build_task_008_attempt4_parser_red.log` |
+| Parser RED: run `FromKeyStringMalformedCharCompatibility` | 1 | `run_task_008_attempt4_parser_red.log` |
+| checkedAdd API-shape RED: build | 1 | `build_task_008_attempt4_checkedadd_api_red.log` |
+| checkedAdd mutation stub: build | 0 | `build_task_008_attempt4_mutation_stub.log` |
+| checkedAdd mutation RED: run `CheckedAdd*` | 1 | `run_task_008_attempt4_mutation_red.log` |
+| Final build (both fixes) | 0 | `build_task_008_attempt4_leaf_types.log` |
+| Force-recompile FileCacheKey.cpp + LeafTypesTest.cpp | 0 | `build_task_008_attempt4_fresh.log` |
+| ctest focused `^velox_ch_leaf_types_test$` | 0 | `test_task_008_attempt4_leaf_types.log` |
+| gtest direct run (all 39 tests) | 0 | `run_task_008_attempt4_leaf_types.log` |
+| gtest list_tests | 0 | `list_task_008_attempt4_leaf_types.log` |
+| Build regression: 6 tasks 003-008 targets | 0 | `build_task_008_attempt4_regression.log` |
+| ctest regression: 6 suites | 0 | `test_task_008_attempt4_regression.log` |
+
+### Non-mono — `/root/oss/velox/_build/debug-task008-nonmono`
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| configure (`VELOX_MONO_LIBRARY=OFF`) | 0 | `configure_task_008_attempt4_nonmono.log` |
+| build `velox_ch_leaf_types_test` | 0 | `build_task_008_attempt4_nonmono_leaf_types.log` |
+| ctest focused | 0 | `test_task_008_attempt4_nonmono_leaf_types.log` |
+| gtest list_tests | 0 | `list_task_008_attempt4_nonmono_leaf_types.log` |
+| gtest direct run | 0 | `run_task_008_attempt4_nonmono_leaf_types.log` |
+
+## Acceptance evidence
+
+```text
+Parser RED evidence (run_task_008_attempt4_parser_red.log):
+  FileCacheKeyTest.FromKeyStringMalformedCharCompatibility FAILED
+  "Exception: VeloxRuntimeError ... Invalid hex character 'g' in cache key string"
+  (genuine behavioral RED against current per-character rejection; exit 1)
+
+checkedAdd API-shape RED (build_task_008_attempt4_checkedadd_api_red.log):
+  error: 'checkedAdd' is not a member of 'facebook::velox::ch::FileCacheUtils'
+  (compile RED; exit 1)
+
+checkedAdd mutation RED (run_task_008_attempt4_mutation_red.log):
+  CheckedAddOverflow FAILED: throws nothing (unchecked addition wraps)
+  CheckedAddOperationInMessage FAILED: Expected VeloxRuntimeError
+  (behavioral mutation RED; exit 1)
+  Stub was: `return lhs + rhs;` with no overflow check.
+
+Fresh compile proof (build_task_008_attempt4_fresh.log):
+  [1/5] Building CXX object .../FileCacheKey.cpp.o
+  [2/5] Building CXX object .../LeafTypesTest.cpp.o
+  [3/5] Linking CXX static library lib/libvelox.a
+  [4/5] Linking CXX executable .../velox_ch_leaf_types_test
+  exit 0
+
+Mono focused test (velox_ch_leaf_types_test):
+  ctest: 1/1 Passed
+  gtest: 39 tests from 7 suites; 39 PASSED, 0 failed
+
+Non-mono focused test:
+  libvelox_ch_filecache.a is a real static library (134 build steps, not an alias)
+  ctest: 1/1 Passed
+  gtest: 39 tests from 7 suites; 39 PASSED, 0 failed
+
+Test discovery:
+  mono list: 39 tests, 0 DISABLED*
+  non-mono list: 39 tests, 0 DISABLED*
+  Tests present:
+    FileCacheKeyTest.FromKeyStringMalformedCharCompatibility (replaced FromKeyStringInvalidHexChar)
+    FileCacheKeyTest.DefaultConstructibleZero (preserved from attempt 2)
+    FileCacheKeyTest.FromKeyStringBadLength (preserved)
+    FileCacheUtilsTest.CheckedAddZero / CheckedAddNormal / CheckedAddMaxNoOverflow
+    FileCacheUtilsTest.CheckedAddOverflow / CheckedAddOperationInMessage (new)
+
+Regression gate (Tasks 003-008, mono): 6/6 passed
+  velox_ch_common_test      Passed
+  velox_ch_threadpool_test  Passed
+  velox_ch_scheduler_test   Passed
+  velox_ch_guards_test      Passed
+  velox_ch_leaf_types_test  Passed
+  velox_ch_io_test          Passed
+
+git diff --check:
+  Velox (tracked): no whitespace errors.
+  ClickHouse (tracked): no whitespace errors.
+
+Scope: git status shows exactly 3 modified Velox files.
+  No CMake changes. No new files. Task 009 not started.
+```
+
+## Worker review (attempt 4)
+
+```text
+review subagent: one fresh read-only code-review subagent ("task-008-attempt4-review",
+  type code-review). Verdict: no significant issues found; all correctness invariants
+  verified.
+
+Independently confirmed by the reviewer:
+- (1) Nibble arithmetic exactly matches CH unhexUInt: nibble lambda returns uint64_t{0xFF}
+  for non-hex chars; two 16-char loops using `+` (not `|`); traced g0...0:
+  i=0 hi=0xFF, i=1..15 hi=0xFF<<(4k), i=15 hi=0xF000000000000000. ✓
+- (2) `+` vs `|` for valid nibbles (0-15): identical since hi<<4 lower 4 bits = 0. ✓
+- (3) VELOX_FAIL message: fmt formats std::string_view directly; operation name appears
+  in e.what(). CheckedAddOperationInMessage is not false-green. ✓
+
+findings: none actionable.
+resolutions: none required; no production change after review; no gate rerun needed.
+unresolved findings: none.
+```
+
+## Blockers (attempt 4)
+
+```text
+None.
+```
+
+## Worker declaration (attempt 4)
+
+```text
+Only Task 008 was attempted. Task 009 was NOT started.
+Changes are unstaged and uncommitted in both repositories.
+Prior Worker attempts 1-3 and Controller reviews 1-3 and the Controller acceptance
+were not modified.
+The worker stopped after appending this Worker attempt 4 section.
+```
+
+## Controller review 4
+
+```text
+controller_status: changes_requested
+environment_profile: root-oss
+task: 008
+worker_attempt_reviewed: 4
+```
+
+## Review evidence
+
+```text
+scope and implementation review:
+  Worker attempt 4 changed exactly FileCacheKey.cpp, FileCacheUtils.h,
+  LeafTypesTest.cpp, and this receipt. The parser implementation matches CH
+  unhexDigit/unhexUInt for all byte values, word ordering, and natural uint64
+  wrap. checkedAdd has the required signature, exact-or-throw behavior,
+  VeloxRuntimeError type, operation text, and public-header dependencies.
+
+mono/non-mono and log review:
+  Parser RED, checkedAdd API RED, and unchecked-add mutation RED are genuine.
+  Mono and non-mono focused tests pass 39/39 with zero disabled/skipped tests;
+  the mono Task 003-008 regression passes 6/6. The non-mono focused target is a
+  real consumer that declares only velox_ch_filecache plus GTest.
+
+test evidence review:
+  The binding contract requires valid lower- and upper-hex round trips.
+  RoundTrip exercises lowercase only because toString emits lowercase; no test
+  parses A-F, leaving the uppercase nibble branch untested.
+
+  The single g000... malformed vector cannot distinguish the required CH
+  addition from an incorrect OR and exercises only the high word. Both
+  implementations produce f000... for that input. A carry vector such as
+  fg000... produces ef000... under CH addition but ff000... under OR; the same
+  distinction must be proved in the low word.
+
+independent review:
+  A fresh read-only Controller review found no production-code defect and
+  independently confirmed both evidence gaps.
+
+unresolved findings:
+  1. Missing uppercase parser round-trip coverage.
+  2. Missing high/low-word malformed carry vectors and + versus | mutation proof.
+```
+
+## Required changes
+
+```text
+1. Add a valid uppercase A-F parser round trip and assert the lowercase numeric
+   representation.
+2. Add the exact high- and low-word fg carry vectors from the task amendment.
+3. Capture a behavioral mutation proof replacing + with | in both accumulation
+   loops; both carry tests must fail. Restore +.
+4. Rerun mono/non-mono focused tests and mono Task 003-008 regression, launch one
+   fresh read-only review for attempt 5, and append accurate evidence.
+```
+
+## Commits
+
+No implementation or acceptance commit was created.

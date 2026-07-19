@@ -38,6 +38,31 @@ must not saturate, wrap, or return a fallback. Add boundary tests for zero,
 
 Task 013 and Task 014 must reuse this helper rather than define private variants.
 
+### Complete parser parity evidence
+
+The single required `g000...` vector proves the old per-character rejection is
+wrong, but it does not distinguish CH's `(result << 4) + nibble` accumulation
+from an incorrect bitwise OR and does not exercise the low 64-bit word.
+
+Add all of the following focused evidence:
+
+```text
+valid uppercase:
+  parse an uppercase A-F key and round-trip to the same lowercase numeric value
+
+high-word carry:
+  fg000000000000000000000000000000
+  -> ef000000000000000000000000000000
+
+low-word carry:
+  0000000000000000fg00000000000000
+  -> 0000000000000000ef00000000000000
+```
+
+Capture a behavioral mutation proof by temporarily replacing `+ nibble` with
+`| nibble` in both words: the high- and low-word carry tests must fail. Restore
+the CH-compatible addition before final validation.
+
 ## Goal
 
 Port all leaf-level types that form the dependency base for every `FileCache`
