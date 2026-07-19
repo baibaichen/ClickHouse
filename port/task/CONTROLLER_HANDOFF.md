@@ -137,25 +137,21 @@ Current task:
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
-- User requested a pause after Task 007. Task 008 is not started.
-- Preserve the unrelated untracked
-  `port/design/filecache-scheduler-and-caller-scope.html`; it is not part of
-  Task 007.
+- User resumed the pipeline. Corrective Task 008 is the next work item and is
+  not yet started.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Stay paused until the user asks to resume.
-2. Dispatch corrective Task 008.
-3. Run the accumulated Task 003-008 regression and complete Controller review.
-4. Only then dispatch Task 009.
-5. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
-6. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
+1. Dispatch corrective Task 008.
+2. Run the accumulated Task 003-008 regression and complete Controller review.
+3. Only then dispatch Task 009.
+4. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
+5. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: user-requested pause after accepted Task 007; dispatch
-  no Worker until the user resumes.
+- Current stop condition: none; corrective Task 008 may proceed.
 - Corrected Tasks 003, 004, 006, and 007 are accepted. Repair reopened Task 008
   before starting Task 009.
 - For every task:
