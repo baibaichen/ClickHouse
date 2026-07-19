@@ -565,3 +565,260 @@ unresolved findings:
 ## Commits
 
 No implementation or acceptance commit was created.
+
+## Worker attempt 3
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 009
+```
+
+Redispatched after `Controller review 1` (`controller_status: changes_requested`).
+The two required changes were:
+1. Invoke the named callback as `f(shard.map)` in both `withShard` and `forEachShard`
+   (fix the `std::forward<F>(f)(shard.map)` divergence from CH).
+2. Add RED tests for ref-qualified functor invocation and return-by-value semantics.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/clickhouse` | `ch-filecache` | `4500c197112` | clean |
+| `/root/oss/velox` | `filecache` | `24686d2c68831566439911eec8a69287e6fa39e3` | four unstaged Task-009 artifacts from attempt 2 only (ShardedMap.h, ShardedMapTest.cpp, two CMake files) |
+
+`git log -1 --oneline`:
+- ClickHouse: `4500c197112 Task 009: Require exact callback semantics`
+- Velox: `24686d2c6 Task 008: Restore key parser compatibility`
+
+## Preflight: contract re-derivation (unchanged from attempt 2)
+
+CH source confirms `return f(shard.map)` in `withShard` and `f(shard.map)` in
+`forEachShard` — named lvalue invocations. No new unreviewed dependency or scope
+issue. The attempt-1 blocker (CMake FILE_SET registration) and the Controller
+review-1 required changes are both resolved within the declared file scope.
+
+## Files changed
+
+```text
+/root/oss/velox/velox/ch/Interpreters/FileCache/ShardedMap.h                  (modified: std::forward<F>(f)(shard.map) → f(shard.map) in withShard and forEachShard)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/ShardedMapTest.cpp      (modified: +3 new tests: WithShardRefQualifiedUsesLvalueOverload, ForEachShardRefQualifiedUsesLvalueOverload, WithShardReturnCopiesValue)
+/root/oss/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt                (unchanged from attempt 2: non-mono FILE_SET += ShardedMap.h)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt          (unchanged from attempt 2: velox_ch_sharded_map_test target)
+/root/oss/clickhouse/port/task/result/009-filecache-sharded-map-result.md     (this receipt append)
+```
+
+Exactly the five declared artifacts. No other files changed.
+
+## TDD sequence
+
+### Step 1: Add RED tests (before production edit)
+
+Added three new tests to `ShardedMapTest.cpp`:
+1. `WithShardRefQualifiedUsesLvalueOverload` — functor with distinct `operator()(Map&) &`
+   and `operator()(Map&) &&`; passed as temporary (prvalue); expects lvalue overload.
+2. `ForEachShardRefQualifiedUsesLvalueOverload` — same functor for `forEachShard`;
+   expects lvalue overload on all 32 shard iterations.
+3. `WithShardReturnCopiesValue` — callback returns `int&`; `decltype(auto)` at call site;
+   mutating copy must not affect map element.
+
+### Step 2: RED build + run
+
+With `std::forward<F>(f)(shard.map)` still in place:
+
+```text
+WithShardRefQualifiedUsesLvalueOverload: lv=0 (expected 1) rv=1 (expected 0)  FAILED
+ForEachShardRefQualifiedUsesLvalueOverload: lv=0 (expected 32) rv=32 (expected 0)  FAILED
+WithShardReturnCopiesValue: stored=99 == 99  PASSED (return contract already correct)
+```
+
+### Step 3: Production fix
+
+Changed both invocation sites in `ShardedMap.h`:
+```cpp
+// withShard
+return f(shard.map);    // was: return std::forward<F>(f)(shard.map);
+// forEachShard
+f(shard.map);           // was: std::forward<F>(f)(shard.map);
+```
+
+### Step 4: Mutation proof for return semantics
+
+Temporarily changed `auto withShard(...)` to `decltype(auto) withShard(...)`.
+Result: `WithShardReturnCopiesValue` FAILED (`stored=0`, expected 99) —
+with `decltype(auto)` return the caller gets `int&` (live reference to map element),
+`copy = 0` mutates the stored value, proving the `auto` return's copy-decaying semantics.
+Then restored `auto`.
+
+## Commands and outcomes
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| RED build (std::forward still in place) | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt3_red.log` |
+| RED test run (`*RefQualified*:*ReturnCopies*`) | 0 (2 fail expected) | `/root/oss/velox/_build/debug/test_task_009_attempt3_red.log` |
+| GREEN build after fix | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt3_sharded_map.log` |
+| focused `ctest -R ^velox_ch_sharded_map_test$` | 0 | `/root/oss/velox/_build/debug/test_task_009_attempt3_sharded_map.log` |
+| discovery (`--gtest_list_tests`, 15 tests) | 0 | `/root/oss/velox/_build/debug/list_task_009_attempt3_sharded_map.log` |
+| direct gtest run (15 tests) | 0 | `/root/oss/velox/_build/debug/run_task_009_attempt3_sharded_map.log` |
+| MUTATION-declauto build | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt3_mut_declauto.log` |
+| MUTATION-declauto run (`*ReturnCopies*`, FAIL) | 0 | `/root/oss/velox/_build/debug/test_task_009_attempt3_mut_declauto.log` |
+| MUTATION1 build+run (exception-safe, 2 FAIL) | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt3_mut1_exc.log`, `test_task_009_attempt3_mut1_exc.log` |
+| MUTATION2 build+run (hash routing, 1 FAIL) | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt3_mut2_hash.log`, `test_task_009_attempt3_mut2_hash.log` |
+| MUTATION3 build (global lock, deadlock on DifferentShards) | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt3_mut3_lock.log`, `test_task_009_attempt3_mut3_lock.log` |
+| determinism mono 30/30 | 0 | (inline; green in all 30) |
+| regression build Tasks 003-009 (7 targets) | 0 | `/root/oss/velox/_build/debug/build_task_009_attempt3_regression.log` |
+| regression `ctest` Tasks 003-009 (7/7) | 0 | `/root/oss/velox/_build/debug/test_task_009_attempt3_regression.log` |
+| non-mono build | 0 | `/root/oss/velox/_build/debug-task009-nonmono/build_task_009_attempt3_nonmono_sharded_map.log` |
+| non-mono discovery (15 tests) | 0 | `/root/oss/velox/_build/debug-task009-nonmono/list_task_009_attempt3_nonmono.log` |
+| non-mono direct run (15/15) | 0 | `/root/oss/velox/_build/debug-task009-nonmono/run_task_009_attempt3_nonmono.log` |
+| non-mono ctest | 0 | `/root/oss/velox/_build/debug-task009-nonmono/test_task_009_attempt3_nonmono_sharded_map.log` |
+| non-mono determinism 15/15 | 0 | (inline; green in all 15) |
+
+## RED evidence (pre-fix)
+
+```text
+WithShardRefQualifiedUsesLvalueOverload:
+  lv=0 (expected 1) → FAIL: std::forward<F>(f) casts to rvalue, invokes operator()&&
+  rv=1 (expected 0) → FAIL
+ForEachShardRefQualifiedUsesLvalueOverload:
+  lv=0 (expected 32) → FAIL: each loop iteration casts to rvalue, invokes operator()&&
+  rv=32 (expected 0) → FAIL
+WithShardReturnCopiesValue: PASS (return type orthogonal to forwarding fix)
+```
+
+## Mutation proofs (post-fix; all reverted)
+
+1. Exception-safe accounting (skip during unwinding) → `ExceptionAfterInsertUpdatesSize` and
+   `ExceptionAfterEraseUpdatesSize` FAIL (`size=0 expected 1`, `size=1 expected 0`).
+2. Hash routing shift (`Hash{}(key)+total_count_`) → `OriginPoolKeyHashSameUserSameShard` FAILS
+   (`found=0`, expected 1).
+3. Global lock (all shards share `shards_[0].mutex`) → `DifferentShardsConcurrent` deadlocks
+   (process hung on `barrier.arrive_and_wait()` with `timeout 15`, never printed `[OK]`/`[FAILED]`).
+4. `decltype(auto)` return in `withShard` → `WithShardReturnCopiesValue` FAILS (`stored=0`, expected 99):
+   caller receives `int&` to map element; `copy = 0` mutates it under the released lock.
+
+All mutations reverted. No MUTATION/TMP markers remain. `git diff --check`: exit 0.
+
+## Acceptance evidence
+
+```text
+mono focused test count: 15 (0 disabled, 0 skipped); 100% passed, determinism 30/30
+non-mono focused test count: 15 (0 disabled, 0 skipped); 100% passed, determinism 15/15
+Tasks 003-009 regression: exactly 7 ctest entries, 100% passed, 0 failed
+  (velox_ch_common_test, velox_ch_guards_test, velox_ch_threadpool_test,
+   velox_ch_scheduler_test, velox_ch_io_test, velox_ch_leaf_types_test,
+   velox_ch_sharded_map_test)
+git diff --check: exit 0 (no whitespace errors)
+scope: only the 5 declared artifacts changed; both repos at original HEADs
+```
+
+## Worker review
+
+```text
+review subagent: one fresh read-only code-review subagent over the complete
+  task-owned diff (ShardedMap.h + ShardedMapTest.cpp + two CMake files),
+  with CH reference, design 05, RED/GREEN/mutation logs, and both build modes.
+findings:
+  None. All nine focus areas (lvalue semantics, return lifetime, SizeGuard
+  ordering, generic API, RED evidence, test correctness, existing-test
+  preservation, CMake scope, concurrency) reviewed and confirmed correct.
+  The review explicitly confirmed: f(shard.map) matches CH exactly; auto return
+  copies before lock release; SizeGuard fires before lock (LIFO); ref-qualified
+  functor tests are genuine RED/GREEN; non-mono link-only-filecache+GTest passes.
+resolutions: n/a (no findings to resolve)
+unresolved findings: none
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 009 was attempted.
+Changes are unstaged and uncommitted; both repository HEADs are unchanged.
+No scratch files remain (tmp/ShardedMap.h.pristine_attempt3 removed after mutations).
+The worker stopped after writing this receipt.
+```
+
+## Controller review 2
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+task: 009
+worker_attempt_reviewed: 3
+```
+
+## Review evidence
+
+```text
+scope and CMake review:
+  The final Velox diff contains exactly ShardedMap.h, ShardedMapTest.cpp, and
+  the two declared CMake files. ShardedMap.h is in the non-mono PUBLIC HEADERS
+  file set; the reduced focused consumer declares only velox_ch_filecache plus
+  GTest and passes in both modes.
+
+implementation review:
+  Default 32-way hash modulo sharding, one mutex per shard, callback-under-lock,
+  sequential forEachShard, exception-safe size accounting, relaxed total-size
+  snapshot, F14 map/hash consistency, OriginPoolKeyHash behavior, deleted copy
+  operations, and preserved no-op lock event match CH and the approved design.
+
+  Both methods invoke the named callback as an lvalue exactly like CH.
+  withShard's auto return copies a callback reference result while the lock is
+  held, so no map reference escapes. SizeGuard is destroyed before the lock and
+  accounts insert/erase deltas during normal return and exception unwinding.
+
+test and false-green review:
+  Ref-qualified functors captured genuine RED against std::forward invocation;
+  the reference-preserving return mutation makes the detached-copy test fail.
+  Existing exception/hash/global-lock mutations prove size accounting, shard
+  routing, and independent shard locks. Same-key callbacks remain serialized and
+  different-shard callbacks overlap deterministically.
+
+log and Controller gate review:
+  Worker evidence passes 15/15 in mono/non-mono, zero disabled/skipped, repeated
+  determinism, and Task 003-009 CTest 7/7.
+
+  Controller logs:
+    /root/oss/velox/_build/debug/configure_task_009_controller.log
+    /root/oss/velox/_build/debug/build_task_009_controller.log
+    /root/oss/velox/_build/debug/test_task_009_controller.log
+    /root/oss/velox/_build/debug/discovery_task_009_controller.log
+    /root/oss/velox/_build/debug/test_task_009_precommit_mono_retry.log
+    /root/oss/velox/_build/debug-task009-nonmono/configure_task_009_controller.log
+    /root/oss/velox/_build/debug-task009-nonmono/build_task_009_controller.log
+    /root/oss/velox/_build/debug-task009-nonmono/test_task_009_controller.log
+    /root/oss/velox/_build/debug-task009-nonmono/discovery_task_009_controller.log
+    /root/oss/velox/_build/debug-task009-nonmono/test_task_009_precommit_nonmono_retry.log
+
+  Controller mono CTest passed 7/7 and directly listed/ran 15/15 tests. Non-mono
+  CTest passed 1/1 and directly listed/ran 15/15 tests with
+  VELOX_MONO_LIBRARY=OFF. The first precommit helpers resolved relative build
+  paths against the wrong checkout and ran no tests; the persisted absolute-path
+  retries close that harness-only gap.
+
+independent review:
+  A fresh read-only Controller review checked the generic API, return lifetime,
+  lock/guard ordering, exceptions, concurrency, Hash/F14 behavior, CMake
+  interface, and all mutation evidence and reported no Blocker or Major finding.
+
+unresolved findings:
+  None.
+```
+
+## Required changes
+
+```text
+None.
+```
+
+## Accepted implementation commit
+
+| Repository | Commit |
+|---|---|
+| `/root/oss/velox` | `096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a` |

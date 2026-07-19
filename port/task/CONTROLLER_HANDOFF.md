@@ -74,17 +74,17 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after corrected Task 008 acceptance:
+Current verified snapshot after Task 009 acceptance:
 
 environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    Corrective Task 008 receipt commit containing this handoff update; resolve
+    Task 009 receipt commit containing this handoff update; resolve
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    24686d2c68831566439911eec8a69287e6fa39e3 Task 008: Restore key parser compatibility
+    096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a Task 009: Add FileCache sharded map
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -114,10 +114,13 @@ environment_profile: root-oss
       ClickHouse: 1275836e76a
       Corrective Velox: 24686d2c68831566439911eec8a69287e6fa39e3
       Corrective ClickHouse: this acceptance commit
-- Tasks 003, 004, 006, 007, and 008 corrected and accepted.
+    Task 009
+      Velox:      096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a
+      ClickHouse: this acceptance commit
+- Tasks 003, 004, 006, 007, and 008 corrected and accepted; Task 009 accepted.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
-- Task 009 and Task 011 task contracts passed the read-only audit.
-- Task 009 is not_started.
+- Task 011 contract passed the read-only audit.
+- Task 010 is not_started.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
@@ -128,8 +131,8 @@ environment_profile: root-oss
 
 Current task:
 
-- Corrected Tasks 003, 004, 006, 007, and 008 are accepted.
-- Velox is clean at `24686d2c68831566439911eec8a69287e6fa39e3`.
+- Corrected Tasks 003, 004, 006, 007, and 008 plus Task 009 are accepted.
+- Velox is clean at `096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a`.
 - Task 005 remains accepted.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
@@ -137,27 +140,22 @@ Current task:
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
-- Corrective remediation through Task 008 is complete.
-- Task 009 Worker attempt 1 blocked before edits because the public
-  `ShardedMap.h` registration required the parent FileCache CMakeLists outside
-  the original scope.
-- Controller resolved the registration blocker and Worker attempt 2 implemented
-  the map, but Controller review 1 requested callback-API rework:
-    invoke named `f` as an lvalue exactly like CH;
-    prove return-by-value/reference decay.
-- Worker attempt 3 is ready. Task 010 is not started.
+- Task 009 is accepted. Task 010 is the next work item and is not started.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch Task 009 Worker attempt 3.
-2. After Task 010, stop for the mandatory Tasks 003-010 whole-port review.
-3. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
+1. Dispatch Task 010.
+2. After Task 010 acceptance, stop for the mandatory Tasks 003-010 whole-port
+   source-contract review.
+3. Continue to Task 011 only with zero unresolved findings and explicit user
+   approval.
+4. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: none; Task 009 Worker attempt 3 may proceed.
-- Corrected Tasks 003, 004, 006, 007, and 008 are accepted.
+- Current stop condition: none; Task 010 may proceed.
+- Corrected Tasks 003, 004, 006, 007, and 008 plus Task 009 are accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
