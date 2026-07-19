@@ -74,17 +74,17 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after Task 009 acceptance:
+Current verified snapshot after Task 010 acceptance:
 
 environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    Task 009 receipt commit containing this handoff update; resolve
+    Task 010 receipt commit containing this handoff update; resolve
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a Task 009: Add FileCache sharded map
+    89039901aa4287ce811a3b1628867b0796c76678 Task 010: Add `FileCache` settings
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -117,10 +117,15 @@ environment_profile: root-oss
     Task 009
       Velox:      096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a
       ClickHouse: this acceptance commit
-- Tasks 003, 004, 006, 007, and 008 corrected and accepted; Task 009 accepted.
+    Task 010
+      Velox:      89039901aa4287ce811a3b1628867b0796c76678
+      ClickHouse: this acceptance commit
+- Tasks 003, 004, 006, 007, and 008 corrected and accepted; Tasks 009 and 010 accepted.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
 - Task 011 contract passed the read-only audit.
-- Task 010 is not_started.
+- The mandatory Tasks 003-010 full review is not started.
+- Task 011 is not started and must not start before that review is accepted
+  with zero unresolved findings and explicit user approval.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
@@ -131,8 +136,8 @@ environment_profile: root-oss
 
 Current task:
 
-- Corrected Tasks 003, 004, 006, 007, and 008 plus Task 009 are accepted.
-- Velox is clean at `096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a`.
+- Corrected Tasks 003, 004, 006, 007, and 008 plus Tasks 009 and 010 are accepted.
+- Velox is clean at `89039901aa4287ce811a3b1628867b0796c76678`.
 - Task 005 remains accepted.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
@@ -140,26 +145,26 @@ Current task:
     physical-write reconciliation.
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
-- Task 009 is accepted.
-- Task 010 attempt 3 fixed the NaN UB and added all missing keys, but Controller
-  review 2 found grouped boolean assertions false-green for same-valued swaps.
-- Worker attempt 4 must add one-hot coverage for all six boolean mappings.
-  Task 011 and the Tasks 003-010 full review are not started.
+- Tasks 009 and 010 are accepted.
+- The mandatory Tasks 003-010 full review has not started because the user
+  requested a pause at this boundary.
+- Task 011 is not started and is prohibited until the review gate is satisfied.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch Task 010 Worker attempt 4.
-2. After Task 010 acceptance, stop for the mandatory Tasks 003-010 whole-port
+1. Resume only when the user requests the mandatory Tasks 003-010 whole-port
    source-contract review.
+2. Complete that review before starting any Task 011 work.
 3. Continue to Task 011 only with zero unresolved findings and explicit user
    approval.
 4. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: none; Task 010 Worker attempt 4 may proceed.
-- Corrected Tasks 003, 004, 006, 007, and 008 plus Task 009 are accepted.
+- Current stop condition: user-requested pause before the mandatory Tasks
+  003-010 full review.
+- Corrected Tasks 003, 004, 006, 007, and 008 plus Tasks 009 and 010 are accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
@@ -178,7 +183,8 @@ Continuous execution target:
     f. Confirm affected repositories are clean before dispatching the next
        task.
 - After resume, stop when:
-    a. Task 010 is accepted, for the mandatory Tasks 003-010 review;
+    a. the mandatory Tasks 003-010 review has any finding or is awaiting user
+       approval;
     b. Task 014 is accepted, for the mandatory Tasks 003-014 review;
     c. either review has any finding;
     d. a Worker writes `blocked` and the Controller cannot resolve it from

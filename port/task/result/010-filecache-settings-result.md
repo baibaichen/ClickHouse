@@ -741,3 +741,168 @@ unresolved findings:
 ## Commits
 
 No implementation or acceptance commit was created.
+
+## Worker attempt 4
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 010
+```
+
+Executed under controller review 2 amendment (one-hot boolean evidence required).
+Test-only change: replaced `ParseUncoveredKeys` with `OneHotBooleanMappings` (loop
+over 6 boolean cases) and `ParseUncoveredNonBoolKeys` (9 numeric fields). Production
+code not modified. Mutation proof recaptured with the new one-hot structure.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/velox` | `filecache` | `096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a` | exactly seven attempt-2/3 files dirty (M CMakeLists ×3; ?? FileCacheSettings.h/.cpp, FileCacheReadOptions.h, FileCacheSettingsTest.cpp) |
+| `/root/oss/clickhouse` | `ch-filecache` | `22a3f1fec07` | clean |
+
+## Files changed
+
+```text
+/root/oss/velox/velox/ch/Common/CMakeLists.txt                                 (M, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt                 (M, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt           (M, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.h            (??, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.cpp          (??, unchanged from attempt 3)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheReadOptions.h         (??, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/FileCacheSettingsTest.cpp (??, test-only: replaced ParseUncoveredKeys with OneHotBooleanMappings + ParseUncoveredNonBoolKeys)
+/root/oss/clickhouse/port/task/result/010-filecache-settings-result.md         (this receipt)
+```
+
+Exactly the 7 declared Velox files plus the receipt. No other file touched.
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| GREEN build (new tests) | 0 | `/root/oss/velox/_build/debug/build_task_010_attempt4_green1.log` |
+| GREEN direct test 59/59 (pre-mutation) | 0 | `/root/oss/velox/_build/debug/test_task_010_attempt4_green1_direct.log` |
+| mutation build (allow-dynamic-cache-resize → enableFilesystemQueryCacheLimit) | 0 | `/root/oss/velox/_build/debug/build_task_010_attempt4_mutation.log` |
+| mutation direct test (OneHotBooleanMappings fails) | 1 (expected) | `/root/oss/velox/_build/debug/test_task_010_attempt4_mutation.log` |
+| mutation restored; final GREEN build | 0 | `/root/oss/velox/_build/debug/build_task_010_attempt4_final.log` |
+| GREEN direct test 59/59 (final) | 0 | `/root/oss/velox/_build/debug/test_task_010_attempt4_final_direct.log` |
+| focused CTest mono (velox_ch_settings_test) | 0 | `/root/oss/velox/_build/debug/test_task_010_attempt4_settings_ctest.log` |
+| accumulated Tasks 003-010 regression (10 tests) | 0 | `/root/oss/velox/_build/debug/test_task_010_attempt4_regression.log` |
+| non-mono build | 0 | `/root/oss/velox/_build/debug-task010-nonmono/build_task_010_attempt4_nonmono.log` |
+| non-mono direct test 59/59 | 0 | `/root/oss/velox/_build/debug-task010-nonmono/test_task_010_attempt4_nonmono_direct.log` |
+| non-mono CTest discovery | 0 | `/root/oss/velox/_build/debug-task010-nonmono/test_task_010_attempt4_nonmono_ctest.log` |
+
+## Acceptance evidence
+
+```text
+test count: 59 gtest cases (mono and non-mono identical; +1 vs attempt 3: removed 1, added 2)
+failed tests: 0 (final GREEN, mono and non-mono)
+skipped/disabled tests: 0
+accumulated regression: 10/10 CTest pass
+  (velox_ch_common, velox_ch_chassert_release_probe, velox_ch_chassert_sanitizer_gate_test,
+   velox_ch_threadpool, velox_ch_scheduler, velox_ch_guards, velox_ch_leaf_types,
+   velox_ch_sharded_map, velox_ch_settings, velox_ch_io)
+
+One-hot boolean evidence: six cases in OneHotBooleanMappings loop:
+  i=0: allow-dynamic-cache-resize              → allowDynamicCacheResize
+  i=1: enable-filesystem-query-cache-limit     → enableFilesystemQueryCacheLimit
+  i=2: expose-prometheus-eviction-metrics      → exposePrometheusEvictionMetrics
+  i=3: expose-prometheus-eviction-metrics-per-user → exposePrometheusEvictionMetricsPerUser
+  i=4: skip-cache-on-disk-failure              → skipCacheOnDiskFailure
+  i=5: write-cache-per-user-id-directory       → writeCachePerUserIdDirectory
+  Each case: only the i-th key set to "true"; all other five boolean fields
+  asserted false. Any swap — including within a same-valued group — fails at
+  least two EXPECT_TRUE/EXPECT_FALSE assertions.
+
+Nine non-boolean fields in ParseUncoveredNonBoolKeys at distinct non-default values:
+  backgroundDownloadMaxFileSegmentSize = 8388608 (default 4194304)
+  cacheHitsThreshold = 42 (default 0)
+  checkCacheProbability = 0.05 (default 0.001)
+  dynamicResizeLockWaitMs = 2500 (default 1000)
+  idleClientCheckIntervalSec = 300 (default 0)
+  idleClientTtlSec = 3600 (default 604800)
+  keepFreeSpaceElementsRatio = 0.15 (default 0.0)
+  keepFreeSpaceRemoveBatch = 500 (default 250)
+  splitCacheRatio = 0.3 (default 0.1)
+
+Mutation proof: routed allow-dynamic-cache-resize → enableFilesystemQueryCacheLimit.
+  test_task_010_attempt4_mutation.log shows OneHotBooleanMappings FAILED with 3
+  assertion failures spanning cases i=0 and i=1:
+    "key allow-dynamic-cache-resize must set its own field to true"
+    "field for enable-filesystem-query-cache-limit must remain false when only allow-dynamic-cache-resize is set"
+    "key enable-filesystem-query-cache-limit must set its own field to true"
+  Exit code 1, 1 test failed (58 passed). Production restored exactly; no marker left.
+
+git diff --check: clean (no whitespace errors); only the 7 declared Velox files changed.
+```
+
+## Worker review
+
+```text
+review subagent: one read-only code-review subagent launched on the complete
+  attempt-4 diff (OneHotBooleanMappings + ParseUncoveredNonBoolKeys replacement).
+findings: none. Subagent verified:
+  - One-hot loop is logically airtight: any key→wrong-field routing caught by
+    EXPECT_TRUE on correct field; any extra field set caught by EXPECT_FALSE loop.
+  - Full swap of two entries fails in both loop iterations.
+  - All 9 non-boolean values are distinct non-default; assertions name the correct fields.
+  - Mutation proof correctly exercises the one-hot test paths; production code
+    restored with no leftover mutation markers.
+  - No false-green risk; no concurrency/lifetime/integration issues.
+unresolved findings: none.
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 010 was attempted (attempt 4).
+Changes are unstaged and uncommitted in both repositories.
+The 7 declared Velox files (test-only edit to FileCacheSettingsTest.cpp, all
+other files unchanged from attempts 2/3) plus this receipt are the only changes.
+No Task 011 file and no out-of-scope file was touched.
+The worker stopped immediately after writing this receipt.
+```
+
+## Controller review 3
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+
+Scope:
+- Inspected the complete Task 010 diff and all seven declared Velox files.
+- Confirmed no Task 011 implementation or unrelated source was included.
+
+Implementation evidence:
+- `FileCacheSettings` provides the complete 39-field effective configuration and
+  `FileCacheReadOptions` provides request-scoped read settings.
+- File-system containment is checked by canonical path components before
+  `create_directories` or `space` and rejects symlink escapes.
+- `max-size-ratio-to-total-space` rejects NaN, infinities, zero, and values above
+  one before floating-point to integer conversion.
+- All loader keys have direct parse evidence, including six boolean one-hot
+  cases that fail for swaps, misroutes, or extra fields.
+- Mono and non-mono CMake registrations include the new implementation,
+  public headers, `velox_common_config` dependency, and focused test target.
+
+Fresh Controller evidence:
+- Mono CTest: 10/10 passed.
+- Mono focused direct gtest: 59/59 passed.
+- Non-mono CTest: 1/1 passed.
+- Non-mono focused direct gtest: 59/59 passed.
+- Disabled/skipped focused tests: 0.
+- Fresh precommit mono gate: 10/10 passed.
+- Fresh precommit non-mono gate: 1/1 passed with `VELOX_MONO_LIBRARY=OFF`.
+- `git diff --check` passed.
+- Independent final code review reported no significant findings.
+
+Accepted Velox commit:
+89039901aa4287ce811a3b1628867b0796c76678 Task 010: Add `FileCache` settings
+```
