@@ -131,28 +131,30 @@ Current task:
   `b3c2832e18f76b574faf74e2d6ba05c2da741efd`; corrective Task 007 Worker
   attempt 4 is unstaged and uncommitted.
 - Task 005 remains accepted.
-- Task 007 Worker attempt 4 stopped `ready_for_controller`; Controller review 4
-  requested changes and set `waiting_for_user`.
+- Task 007 Worker attempt 5 stopped `ready_for_controller`; Controller review 5
+  requested one remaining CH byte-count settlement fix. Worker attempt 6 is
+  ready to dispatch.
 - Velox dirty files are exactly:
     `velox/ch/IO/ReadBufferFromVeloxReadFile.h`,
     `velox/ch/IO/ReadBufferFromVeloxReadFile.cpp`,
     `velox/ch/IO/WriteBufferFromVeloxWriteFile.h`,
     `velox/ch/IO/WriteBufferFromVeloxWriteFile.cpp`,
     `velox/ch/IO/tests/IoAdaptersTest.cpp`.
-- In-scope defects: null-detach pointer arithmetic/offset validation, writer
-  cancel not discarding/detaching pending state, and untested/unenforced
-  direct-IO read offset/length alignment.
+- Attempt 5 resolved null-detach/offset safety, cancel detachment, direct-IO
+  fail-close, and adapter-only tests 10-11.
+- Remaining in-scope defect: writer append exceptions must settle the attempted
+  bytes before cancel/rethrow, matching CH `WriteBuffer::next`.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
     Task 012 must prove production `FileSegment` append-mode resume and partial
     physical-write reconciliation.
-- Canonical design and Tasks 007/012 now record this split. Task 007 is ready
-  for Worker attempt 5; no implementation finding is waived.
+- Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
+  record the approved CH test migration ownership.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Redispatch corrective Task 007 for Worker attempt 5.
+1. Redispatch corrective Task 007 for Worker attempt 6.
 2. After Task 007 acceptance, dispatch corrective Task 008.
 3. Run the accumulated Task 003-008 regression and complete Controller review.
 4. Only then dispatch Task 009.
@@ -161,7 +163,7 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: none; Task 007 Worker attempt 5 may proceed.
+- Current stop condition: none; Task 007 Worker attempt 6 may proceed.
 - Corrected Tasks 003, 004, and 006 are accepted. Repair reopened Tasks 007
   and 008 before starting Task 009.
 - For every task:

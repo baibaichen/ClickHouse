@@ -1310,3 +1310,389 @@ evidence:
 
 redispatch same task: yes
 ```
+
+## Worker attempt 5
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 007
+```
+
+Corrective rework implementing the **approved adapter-only task boundary**
+(task lines 220-253, `Controller amendment after Worker attempt 4`) on top of the
+post-acceptance replacement contract (task lines 8-218). Fixes the four mandatory
+Worker-attempt-4 findings (null-detach/offset memory safety, writer cancel/append-
+failure detachment, direct-IO fail-close, adapter-only writer tests 10-11) with
+TDD, and corrects the attempt-4 receipt inaccuracies below. Worker attempts 1-4,
+Controller reviews 1-4, and Controller unblock responses 1-2 are unchanged; this
+section is appended only. Profile: `root-oss`.
+
+## Preflight (attempt 5)
+
+```text
+Re-derived contract from: task 007 (replacement contract + attempt-4 boundary
+amendment), canonical design filecache-reader-handoff-and-contract-recovery.html,
+Task 012 boundary, and CH references (BufferBase/ReadBuffer/SeekableReadBuffer/
+WriteBuffer/ReadBufferFromFileBase/WriteBufferFromFileBase). Confirmed:
+- No new CH dependency, macro, type, API, or Velox substitution is reached beyond
+  the attempt-4 reviewed table. Only already-reviewed primitives are used:
+  VELOX_CHECK_* / VELOX_FAIL (Common/FileCacheException.h), reinterpret_cast to
+  uintptr_t for alignment, ReadFile::directIo / ReadFile::pread,
+  WriteFile::append / flush / close / getName, AlignedBuffer::allocate / BufferPtr
+  / MemoryPool.
+- No std::filesystem, no FileSegment, no file open/reopen, no downloaded/reserved
+  state is introduced (those are Task 012). No new header, no new file.
+- File scope unchanged: only the five declared Task-007 Velox files are edited;
+  the three CMake files need no change (no files added or removed).
+Result: no unreviewed-dependency gate triggered; no scope expansion; not blocked.
+```
+
+## Repository baselines (attempt 5)
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/clickhouse` (protocol/receipts) | `ch-filecache` | `465f874d1ef` | one pre-existing untracked file (below); no tracked file dirty |
+| `/root/oss/velox` (implementation) | `filecache` | `b3c2832e18f76b574faf74e2d6ba05c2da741efd` | the five attempt-4 Task-007 files, modified/unstaged |
+
+```text
+Velox: the five Task-007 files are tracked (committed by the accepted attempt-3
+  implementation at 711a848501d5 "Task 007: Add `FileCache` IO adapters", an
+  ancestor of HEAD b3c2832e1) and carry Worker attempt 4's unstaged edits. They
+  are the only dirty files. Attempt 4 was preserved and reworked (not discarded).
+ClickHouse: HEAD 465f874d1ef "Task 007: Define adapter and `FileSegment` test
+  boundary" already tracks this receipt file. One unrelated pre-existing untracked
+  file is present, `port/design/filecache-scheduler-and-caller-scope.html`; it was
+  NOT created or modified by this attempt and is preserved. No tracked ClickHouse
+  file was modified except this appended receipt.
+```
+
+## Corrections to the Worker-attempt-4 receipt (finding 5; appended, history not edited)
+
+```text
+1. tracked-vs-untracked status: attempt 4 reported the ClickHouse receipt as
+   "?? ...-result.md (untracked)". It is in fact a tracked file (its history:
+   c9a5c35be06 -> f8ad5823489 -> 465f874d1ef), so appending to it shows as a
+   MODIFIED tracked file ("M"), not an untracked one. Attempt 5 reports the
+   accurate status: ClickHouse "M port/task/result/007-...-result.md".
+2. intermediate green-log claim: per Controller review 4, an attempt-4
+   intermediate "green run" claim disagreed with its log (the two pool-accounting
+   tests still failed in the earlier run; they only passed after a later
+   pool-fixture rebuild). Attempt 5 makes every logged claim match its log
+   exactly: each RED/mutation/green/fresh-build/discovery/regression assertion
+   below is backed by the referenced log and exit code with no intermediate
+   green overstatement.
+```
+
+## Dependency / source-contract table (unchanged mappings, re-verified)
+
+```text
+All mappings are those already reviewed for attempt 4 (see the attempt-4
+Dependency table). Attempt 5 adds no new mapping. Re-verified against current
+Velox source: ReadFile::directIo(uint64_t&) (File.h:179), ReadFile::pread
+(File.h:107), WriteFile::append/flush/close/getName (File.h:222/251/265),
+AlignedBuffer::allocate / BufferPtr / MemoryPool. The resume / append-mode open /
+filesystem-size reconciliation remain FileSegment (Task 012) responsibilities,
+per the approved boundary; the adapter proves only the already-open-file half.
+```
+
+## Files changed (attempt 5)
+
+```text
+# /root/oss/velox  (the five declared Task-007 files, modified/unstaged)
+velox/ch/IO/ReadBufferFromVeloxReadFile.h     (null-safe CacheBuffer::size, null-safe FileCacheBufferState offset/available/count, null-safe/validating set, new detach, checkDirectIoRead decl)
+velox/ch/IO/ReadBufferFromVeloxReadFile.cpp   (null-safe/validating set, detach, checkDirectIoRead before every pread, seek alignment fail-close before mutation)
+velox/ch/IO/WriteBufferFromVeloxWriteFile.h   (doc updates only for cancel/detach semantics)
+velox/ch/IO/WriteBufferFromVeloxWriteFile.cpp (cancel discards cursor + detaches caller memory; next/finalize failure routes through cancel; original exception preserved, terminal)
+velox/ch/IO/tests/IoAdaptersTest.cpp          (31 tests: +7 new focused tests, augmented cancel/failure tests, reworked test 11, alignment-enforcing mock, strict-prefix WriteFile double)
+
+# /root/oss/clickhouse
+port/task/result/007-filecache-io-adapters-result.md   (this appended section only)
+```
+
+## TDD RED evidence (attempt 5)
+
+Genuine behavioral RED captured by building the attempt-5 test suite against the
+**unchanged attempt-4 production** and running it. Build
+`task007_attempt5_red_build.log` (exit 0); run `task007_attempt5_red_run.log`
+(exit 1): **31 tests, 23 passed, 8 FAILED**, each failing for the exact intended
+behavioral reason (not an API-shape compile error):
+
+```text
+finding 1 (null/offset memory safety):
+  WriterSetRejectsNullWithNonzeroSizeOrOffset  L627/L628: set(nullptr,5) and
+    set(nullptr,0,3) "throws nothing" on old (null-pointer arithmetic; contract: reject)
+  WriterSetRejectsOffsetPastSize               L647: set(buf,4,5) "throws nothing" on old
+finding 2 (cancel/append-failure detach):
+  WriterCancelIsNoexceptIdempotent             L760/L762: after cancel offset()==7 (not 0)
+    and buffer().begin()==external (caller pointer retained)
+  WriterNextFailureCancelsAndPreventsWrite     L802: hasPendingData()==true after failure
+    (old did not discard the working view)
+  WriterPartialWriteCommitsPrefixThenThrows    L872: buffer().begin()==reserved after
+    failure (old retained the caller pointer)
+finding 3 (direct-IO fail-close):
+  ReaderDirectIoUnalignedSeekRejected          L493/L494: seek(100) "throws nothing" and
+    moved position to 100 on old
+  ReaderDirectIoUnalignedTailRejectedBeforePread   L514: preadCalls()==2 on old
+    (unaligned tail reached pread)
+  ReaderDirectIoUnalignedRightBoundRejectedBeforePread L528: preadCalls()==1 on old
+    (unaligned right bound reached pread)
+```
+
+The alignment-enforcing `MockReadFile` records `preadCalls` **before** it enforces
+alignment, so the RED signal for the tail/right-bound tests is the unchanged call
+count (the adapter must fail closed before `pread`), not merely that an exception
+is thrown.
+
+## Mutation proofs (attempt 5)
+
+For green-by-construction adapter behaviors, focused mutations of the attempt-5
+production prove the assertions fail when the behavior is broken; each mutation
+was reverted (`grep MUTATION velox/ch/IO/` = none in production and tests):
+
+```text
+zero-copy:   nextImpl appends a staging std::string copy ->
+             WriterExternalZeroCopyAppend FAILS (mock sees a different address).
+             task007_attempt5_mutation_zerocopy_{build,run}.log (run exit 1; 1 FAILED)
+resume:      nextImpl appends nothing ->
+             WriterResumeAppendsWithoutTruncatingPrefix FAILS
+             (content stays "DOWNLOADED-PREFIX", missing "-more").
+             task007_attempt5_mutation_resume_{build,run}.log (run exit 1; 1 FAILED)
+direct-IO:   checkDirectIoRead + seek alignment check disabled ->
+             the 3 fail-close reader tests FAIL while the 2 aligned/positive tests
+             still pass, proving the fail-close tests genuinely reach and gate pread.
+             task007_attempt5_mutation_directio_{build,run}.log (run exit 1; 2 passed, 3 FAILED)
+```
+
+## Commands and outcomes (attempt 5)
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| Baseline run of attempt-4 suite (24/24) | 0 | `_build/debug/task007_attempt5_baseline_run.log` |
+| RED build (attempt-5 tests vs unchanged attempt-4 production) | 0 | `_build/debug/task007_attempt5_red_build.log` |
+| RED run (31 tests, 23 passed, 8 FAILED — genuine behavioral) | 1 | `_build/debug/task007_attempt5_red_run.log` |
+| GREEN build (new production + suite; both .cpp + test recompiled, relink) | 0 | `_build/debug/task007_attempt5_green_build.log` |
+| GREEN run (31/31) | 0 | `_build/debug/task007_attempt5_green_run.log` |
+| Mutation zero-copy build/run (1 FAILED) | 0/1 | `_build/debug/task007_attempt5_mutation_zerocopy_{build,run}.log` |
+| Mutation resume build/run (1 FAILED) | 0/1 | `_build/debug/task007_attempt5_mutation_resume_{build,run}.log` |
+| Mutation direct-IO build/run (2 passed, 3 FAILED) | 0/1 | `_build/debug/task007_attempt5_mutation_directio_{build,run}.log` |
+| Fresh final build (touch all 3 sources; recompile both .cpp + test, relink libvelox.a + velox_ch_io_test) | 0 | `_build/debug/task007_attempt5_final_build.log` |
+| Final focused io run (31/31) | 0 | `_build/debug/task007_attempt5_io_final.log` |
+| gtest discovery (`--gtest_list_tests`) = 31 | 0 | `_build/debug/task007_attempt5_discovery.log` |
+| Regression targets build (003-006 + 007) | 0 | `_build/debug/task007_attempt5_regression_build.log` |
+| Task 003-007 combined ctest gate (5/5) | 0 | `_build/debug/task007_attempt5_all_gates.log` |
+| Post-review io run (31/31) | 0 | `_build/debug/task007_attempt5_postreview_io.log` |
+| Post-review combined ctest (5/5) | 0 | `_build/debug/task007_attempt5_postreview_gates.log` |
+| Consolidated Velox diff for reviewer | - | `_build/debug/task007_attempt5_full_velox.diff` |
+
+Configure was already current in `/root/oss/velox/_build/debug` (root-oss:
+`VELOX_MONO_LIBRARY=ON`, `VELOX_BUILD_TESTING=ON`, vcpkg toolchain). Every build
+sourced `/root/oss/velox-helper/env.sh` and used `/usr/local/bin/ninja` with no
+`-j`; `build.sh` was not used as evidence.
+
+## Fresh-build proof
+
+`task007_attempt5_final_build.log`, after touching all three sources, shows:
+`Building CXX .../ch/IO/WriteBufferFromVeloxWriteFile.cpp.o`,
+`Building CXX .../ch/IO/ReadBufferFromVeloxReadFile.cpp.o`,
+`Building CXX .../IoAdaptersTest.cpp.o`, then
+`Linking CXX static library lib/libvelox.a` and
+`Linking CXX executable velox/ch/IO/tests/velox_ch_io_test` — i.e. fresh
+compilation of both Task-007 production `.cpp` files and `IoAdaptersTest.cpp`
+plus a relink of `libvelox.a` and `velox_ch_io_test`.
+
+## Acceptance evidence (attempt 5)
+
+```text
+test count: velox_ch_io_test = 31 tests (17 Reader..., 14 Writer...), all pass.
+  Registered with ctest as #434 and Passed under ctest.
+failed tests: none (final).
+skipped/disabled tests: none. grep DISABLED_/GTEST_SKIP/GTEST_FILTER in
+  IoAdaptersTest.cpp = 0; --gtest_list_tests enumerates all 31; the run reports no
+  SKIPPED/DISABLED lines.
+discovery: task007_attempt5_discovery.log lists 31 cases.
+Task 003-007 ctest gate: 5/5 suites passed (#427 common, #428 threadpool,
+  #429 scheduler, #432 guards, #434 io), 100%, 0 failed
+  (task007_attempt5_all_gates.log and post-review rerun task007_attempt5_postreview_gates.log).
+git diff --check (Velox): clean (exit 0); exactly five modified Task-007 files,
+  no untracked stray file under velox/ch/IO/.
+```
+
+## Findings and resolutions (attempt 5)
+
+```text
+finding 1 (null-detach/offset memory safety): RESOLVED.
+  - CacheBuffer::size is null-safe (returns 0 without subtracting null).
+  - FileCacheBufferState::offset/available/count are null-safe (guard before any
+    pointer subtraction).
+  - FileCacheBufferState::set rejects a null pointer with nonzero size/offset and
+    rejects offset > size before computing ptr + offset; a null pointer maps to a
+    coherent empty state with no pointer arithmetic.
+  RED: WriterSetRejectsNullWithNonzeroSizeOrOffset, WriterSetRejectsOffsetPastSize;
+  coherence: WriterDetachAccessorsAndFinalizeAreCoherent.
+
+finding 2 (writer cancel/append-failure): RESOLVED.
+  - cancel() is noexcept/idempotent: releases the WriteFile then state_.detach()
+    discards the pending cursor and drops every caller pointer (offset()->0), and
+    appends nothing.
+  - next()/finalize() failure routes through cancel() and rethrows the ORIGINAL
+    exception, leaving a terminal (non-retryable) state; a later write/next is
+    rejected. The committed physical prefix is left observable for FileSegment.
+  RED: WriterCancelIsNoexceptIdempotent, WriterNextFailureCancelsAndPreventsWrite,
+  WriterPartialWriteCommitsPrefixThenThrows.
+
+finding 3 (direct-IO fail-close): RESOLVED.
+  - checkDirectIoRead validates destination address, file offset, and requested
+    length against directIoAlignment_ before every readInto/pread; an unaligned
+    file tail or right bound is rejected explicitly (no buffered fallback, silent
+    rounding, or over-read).
+  - seek validates the next-read offset alignment before mutating position/window,
+    so a rejected seek does not move the reader.
+  - The alignment-enforcing MockReadFile records preadCalls before enforcing, so
+    the tests prove the adapter fails closed before pread (call count unchanged).
+  RED: ReaderDirectIoUnalignedSeekRejected, ReaderDirectIoUnalignedTailRejectedBeforePread,
+  ReaderDirectIoUnalignedRightBoundRejectedBeforePread; positive:
+  ReaderDirectIoAlignedReadSucceeds; mutation: mutation_directio.
+
+finding 4 (adapter-only writer tests 10-11): RESOLVED.
+  - Test 10 (WriterResumeAppendsWithoutTruncatingPrefix) asserts only that an
+    already-open WriteFile's downloaded prefix is preserved and the new bytes are
+    appended; it explicitly does not claim to prove the opening mode. Green by
+    construction -> mutation proof (resume) shows it fails if the append is broken.
+  - Test 11 (WriterPartialWriteCommitsPrefixThenThrows): a WriteFile double
+    physically commits a strict prefix ("COMMITTED" + "RRRRRR") then throws; the
+    adapter rethrows the original exception, becomes canceled, detaches the caller
+    buffer, does not retry, and leaves the strict prefix observable. No
+    filesystem-size/downloaded/reserved reconciliation is performed in the test
+    (that is Task 012).
+
+finding 5 (receipt inaccuracies): RESOLVED via the "Corrections" section above;
+  history is not edited, only appended.
+```
+
+## Worker review (attempt 5)
+
+```text
+review subagent: exactly one fresh read-only code-review subagent
+  ("task007-attempt5-review"), given the approved adapter/FileSegment boundary,
+  the replacement contract, the four mandatory findings, the CH/design references,
+  the full five-file diff (task007_attempt5_full_velox.diff), and the
+  RED/mutation/green evidence. Instructed not to edit; it made no edits.
+verdict: "No actionable in-scope defects found." It independently traced every
+  state transition and every path to ReadFile::pread / WriteFile::append and
+  confirmed: (1) null-detach memory safety (size/offset/available null-guarded;
+  set rejects null-with-nonzero and offset>size before pointer arithmetic);
+  (2) cancel noexcept/idempotent + detach with original-exception-preserving
+  terminal next(); (3) every pread gated by checkDirectIoRead and seek checked
+  before mutation, with no unguarded pread path; (4) tests 10/11 correctly scoped.
+  It confirmed the boundary is honored (no std::filesystem::file_size, no file
+  open/reopen, no O_APPEND/O_TRUNC, no downloaded/reserved logic) and zero-copy is
+  honored (only memcpy is the owned-buffer write() streaming path, not the
+  external set()+next() shape). Its false-green pass found no tautological,
+  unrelated, or skipped assertion; every green-by-construction test has an
+  assertion that fails if the behavior breaks.
+findings: none (blocker/major/minor).
+resolutions: none required. Production was not changed after the review, so no
+  second reviewer was launched; the post-review gates were rerun GREEN
+  (31/31 io, 5/5 ctest; task007_attempt5_postreview_*.log).
+unresolved findings: none.
+false-green check: 8 behavioral RED tests failed against attempt-4 production for
+  the intended reasons; 3 mutation proofs show the zero-copy, resume, and
+  direct-IO tests fail when the behavior is broken; no assertion was weakened and
+  no test-only hook was added to production.
+```
+
+## Blockers (attempt 5)
+
+```text
+None. No unreviewed dependency, no required file outside the declared scope, and
+no unresolved source/design/task disagreement. Resume / append-mode open /
+filesystem-size reconciliation are correctly attributed to FileSegment (Task 012)
+per the approved boundary and CH source, not silently deferred inside the adapter.
+```
+
+## Repository statuses (final, attempt 5)
+
+```text
+Velox      /root/oss/velox      branch filecache      HEAD b3c2832e18f76b574faf74e2d6ba05c2da741efd
+  dirty: M velox/ch/IO/ReadBufferFromVeloxReadFile.{h,cpp},
+         M velox/ch/IO/WriteBufferFromVeloxWriteFile.{h,cpp},
+         M velox/ch/IO/tests/IoAdaptersTest.cpp
+  (exactly the five declared Task-007 files; unstaged/uncommitted).
+ClickHouse /root/oss/clickhouse branch ch-filecache HEAD 465f874d1ef
+  dirty: M port/task/result/007-filecache-io-adapters-result.md (this appended receipt).
+  Pre-existing untracked, unrelated, preserved: ?? port/design/filecache-scheduler-and-caller-scope.html.
+```
+
+## Worker declaration (attempt 5)
+
+```text
+Only Task 007 attempt 5 was attempted; Task 008 and any FileSegment/Task-012
+behavior were not started.
+Changes are unstaged and uncommitted; no stage/commit/amend/rebase/push/PR/
+worktree/branch change was performed.
+No ClickHouse task/design/protocol/environment/handoff file was modified; no
+earlier receipt section was altered (attempt 5 is appended only).
+The worker stopped after writing this receipt.
+```
+
+## Controller review 5
+
+```text
+controller_status: changes_requested
+environment_profile: root-oss
+task: 007
+worker_attempt_reviewed: 5
+```
+
+## Review evidence
+
+```text
+scope review:
+  Worker attempt 5 remained inside the five Task-007 Velox files and appended
+  this tracked receipt. The unrelated pre-existing untracked scheduler design
+  artifact was preserved. No Task-012 production work was started.
+
+implementation review:
+  Null-detach state, invalid offsets, cancel detachment, direct-IO fail-close,
+  and adapter-only tests 10-11 now match the approved contract.
+
+  One CH compatibility divergence remains in the writer exception path.
+  WriteBufferFromFileBase::next captures bytesInBuffer but on nextImpl failure
+  calls cancel and rethrows without adding bytesInBuffer to the settled byte
+  counter. CH WriteBuffer::next resets the cursor, adds bytes_in_buffer, then
+  cancels and rethrows. The canonical design likewise requires
+  "next throws -> settle bytes -> cancel -> rethrow." Because cancel detaches
+  the working view, the current adapter reports count/getPosition as the prior
+  settled value instead of prior + attempted bytes.
+
+test and evidence review:
+  Attempt-5 RED/mutation/final logs support the claimed null/cancel/direct-IO
+  fixes, fresh compilation, 31/31 focused success, and 5/5 combined success.
+  No failure-path test asserts count/getPosition after append failure, so the
+  missing settlement is false-green. No log proves it.
+
+independent review:
+  A fresh read-only Controller review independently confirmed this source/design
+  divergence and found no other actionable in-scope defect.
+
+unresolved findings:
+  Writer append exceptions do not settle attempted bytes before cancel/rethrow.
+```
+
+## Required changes
+
+```text
+1. Add bytesInBuffer to the settled counter before cancel on the generic
+   nextImpl exception path, preserving the original exception.
+2. Add genuine RED assertions to the ordinary append-failure and strict-prefix
+   partial-append tests: count/getPosition after failure must equal the prior
+   settled count plus the attempted chunk size, while offset remains zero,
+   caller memory is detached, writer is canceled, and no retry occurs.
+3. Rebuild, rerun focused and Task 003-007 gates, launch one fresh read-only
+   review for attempt 6, and append accurate evidence.
+```
+
+## Commits
+
+No implementation or acceptance commit was created.
