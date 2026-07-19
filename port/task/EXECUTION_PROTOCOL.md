@@ -7,8 +7,8 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:       Corrective migration active; corrected Task 007 next
-Repair before resume: Tasks 007, 008
+Current state:       Task 007 waiting for user scope decision; dispatch no Worker
+Repair before resume: Task 007, then Task 008
 Then dispatch:       Tasks 009-014, subject to Task 010 and Task 014 review gates
 Optional Velox work: Tasks 016-017, only after a separate decision
 Deferred Gluten:     Tasks 018-019, not in the current phase

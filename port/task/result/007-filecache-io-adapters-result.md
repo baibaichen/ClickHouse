@@ -856,3 +856,416 @@ None.
 | Repository | Commit |
 |---|---|
 | `/home/chang/OpenSource/velox` | `711a848501d54dffaf5afc53278a97bb10825aa3` |
+
+## Worker attempt 4
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 007
+```
+
+Corrective rework implementing the **post-acceptance replacement contract**
+(task lines 8-213, which supersede every later reader/writer API, pseudo-code,
+lifecycle, and test instruction), per the canonical design
+`port/design/filecache-reader-handoff-and-contract-recovery.html`. Worker
+attempts 1-3, Controller reviews 1-3, and the accepted attempt-3 implementation
+commit above are unchanged; this section is appended only. This attempt runs on
+the `root-oss` profile (attempts 1-3 ran on `home-chang`).
+
+## Repository baselines (attempt 4)
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/clickhouse` (protocol/receipts) | `ch-filecache` | `b9cf0dbd348` | clean |
+| `/root/oss/velox` (implementation) | `filecache` | `b3c2832e18f76b574faf74e2d6ba05c2da741efd` | clean |
+
+Both repositories were clean at dispatch and matched the stated baselines. The
+accepted attempt-3 IO adapters are committed in Velox at
+`711a848501d5...` (Task 007 commit), so this attempt's edits appear as
+modifications to five already-tracked files.
+
+## Dependency / source-contract table (derived from CH source, design, and real callers)
+
+| External CH class/API/lifecycle | Reviewed mapping (design §) | Velox replacement | Notes |
+|---|---|---|---|
+| `BufferBase` state (internal/working buffer, pos, offset, available, count, hasPendingData) | §5, §7.1 | `FileCacheBufferState` + `CacheBuffer` | pool-charged `BufferPtr`, non-owning working view, settled `bytes` |
+| `ReadBuffer::next` (settle `bytes+=offset`; nextImpl; exception cancel+rethrow; false→empty; true→publish+reset pos) | §3 (ReadBuffer.cpp:103-143), task 62-93 | `ReadBufferFromFileBase::next` | exception state **terminal**; second `next` rejected (`VELOX_CHECK(!canceled_)`) |
+| `ReadBuffer::eof` = `!hasPendingData() && !next()` | §4, task 73-75 | base `eof()` | fills the buffer |
+| `ReadBuffer::set(ptr,size)` persist until explicit set; `set(nullptr,0)` detach | §2, §4, task 76-82 | base `set()` + `restoreOwnedWindow` | detach restores owned window, preserves file offset, drops caller ref |
+| `SeekableReadBuffer` seek/getPosition/getFileOffsetOfBufferEnd/supportsRightBoundedReads | §5, task 56-60 | base impl over `fileOffsetOfBufferEnd_`/`readUntil_` | getPosition = bufEnd − available |
+| `ReadBuffer::setReadUntilPosition/End` (shrink clamps loaded window, extend resumes) | task 92, controller-amend-2 | base `setReadUntilPosition` | offset-space clamp, no unsigned underflow |
+| `ReadBufferFromFileBase` getFileName/tryGetFileSize | task 60 | virtual/`fileSize_` | |
+| `FileSegment::RemoteFileReaderPtr = shared_ptr<ReadBufferFromFileBase>` | §5, task 42 | `ch::ReadBufferFromFileBase` polymorphic base | virtual dtor + concrete surface over one `readInto` virtual |
+| Owned memory = pool `BufferPtr`/`AlignedBuffer` (never `std::vector<char>`) | §6, §7.1 | `AlignedBuffer::allocate<char>` charged to injected `MemoryPool` | |
+| `ReadFile::directIo(alignment)` at construction; owned+external aligned or reject | §6, task 96-101 | `readInto`/`set` alignment enforcement | power-of-two owned alloc; misaligned external rejected, no fallback |
+| `ReadFile::pread` | §5, §7.1 | `readInto` → `pread(off,len,dest)` | returns bytes read |
+| `WriteBuffer::next` (no-op if canceled/offset 0; append; settle; reset; exception settle+cancel+rethrow) | §7.4 (WriteBuffer.cpp) | `WriteBufferFromFileBase::next` | |
+| `WriteBuffer::finalize/cancel/sync` (finalize idempotent+throw-if-canceled; cancel noexcept idempotent no-op-after-finalize) | §7.4 | base finalize/cancel/sync | |
+| `FileSegment::write` shape: `set(from,size,offset=size); SCOPE_EXIT set(nullptr,0); next()`; buffer size 0 | §7.3, FileSegment.cpp | writer external zero-copy path | `set` never touches the file → safe after cancel |
+| Owned writer buffer size 0 = external-only; >0 = pool `BufferPtr` | §7.1, task 127-131 | ctor branch | |
+| `unique_ptr<WriteFile>` single ownership; wrapper is `shared_ptr` | §7.3, task 168-171 | `WriteBufferFromVeloxWriteFile` owns one `unique_ptr` | |
+| `WriteFile::append/flush/close/getName` | §7.4 map | nextImpl/syncImpl/finalizeImpl/getFileName | getFileName cached to survive cancel release |
+| Application zero-copy (no reader→writer staging memcpy) | §7.2 | `append(string_view(workingBegin, offset))` | |
+| Resume (append-mode open) + partial-write `fs::file_size` reconciliation | §7.3, §7.5 | **FileSegment (Task 013/014)**, NOT the adapter | see scope decision below |
+
+Every mapping above is explicitly reviewed in the canonical design or the
+replacement task section; no name-only mapping, old shim, old receipt, or
+conflicting later snippet was relied upon. Velox APIs verified against current
+source (`velox/common/file/File.h`: `ReadFile::directIo`, `pread`;
+`WriteFile::append/flush/close/getName`; `velox/buffer/Buffer.h`:
+`AlignedBuffer::allocate`, `BufferPtr`).
+
+## Scope decision: resume / partial-write reconciliation (task lines 168-180)
+
+Per the binding rule ("binding only where Task 007's declared adapter scope
+implements them"), resume and partial-write reconciliation are **FileSegment**
+responsibilities and are out of the adapter's declared file scope, confirmed
+directly from CH source `FileSegment::write` (`src/Interpreters/FileCache/FileSegment.cpp`):
+the append-mode open (`O_WRONLY | O_APPEND`) and the `fs::file_size` /
+`downloaded_size` reconciliation live in `FileSegment::write`, not in the
+`WriteBufferFromFile` adapter. The adapter's in-scope obligations are
+(a) append without truncating, and (b) propagate the append exception unchanged
+and transition to canceled so FileSegment can reconcile. Both are implemented
+and tested (writer tests 10, 11, 8). This is explicit attribution per the design
+(§7.3/§7.5), **not** a silently deferred adapter contract, and **no**
+filesystem-opening/`fs::file_size` helper was invented inside the adapter. No
+block was warranted: no new file outside scope is required, and every mapping is
+reviewed.
+
+## Concrete divergences of the accepted attempt-3 implementation vs. the replacement contract (root cause)
+
+```text
+1. eof() only returned a latched atEof_ flag; contract requires !hasPendingData() && !next().
+2. A pread exception reset to an internal window and allowed retry; contract requires a terminal,
+   non-retryable canceled state.
+3. set(nullptr,0) was rejected (VELOX_CHECK_NOT_NULL); contract requires it to detach.
+4. An external buffer auto-reverted to internal after one next(); contract requires it to persist
+   until an explicit set().
+5. Only read-only position()/bufferEnd() were exposed; contract requires the full BufferBase surface
+   (internalBuffer/buffer/position/offset/available/hasPendingData/count) plus cancel/isCanceled/
+   setReadUntilEnd/supportsExternalBufferMode/supportsRightBoundedReads/tryGetFileSize.
+6. Owned memory was std::vector<char>, unaccounted and outside MemoryPool; no direct-IO alignment.
+7. Writer took shared_ptr<WriteFile>, rejected buffer size 0, and had no external set(from,size,offset)
+   zero-copy path; contract requires a single unique_ptr<WriteFile>, buffer size 0 external-only, and
+   a no-staging-copy append.
+8. Writer finalize threw on repeat and cancel threw after finalize; contract requires idempotent
+   finalize and a noexcept/idempotent cancel that is a no-op after finalize.
+9. No ch::ReadBufferFromFileBase / ch::WriteBufferFromFileBase compatibility base for
+   FileSegment::RemoteFileReaderPtr / the writer wrapper to store.
+```
+
+## Files changed (attempt 4)
+
+```text
+# /root/oss/velox  (modified — the 5 adapter/test files needing the replacement contract)
+velox/ch/IO/ReadBufferFromVeloxReadFile.h     (FileCacheBufferState, CacheBuffer, ch::ReadBufferFromFileBase, ReadBufferFromVeloxReadFile)
+velox/ch/IO/ReadBufferFromVeloxReadFile.cpp
+velox/ch/IO/WriteBufferFromVeloxWriteFile.h   (ch::WriteBufferFromFileBase, WriteBufferFromVeloxWriteFile)
+velox/ch/IO/WriteBufferFromVeloxWriteFile.cpp
+velox/ch/IO/tests/IoAdaptersTest.cpp          (full new-contract suite: 24 tests)
+
+# /root/oss/clickhouse
+port/task/result/007-filecache-io-adapters-result.md   (this appended section only)
+```
+
+The three declared CMake files (`velox/ch/CMakeLists.txt`,
+`velox/ch/IO/CMakeLists.txt`, `velox/ch/IO/tests/CMakeLists.txt`) needed **no**
+change: no files were added or removed, so the accepted mono-safe registration
+still applies. No file outside the declared Task 007 scope was touched.
+
+## TDD RED evidence (attempt 4)
+
+Genuine behavioral RED captured against the **unchanged accepted attempt-3
+production** using only the pre-correction public API surface, so each failure is
+a real behavioral/state/ownership difference (not an API-shape compile error).
+Build `task007_attempt4_red_build.log` (exit 0), run
+`task007_attempt4_red_run.log` (exit 1): **7 tests, 0 passed, 7 FAILED**, each
+for the exact superseded-contract reversal:
+
+```text
+Attempt4RedTest.SetNullDetachesInsteadOfRejecting  -> old threw "External buffer must not be null" (contract: detach)
+Attempt4RedTest.ExternalBufferPersistsAcrossReads  -> ext still "AAAA" after 2nd read (old auto-reverted to internal)
+Attempt4RedTest.PreadExceptionIsTerminalNoRetry    -> preadCalls()==2 (old retried; contract: terminal, ==1)
+Attempt4RedTest.EofFillsBuffer                     -> position()==bufferEnd() (old eof() did not fill)
+Attempt4RedTest.WriterBufferSizeZeroAllowed        -> old threw "WriteBuffer size must be > 0"
+Attempt4RedTest.FinalizeIsIdempotent               -> old threw on repeat finalize
+Attempt4RedTest.CancelAfterFinalizeIsNoop          -> old threw on cancel-after-finalize
+```
+
+These cover the reopening reasons in design §4 (eof triggers read; exception
+terminal; detach; external persist; writer buffer-size-0 attach; writer teardown
+idempotency).
+
+New-API-only replacement behaviors (buffer-state surface, pool accounting,
+direct-IO alignment, unique_ptr ownership, external zero-copy) cannot be executed
+by the old API. Their genuineness is proven by two **mutation proofs** against the
+new production (`task007_attempt4_mutation_build.log`,
+`task007_attempt4_mutation_run.log`, exit 1):
+
+```text
+IoAdaptersTest.WriterExternalZeroCopyAppend  FAILS when nextImpl appends a staging std::string copy
+IoAdaptersTest.ReaderDirectIoAlignment       FAILS when the set() alignment checks are disabled
+```
+
+Both were then reverted; `grep MUTATION PROOF velox/ch/IO/` = none.
+
+## Commands and outcomes (attempt 4)
+
+| Command purpose | Exit | Log |
+|---|---:|---|
+| Baseline build/run of accepted attempt-3 test (33/33) | 0 | `_build/debug/task007_attempt4_baseline_build.log` |
+| RED build (7 old-API tests vs unchanged production) | 0 | `_build/debug/task007_attempt4_red_build.log` |
+| RED run (7/7 FAIL, genuine behavioral) | 1 | `_build/debug/task007_attempt4_red_run.log` |
+| Green build (new production + suite) | 0 | `_build/debug/task007_attempt4_green_build.log` |
+| Green run (22/24; 2 pool tests needed local MemoryManager) | 1 | `_build/debug/task007_attempt4_green_run.log` |
+| Rebuild after pool-fixture fix | 0 | `_build/debug/task007_attempt4_green_build2.log` |
+| Green run (24/24) | 0 | `_build/debug/task007_attempt4_green_run2.log` |
+| Mutation-proof build | 0 | `_build/debug/task007_attempt4_mutation_build.log` |
+| Mutation-proof run (2/2 FAIL as expected) | 1 | `_build/debug/task007_attempt4_mutation_run.log` |
+| Fresh final build (touch all 3 sources; recompile both .cpp + test, relink libvelox.a + velox_ch_io_test) | 0 | `_build/debug/task007_attempt4_final_build.log` |
+| Final io run (24/24) | 0 | `_build/debug/task007_attempt4_io_final.log` |
+| gtest discovery (--gtest_list_tests) = 24 | 0 | `_build/debug/task007_attempt4_discovery.log` |
+| Task 003-007 combined ctest gate (5/5) | 0 | `_build/debug/task007_attempt4_all_gates.log` |
+| Regression targets build (003-006 + 007) | 0 | `_build/debug/task007_attempt4_regression_build.log` |
+| Post-review hardening rebuild | 0 | `_build/debug/task007_attempt4_postreview_build.log` |
+| Post-review gate rerun (5/5, io 24/24) | 0 | `_build/debug/task007_attempt4_postreview_gates.log` |
+| Consolidated Velox diff for reviewer | - | `_build/debug/task007_attempt4_full_velox.diff` |
+
+Configure was already current in `/root/oss/velox/_build/debug` (root-oss:
+`VELOX_MONO_LIBRARY=ON`, `VELOX_BUILD_TESTING=ON`, vcpkg toolchain). Every build
+sourced `/root/oss/velox-helper/env.sh` and used `/usr/local/bin/ninja` with no
+`-j`. `build.sh` was not used as evidence.
+
+## Fresh-build proof
+
+`task007_attempt4_final_build.log` shows, after touching all three sources:
+`Building CXX .../ch/IO/WriteBufferFromVeloxWriteFile.cpp.o`,
+`Building CXX .../ch/IO/ReadBufferFromVeloxReadFile.cpp.o`,
+`Building CXX .../IoAdaptersTest.cpp.o`, then
+`Linking CXX static library lib/libvelox.a` and
+`Linking CXX executable velox/ch/IO/tests/velox_ch_io_test` — i.e. fresh
+compilation of both production `.cpp` files and `IoAdaptersTest.cpp` plus a relink
+of `libvelox.a` and `velox_ch_io_test`.
+
+## Acceptance evidence (attempt 4)
+
+```text
+test count: velox_ch_io_test = 24 tests (13 Reader..., 11 Writer...), all pass.
+  Registered with ctest as #434 and run under ctest (Passed).
+failed tests: none (final).
+skipped/disabled tests: none. grep DISABLED_/GTEST_SKIP/GTEST_FILTER in IoAdaptersTest.cpp = 0;
+  --gtest_list_tests enumerates all 24; the run reports no SKIPPED/DISABLED lines.
+discovery: task007_attempt4_discovery.log lists 24 cases.
+Task 003-007 ctest gate: 5/5 suites passed (#427 common, #428 threadpool, #429 scheduler,
+  #432 guards, #434 io), 100%, 0 failed (task007_attempt4_postreview_gates.log).
+git diff --check (Velox): clean (exit 0); no untracked stray files under velox/ch/IO/.
+```
+
+## Worker review (attempt 4)
+
+```text
+review subagent: exactly one fresh read-only code-review subagent
+  ("task007-attempt4-review"), given the replacement contract (task lines 8-213),
+  the canonical HTML design, the CH source/real-caller references (BufferBase,
+  ReadBuffer(.cpp), SeekableReadBuffer, WriteBuffer(.cpp), FileSegment::write,
+  CachedOnDiskReadBufferFromFile), the Velox primitives, the full 5-file diff, and
+  the test/mutation/RED evidence. Instructed not to edit; it made no edits.
+verdict: no blocker/major/minor defects; "the implementation faithfully realizes
+  the replacement contract." It independently confirmed the reader next() state
+  machine, set/detach persistence + handoff invariants, setReadUntilPosition
+  clamp (no unsigned underflow, never exposes bytes >= boundary), seek overflow
+  guards, direct-IO owned allocation staying in-bounds and pool accounting, the
+  full writer lifecycle (append-exactly-offset, finalize=next+close no extra
+  flush, cancel noexcept via unique_ptr reset matching LocalWriteFile's
+  non-throwing dtor), zero-copy address identity, no smuggled resume/fs::file_size
+  logic, and that FileSegment::RemoteFileReaderPtr can store the base. It judged
+  all 24 tests genuine (not false-green).
+findings (both explicitly below the reporting bar / informational, not defects):
+  I1. set() direct-IO offset check validated getPosition() rather than the actual
+      next-read offset (equal only when available()==0, which the flow guarantees).
+  I2. direct-IO alignment was assumed power-of-two but not asserted.
+resolutions:
+  I1: changed set() to validate fileOffsetOfBufferEnd_ % alignment (the actual
+      next-read offset) — strictly more correct.
+  I2: added VELOX_CHECK((alignment & (alignment-1)) == 0) at construction.
+  Rebuilt and reran all gates GREEN (24/24 io, 5/5 ctest;
+  task007_attempt4_postreview_*.log). Production changed after the review, so per
+  protocol NO second reviewer was launched; the fixes are narrow hardening on the
+  direct-IO path (no contracted-path behavior change) and the affected gates were
+  rerun.
+unresolved findings: none.
+false-green check: 7 old-API behavioral RED tests failed against the prior
+  production for the correct reasons; 2 mutation proofs show the new-API zero-copy
+  and direct-IO tests fail when the behavior is broken; no assertion was weakened
+  and no test-only hook was added to production.
+```
+
+## Blockers (attempt 4)
+
+```text
+None. No unreviewed dependency, no required file outside the declared scope, and
+no unresolved source/design/task disagreement. Resume/partial-write filesystem
+reconciliation is correctly attributed to FileSegment (Task 013/014) per the
+canonical design and CH source, not silently deferred.
+```
+
+## Repository statuses (final, attempt 4)
+
+```text
+Velox      /root/oss/velox      branch filecache      HEAD b3c2832e18f76b574faf74e2d6ba05c2da741efd
+  dirty: M velox/ch/IO/ReadBufferFromVeloxReadFile.{h,cpp}, M velox/ch/IO/WriteBufferFromVeloxWriteFile.{h,cpp},
+         M velox/ch/IO/tests/IoAdaptersTest.cpp  (exactly the 5 needed declared files; unstaged/uncommitted).
+ClickHouse /root/oss/clickhouse branch ch-filecache HEAD b9cf0dbd348
+  dirty: ?? port/task/result/007-filecache-io-adapters-result.md (this appended receipt only).
+```
+
+## Worker declaration (attempt 4)
+
+```text
+Only Task 007 was attempted; Task 008 was not started.
+Changes are unstaged and uncommitted; no stage/commit/amend/rebase/push/PR/worktree/branch change was performed.
+No ClickHouse task/design/protocol/environment/handoff file was modified; no earlier receipt section was altered.
+The worker stopped after writing this receipt.
+```
+
+## Controller review 4
+
+```text
+controller_status: changes_requested
+environment_profile: root-oss
+task: 007
+worker_attempt_reviewed: 4
+```
+
+## Review evidence
+
+```text
+scope review:
+  Worker attempt 4 changed exactly the five existing Task-007 Velox adapter/test
+  files and appended this receipt. No CMake, later-task, design, protocol, or
+  handoff file was changed by the Worker. Both repositories were unstaged and
+  uncommitted at review time.
+
+source-contract and architecture review:
+  The compatibility bases, MemoryPool-backed owned buffers, persistent external
+  reader target, terminal reader exception state, unique WriteFile ownership,
+  and zero-copy writer attach follow the replacement contract. CH source and
+  canonical design place append-mode opening and physical-size reconciliation in
+  FileSegment, which Task 012 ports, not in the already-open WriteFile adapter.
+
+implementation review:
+  The flattened buffer state has undefined behavior on the mandatory
+  set(nullptr, 0) path. FileCacheBufferState::set computes ptr + size and
+  ptr + offset even when ptr is null, while CacheBuffer::size and the shared
+  offset/available accessors subtract null pointers. The writer test itself calls
+  offset after detach, so the green run executes this undefined behavior with
+  sanitizers disabled. set also does not reject offset greater than size, which
+  can create an out-of-range cursor and unsigned underflow.
+
+  WriteBufferFromFileBase::cancel releases WriteFile and marks canceled but does
+  not discard the pending working state or detach caller memory. A canceled
+  external writer therefore retains the caller pointer and nonzero offset,
+  contrary to the exact cancel contract.
+
+  Direct-IO validation covers external set address/size/current offset only.
+  seek can install an unaligned next-read offset, and nextImpl can pass an
+  unaligned final/right-bound length to ReadFile::pread. Real LocalReadFile
+  requires full aligned O_DIRECT reads, but MockReadFile accepts every
+  offset/length and the direct-IO test never performs a read, so this path is
+  currently false-green.
+
+test and mandatory-evidence review:
+  Mandatory writer test 10 does not open a file in append/no-truncate mode; it
+  preloads an in-memory observer after the WriteFile has already been created.
+  Mandatory writer test 11 configures its mock to throw before appending any
+  byte, so it does not exercise a partial physical write or reconcile
+  filesystem size against downloaded/reserved sizes. The adapter cannot prove
+  either behavior because it has no path, downloaded size, reserved size, or
+  file-opening responsibility.
+
+  Worker RED logs correctly show seven superseded behaviors failing. Final logs
+  show 24/24 focused and 5/5 combined success, but no log proves real partial
+  physical-write reconciliation or a real direct-IO read at unaligned
+  EOF/right-bound/seek. The initial green_run2 receipt claim also disagrees with
+  its log (the two pool-accounting tests still failed there); later final and
+  post-review gates are green, so this is a receipt-accuracy issue rather than
+  the primary blocker.
+
+independent review:
+  A fresh read-only Controller review independently confirmed the mandatory
+  writer-test scope conflict and the untested direct-IO read failure. Local
+  Controller tracing additionally found the null-pointer arithmetic and
+  cancel-state defects above.
+
+unresolved findings:
+  1. Null-detach and invalid-offset buffer-state operations are not memory-safe.
+  2. cancel does not discard/detach pending working state.
+  3. Direct-IO seek/read-length alignment is neither enforced nor tested.
+  4. Mandatory writer tests 10-11 require FileSegment behavior outside Task 007
+     and conflict with the canonical design/task sequence.
+```
+
+## Required changes
+
+```text
+1. Make null/zero an explicit coherent empty state without null pointer
+   arithmetic; make size/offset/available null-safe; reject offset > size.
+   Add focused tests for detach accessors/finalize and invalid offsets.
+2. Make cancel discard the pending cursor and detach external memory while
+   remaining noexcept/idempotent. Prove offset is zero and no caller pointer is
+   retained after cancel and append failure.
+3. Resolve the direct-IO contract. At minimum, fail closed before issuing an
+   unaligned offset/length and add a mock that enforces alignment during actual
+   reads. If non-block-sized file tails/right bounds must work, approve and
+   specify the required underlying ReadFile cooperation instead of adding a
+   buffered fallback.
+4. User decision required for mandatory tests 10-11:
+   recommended: keep Task 007 adapter-only, replace these two tests with genuine
+   adapter obligations, and amend Task 012 to prove append-mode resume and
+   physical-size/downloaded-size reconciliation in FileSegment;
+   alternatives: delay Task 007 acceptance until Task 012, or expand Task 007
+   into the center SCC (not recommended).
+5. Correct the attempt-4 status/log statements, append a new Worker attempt after
+   the approved task/design amendment, capture genuine RED for every in-scope
+   fix, rerun all gates, and launch one fresh read-only review.
+```
+
+## Commits
+
+No implementation or acceptance commit was created.
+
+## Controller unblock response 1
+
+```text
+controller_status: waiting_for_user
+environment_profile: root-oss
+task: 007
+```
+
+## Resolution
+
+```text
+root cause:
+  The replacement task lists resume/no-truncate and partial physical-write
+  reconciliation as mandatory Task-007 writer tests, while CH source and the
+  canonical design assign file opening, physical file size, downloaded size,
+  reserved size, and failure publication to FileSegment. FileSegment is not in
+  Task 007 scope and is ported in Task 012.
+
+decision:
+  Waiting for the user to choose the task boundary. The Controller recommends
+  preserving the adapter-only boundary and moving the two integration
+  obligations into an explicit Task-012 amendment.
+
+task or environment update:
+  None until the user approves the boundary. Do not edit the canonical design or
+  numbered tasks and do not redispatch Task 007 yet.
+
+evidence:
+  CH FileSegment.cpp owns append-mode opening and filesystem-size
+  reconciliation; Task 012 owns FileSegment.h/.cpp. The current mock throws
+  before any partial write and cannot observe downloaded/reserved sizes.
+
+redispatch same task: no (waiting for user)
+```
