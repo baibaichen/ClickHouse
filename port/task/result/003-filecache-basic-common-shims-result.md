@@ -573,3 +573,248 @@ None.
 Run the dependency preflight for reopened Task 004 before corrective coding.
 Stop if it exposes any mapping not already reviewed in the canonical design.
 ```
+
+## Corrective source-contract audit 3 (B1/B2 enum surface)
+
+```text
+task: 003
+status: reopened_by_contract_audit
+environment_profile: home-chang
+opened: 2026-07-20
+opened_by: Controller (post-Task-010 whole-port review, carried forward on home-chang)
+```
+
+### Reopen reason
+
+The mandatory Tasks 003-010 whole-port source-contract review (artifacts under
+`port/task/fullreview/root-oss/1/`) found that the accepted Task 003
+`ProfileEvents` / `CurrentMetrics` shims define an incomplete enumerator name
+surface. Tasks 011/012 reference enumerators absent from the current enums and
+cannot compile; Task 011 cannot extend these headers within its own file scope.
+This is the **only** 003-010 finding requiring corrective Velox implementation
+before Tasks 011/012. All prior acceptance sections above remain valid and are
+not rewritten; this section reopens Task 003 for the enum surface only.
+
+### Contract to satisfy (authoritative: task file B1/B2 section)
+
+- **B1** — add the 31 missing `ProfileEvents::Event` enumerators listed in the
+  task file (`### ProfileEvents / CurrentMetrics enumerator surface (B1/B2)`) to
+  `velox/ch/Common/ProfileEvents.h`. Keep existing 16 names incl. the three
+  `CachedReadBuffer*` (Task 014). `increment` stays no-op.
+- **B2** — add the 5 hard-blocker `CurrentMetrics::Metric` enumerators
+  (`FilesystemCacheElements`, `FilesystemCacheInvalidatedElements`,
+  `FilesystemCachePriorityQueueElements`, `FilesystemCacheSize`,
+  `FilesystemCacheKeys`) to `velox/ch/Common/CurrentMetrics.h`. `add`/`sub`/
+  `Increment` stay no-op.
+- **Do NOT add** the eviction-thread trio (dropped with the metrics-free
+  `FileCacheThreadPool` ctor) or `FilesystemCacheOvercommitUsers` (excluded
+  overcommit surface).
+- Real counters remain Task 017.
+
+### Required evidence
+
+```text
+RED: a compile-coverage TU / static_assert referencing every center-SCC event
+     and metric name; must fail to compile against the pre-change 16/6 enums.
+     Seeds: ProfileEvents::FilesystemCacheEvictedFileSegments;
+            CurrentMetrics::FilesystemCacheSize.
+false-green: delete one already-present name (event FileSegmentWriteMicroseconds
+     or metric CacheFileSegments) and prove the coverage test goes RED.
+no skipped/disabled/unregistered/assertion-free tests.
+```
+
+### File scope for this reopen
+
+```text
+<velox_repo>/velox/ch/Common/ProfileEvents.h
+<velox_repo>/velox/ch/Common/CurrentMetrics.h
+<velox_repo>/velox/ch/Common/tests/BasicShimsTest.cpp   (or a new enum-coverage test)
+<velox_repo>/velox/ch/Common/tests/CMakeLists.txt        (if a new test target)
+```
+
+### Controller status
+
+```text
+controller_status: waiting_for_worker
+redispatch same task: yes (Task 003 corrective Worker, B1/B2 scope)
+```
+
+## Worker attempt (B1/B2 enum surface)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 003 (corrective reopen — B1/B2 ProfileEvents/CurrentMetrics enum surface only)
+```
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `89039901a` (`Task 010: Add \`FileCache\` settings`) | clean (`git status --short` empty) |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache` | (receipt append only) | pre-existing (unrelated) |
+
+Upstream: `filecache2...baibaichen/filecache`. No pre-existing dirty files in the Velox worktree before editing.
+
+## Files changed
+
+```text
+/home/chang/OpenSource/velox/velox/ch/Common/ProfileEvents.h      (added 31 B1 Event enumerators; increment stays no-op)
+/home/chang/OpenSource/velox/velox/ch/Common/CurrentMetrics.h     (added 5 B2 Metric enumerators; add/sub/Increment stay no-op)
+/home/chang/OpenSource/velox/velox/ch/Common/tests/BasicShimsTest.cpp (added ProfileEvents.h/CurrentMetrics.h includes + enum-coverage test)
+```
+
+No new test target was needed, so `velox/ch/Common/tests/CMakeLists.txt` is unchanged (coverage test lives in the existing `velox_ch_common_test` target). No file outside the B1/B2 reopen scope was touched.
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| Configure (home-chang recipe + `-DVELOX_BUILD_TESTING=ON`, `-G Ninja`) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task003_b1b2_configure.log` |
+| RED build of `velox_ch_common_test` against pre-change 16-event/6-metric enums | 1 (expected) | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task003_b1b2_build_red.log` |
+| GREEN build of `velox_ch_common_test` after adding enums | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task003_b1b2_build.log` |
+| False-green probe build (deleted event `FileSegmentWriteMicroseconds`) | 1 (expected RED) | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task003_b1b2_falsegreen_probe.log` |
+| Final GREEN build of all three Task 003 targets | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task003_b1b2_build_final.log` |
+| `ctest -R '^velox_ch_(common_test\|chassert_release_probe\|chassert_sanitizer_gate_test)$'` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task003_b1b2_test.log` |
+| `git --no-pager diff --check` | 0 | (inline, no whitespace errors) |
+
+No `-j` flag was passed to Ninja. All build/test output redirected to unique logs under `<velox_build_dir>`.
+
+## Acceptance evidence
+
+```text
+test count: 3 ctest entries (velox_ch_common_test, velox_ch_chassert_release_probe,
+  velox_ch_chassert_sanitizer_gate_test). Final ctest: "100% tests passed, 0 tests failed out of 3".
+  The new gtest case ProfileEventsAndCurrentMetricsCoverageTest.AllCenterSccEnumeratorNamesExist
+  runs and passes (verified with --gtest_filter, "[ PASSED ] 1 test").
+failed tests: 0
+skipped/disabled tests: 0
+benchmark result: not required for this reopen.
+git diff --check: clean, no whitespace errors.
+
+RED evidence (compile-coverage against the pre-change enums):
+  Reverted ProfileEvents.h/CurrentMetrics.h to their 16-event/6-metric state,
+  rebuilt velox_ch_common_test -> exit 1. The coverage TU failed to compile with
+  32 "is not a member of 'facebook::velox::ch::ProfileEvents'" errors and
+  5 "is not a member of 'facebook::velox::ch::CurrentMetrics'" errors, including
+  both reopen seeds:
+    BasicShimsTest.cpp: error: 'FilesystemCacheEvictedFileSegments' is not a member of ProfileEvents
+    BasicShimsTest.cpp:631: error: 'FilesystemCacheSize' is not a member of CurrentMetrics
+  Log: task003_b1b2_build_red.log.
+
+False-green probe:
+  Deleted the already-present event name FileSegmentWriteMicroseconds from
+  ProfileEvents.h and rebuilt -> exit 1, RED:
+    BasicShimsTest.cpp:576: error: 'FileSegmentWriteMicroseconds' is not a member of ProfileEvents
+  This proves the coverage test checks the actual enum surface rather than
+  trivially passing. The name was then restored and the GREEN build/test reran clean.
+  Log: task003_b1b2_falsegreen_probe.log.
+```
+
+## Worker review
+
+```text
+review subagent: pr-review-toolkit:code-reviewer (read-only, one invocation) over the
+  complete B1/B2 diff (ProfileEvents.h, CurrentMetrics.h, BasicShimsTest.cpp), given the
+  authoritative B1/B2 contract, the exact 31-name list, the forbidden-name list, and the
+  RED / false-green / ctest outcomes.
+
+findings:
+  1. B1 = exactly the 31 named event enumerators, distinct, none missing; existing 16
+     events (incl. three CachedReadBuffer*) intact. PASS.
+  2. B2 = exactly the 5 named metric enumerators; existing 6 metrics intact. PASS.
+  3. None of the 4 forbidden over-port names (FilesystemCacheEvictionThreads,
+     ...ThreadsActive, ...ThreadsScheduled, FilesystemCacheOvercommitUsers) added. PASS.
+  4. Coverage test references every required name via increment/add/sub, so a missing
+     name fails compilation (matches the observed false-green probe). PASS.
+  5. No-op semantics unchanged (increment/ProfileEventTimeIncrement/add/sub/Increment
+     retain empty bodies); no scope creep. PASS.
+  Non-blocking observation: line 616 (event) and line 631 (metric) redundantly
+     re-reference the two reopen "seed" names already referenced above — harmless
+     redundancy, labelled as such in comments. No action required.
+
+resolutions: None required; no actionable in-scope findings were raised.
+unresolved findings: None.
+```
+
+Independent CH source cross-check (worker rule 6): `grep -rho 'ProfileEvents::[A-Z][A-Za-z]*' src/Interpreters/FileCache/` and the `CurrentMetrics::` equivalent confirm every B1/B2 name is referenced by the migrated FileCache sources and absent from the pre-change shim enums, and that the 4 excluded names, while present in CH, are the correct over-port set to omit here.
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 003 (B1/B2 enum surface reopen) was attempted.
+Changes are unstaged and uncommitted in both repositories.
+The worker stopped after writing this receipt.
+```
+
+## Controller corrective review 3 (B1/B2 enum surface)
+
+```text
+controller_status: accepted
+environment_profile: home-chang
+task: 003 (B1/B2 enum surface)
+reviewed: 2026-07-20
+```
+
+## Review evidence
+
+```text
+scope review:
+  git diff --stat = exactly 3 files (ProfileEvents.h, CurrentMetrics.h,
+  tests/BasicShimsTest.cpp); no new test target needed; git diff --check clean.
+  No file outside the declared B1/B2 scope touched.
+
+implementation review (independent, from source not receipt):
+  ProfileEvents.h: exactly the 31 required Event enumerators added; existing 16
+  (incl. the three CachedReadBuffer* Task-014 names) intact; increment/
+  ProfileEventTimeIncrement stay no-op.
+  CurrentMetrics.h: exactly the 5 hard-blocker Metric enumerators added
+  (FilesystemCacheElements, FilesystemCacheInvalidatedElements,
+  FilesystemCachePriorityQueueElements, FilesystemCacheSize, FilesystemCacheKeys);
+  existing 6 intact; add/sub/Increment stay no-op.
+  Forbidden over-port names NOT added: FilesystemCacheEvictionThreads,
+  ...ThreadsActive, ...ThreadsScheduled, FilesystemCacheOvercommitUsers.
+  Coverage test references every center-SCC event/metric name + a SUCCEED()
+  assertion (not assertion-free).
+
+log and test review (independent, via log-analysis subagent):
+  RED (task003_b1b2_build_red.log): compile against pre-change 16/6 enums FAILS
+    with 32 ProfileEvents + 5 CurrentMetrics missing-member errors, incl. both
+    seeds (FilesystemCacheEvictedFileSegments @ event, FilesystemCacheSize @ metric).
+  false-green (task003_b1b2_falsegreen_probe.log): deleting FileSegmentWriteMicroseconds
+    -> RED "'FileSegmentWriteMicroseconds' is not a member of ProfileEvents" @ :576.
+  final build (task003_b1b2_build_final.log): all three targets link cleanly.
+  ctest (task003_b1b2_test.log): 100% tests passed, 0 failed, 0 skipped, out of 3.
+
+cross-task architecture review:
+  Only the enumerator NAME surface added; no counter implementation (stays Task 017).
+  Unblocks Tasks 011/012 compilation of the metrics/events they reference and
+  cannot themselves define. No dependency-gate trigger; no design conflict.
+
+unresolved findings:
+  None.
+
+note (non-blocking): the worker receipt's baseline table lists the ClickHouse
+branch as `ch-filecache`; the actual branch is `ch-filecache2` (renamed on
+home-chang). This is a receipt typo only; it does not affect the Velox
+implementation, which was made on branch `filecache2` as required.
+```
+
+## Required changes
+
+```text
+None. Accepted.
+```
+
+## Commits
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `d93fa99e5 Task 003: Add ProfileEvents/CurrentMetrics enumerator surface (B1/B2)` |
+| `/home/chang/SourceCode/ClickHouse` | (this receipt + handoff commit; SHA not self-referenceable) |

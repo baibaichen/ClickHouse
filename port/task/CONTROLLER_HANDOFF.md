@@ -76,15 +76,26 @@ and resolve the discrepancy from repository evidence before editing.
 
 Current verified snapshot after Task 010 acceptance:
 
-environment_profile: root-oss
+environment_profile: home-chang
 
-- ClickHouse branch: ch-filecache
+> Execution moved to the `home-chang` machine on 2026-07-20. The `root-oss`
+> whole-port review (artifacts under `port/task/fullreview/root-oss/1/`) and its
+> approved decisions are carried forward unchanged; only the environment
+> coordinates differ. To physically isolate this machine's work from the
+> `root-oss` `filecache` mainline, both repositories were renamed to `*2`
+> branches. The Velox accepted HEAD (`89039901a`) is identical on both sides;
+> only the branch label differs. All subsequent corrective commits happen on
+> these `*2` branches on `home-chang`.
+
+- ClickHouse branch: ch-filecache2
 - ClickHouse accepted receipt HEAD:
-    Task 010 receipt commit containing this handoff update; resolve
-    with `git log -1 --oneline` because a commit cannot contain its own SHA.
-- Velox branch: filecache
+    resolve with `git log -1 --oneline` because a commit cannot contain its own
+    SHA. Latest committed: `0f8bb08fbf7 Task 010: Record Tasks 003-010 whole-port
+    full review` (home-chang review artifacts).
+- Velox branch: filecache2
 - Velox accepted implementation HEAD:
-    89039901aa4287ce811a3b1628867b0796c76678 Task 010: Add `FileCache` settings
+    d93fa99e5 Task 003: Add `ProfileEvents`/`CurrentMetrics` enumerator surface (B1/B2)
+    (parent 89039901a is the shared root-oss `filecache` baseline; branch renamed only)
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -127,10 +138,13 @@ environment_profile: root-oss
   `controller_status: reopen_proposed`.
 - The user approved the final decisions in
   `port/task/fullreview/root-oss/1/003-010-review-decisions.md`.
-- Task 003 alone requires corrective implementation for B1/B2. Tasks 006 and
-  009 remain accepted under the approved defer/deviation decisions.
-- Task 011 is not started and must not start until the findings are resolved,
-  the review reaches zero unresolved findings, and the user explicitly approves.
+- Task 003 B1/B2 enumerator-surface reopen is **accepted** (Velox `d93fa99e5`;
+  ClickHouse receipt+handoff commit is this one). Tasks 006 and 009 remain
+  accepted under the approved defer/deviation decisions.
+- Task 011 remains not started. The remaining pre-011 work is the documentation
+  registrations (SD1 sign-off, SD6/SD7/SD9, Task-012 D3/D9/D11 mappings, signed
+  deviations R2/R6/R7/R8/R10); once those are recorded with zero unresolved
+  findings and the user approves, Task 011 may start.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;

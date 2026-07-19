@@ -15,6 +15,20 @@ retained here; the existing receipt preserves their result.
 Task 012 must not start until this corrective task is implemented, reviewed, and
 accepted.
 
+### Second reopen (B1/B2 — 2026-07-20, home-chang)
+
+The mandatory Tasks 003-010 whole-port review (artifacts under
+`port/task/fullreview/root-oss/1/`, carried forward on `home-chang`) reopened
+Task 003 a second time for the **`ProfileEvents` / `CurrentMetrics` enumerator
+name surface only** (findings B1/B2). This is the sole 003-010 finding that
+requires corrective Velox implementation before Tasks 011/012; every other
+finding is an accepted deviation, a recorded sign-off, or a deferred task. The
+exact B1/B2 contract is in `## Approved dependency decisions` →
+`### ProfileEvents / CurrentMetrics enumerator surface (B1/B2)`. The receipt
+carries a matching `## Corrective source-contract audit 3 (B1/B2 enum surface)`
+section. Real event/metric counters remain Task 017; this reopen adds only the
+enumerator **names** plus compile-coverage and false-green evidence.
+
 ## Approved dependency decisions
 
 The corrective worker must apply these decisions exactly. Discovering another
@@ -187,6 +201,91 @@ void tryLogCurrentException(...) noexcept;
 and `tryLogCurrentException` remains no-op. Real exception formatting is an
 explicit deferred deliverable in Task 017.
 
+### `ProfileEvents` / `CurrentMetrics` enumerator surface (B1/B2)
+
+Tasks 011/012 reference `ProfileEvents::Event` and `CurrentMetrics::Metric`
+enumerators that the current shims do not define, so the center-SCC will not
+compile. Task 011 cannot edit these headers (out of its file scope) and must not
+create fake enumerators. This reopen adds the missing enumerator **names** as
+no-op shim surface. `increment`, `add`, `sub`, and the RAII helpers stay no-op;
+real counters remain Task 017.
+
+**B1 — add these 31 `ProfileEvents::Event` enumerators** to
+`velox/ch/Common/ProfileEvents.h` (referenced by `src/Interpreters/FileCache/`,
+absent from the current 16-name enum). Keep the existing enumerators; do not
+remove the three `CachedReadBuffer*` names (they belong to Task 014, harmless):
+
+```text
+FileSegmentFailToIncreasePriority
+FileSegmentHolderCompleteMicroseconds
+FileSegmentIncreasePriorityMicroseconds
+FileSegmentLockMicroseconds
+FilesystemCacheBackgroundDownloadQueuePush
+FilesystemCacheBackgroundEvictedBytes
+FilesystemCacheBackgroundEvictedFileSegments
+FilesystemCacheBackgroundRemovedInvalidatedEntries
+FilesystemCacheCreatedKeyDirectories
+FilesystemCacheDowngradedFileSegments
+FilesystemCacheEvictedBytes
+FilesystemCacheEvictedFileSegments
+FilesystemCacheEvictionReusedIterator
+FilesystemCacheEvictionSkippedEvictingFileSegments
+FilesystemCacheEvictionSkippedFileSegments
+FilesystemCacheEvictionSkippedMovingFileSegments
+FilesystemCacheEvictionTries
+FilesystemCacheEvictMicroseconds
+FilesystemCacheFailedEvictionCandidates
+FilesystemCacheFailToReserveSpaceBecauseOfCacheResize
+FilesystemCacheFreeSpaceKeepingThreadErrors
+FilesystemCacheFreeSpaceKeepingThreadRun
+FilesystemCacheFreeSpaceKeepingThreadWorkMilliseconds
+FilesystemCacheHoldFileSegments
+FilesystemCacheIdleClientEvictions
+FilesystemCacheInvalidatedEntriesCleanupThreadWorkMilliseconds
+FilesystemCacheLoadMetadataMicroseconds
+FilesystemCacheLockKeyMicroseconds
+FilesystemCacheLockMetadataMicroseconds
+FilesystemCacheLockOriginPoolMicroseconds
+FilesystemCacheUnusedHoldFileSegments
+```
+
+Note: `FilesystemCacheHoldFileSegments` is both an `Event` (here) and a
+`Metric` (already defined in `CurrentMetrics.h`) in CH — both are required.
+
+**B2 — add these 5 `CurrentMetrics::Metric` enumerators** to
+`velox/ch/Common/CurrentMetrics.h` (the hard compile-blockers referenced via
+`add`/`sub` on the in-scope path):
+
+```text
+FilesystemCacheElements
+FilesystemCacheInvalidatedElements
+FilesystemCachePriorityQueueElements
+FilesystemCacheSize
+FilesystemCacheKeys
+```
+
+**Do NOT add** (out of scope; adding them is over-port):
+
+```text
+FilesystemCacheEvictionThreads          # only ThreadPool ctor args at
+FilesystemCacheEvictionThreadsActive    #   FileCache.cpp:583-586; the accepted
+FilesystemCacheEvictionThreadsScheduled #   FileCacheThreadPool ctor takes no
+                                        #   metric params, so Task 012 drops
+                                        #   these args — never referenced.
+FilesystemCacheOvercommitUsers          # excluded overcommit surface (O2).
+```
+
+**RED coverage (mandatory):** add one compile-coverage test (translation unit or
+`static_assert`) that references every center-SCC-required event and metric name.
+It must fail to compile against the pre-change 16-event / 6-metric enums.
+Concrete RED seeds: `ProfileEvents::increment(ProfileEvents::FilesystemCacheEvictedFileSegments)`
+and `CurrentMetrics::add(CurrentMetrics::FilesystemCacheSize, 1)`.
+
+**False-green probe (mandatory):** delete one already-present name (e.g. event
+`FileSegmentWriteMicroseconds` or metric `CacheFileSegments`) and prove the
+coverage test goes RED — showing the test checks the enum surface rather than
+trivially passing.
+
 ## Goal
 
 Correct the already-present Task 003 shims so later `FileCache` tasks receive:
@@ -250,6 +349,8 @@ Modify in the Velox checkout:
 <velox_repo>/velox/ch/Common/FileCacheException.h
 <velox_repo>/velox/ch/Common/FileCacheFilesystem.h
 <velox_repo>/velox/ch/Common/logger_useful.h
+<velox_repo>/velox/ch/Common/ProfileEvents.h
+<velox_repo>/velox/ch/Common/CurrentMetrics.h
 <velox_repo>/velox/ch/Common/tests/CMakeLists.txt
 <velox_repo>/velox/ch/Common/tests/BasicShimsTest.cpp
 ```
