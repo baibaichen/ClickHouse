@@ -44,6 +44,28 @@ real file-opening, downloaded/reserved accounting, filesystem-size
 reconciliation, and failure-publication path. A test that performs reconciliation
 inside test code or a mock instead of production `FileSegment` is false-green.
 
+### ClickHouse gtest migration ownership
+
+Audit `src/Interpreters/tests/gtest_filecache.cpp` before writing the Task-012
+tests. Port every case whose production owner is in the center SCC, adapting the
+existing fixture and temporary-directory patterns rather than copying
+ClickHouse-only infrastructure:
+
+```text
+FileSegment reserve/write/complete/partial-state cases -> FileSegmentTest.cpp
+metadata restore/path/cleanup cases                    -> MetadataTest.cpp
+FileCache get/getOrSet/remove/eviction cases           -> FileCacheTest.cpp
+query-limit holder/accounting cases                    -> QueryLimitTest.cpp
+```
+
+The audit must list every relevant CH test and its Velox destination. If a case
+is not migrated, record the exact reason (unsupported excluded feature,
+superseded by a stronger production-path test, or assigned to Task 014/015).
+Do not carry over sleeps, comment-only bodies, or assertions that exercise only
+test doubles. The resume and partial-physical-write cases are new Task-012 tests:
+CH has useful FileCache fixtures but no existing test that proves both exact
+contracts.
+
 ### CMake registration
 
 Inspect the existing `velox/ch/Interpreters/FileCache/CMakeLists.txt` before editing.

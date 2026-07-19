@@ -65,6 +65,26 @@ Mandatory executable tests:
 Each material test requires behavioral RED evidence. Missing-header compile failure
 is not sufficient.
 
+### ClickHouse reader-test migration ownership
+
+Audit the reader-oriented cases in
+`src/Interpreters/tests/gtest_filecache.cpp` and port their behavior into the
+real `FileCacheBufferedInputTest.cpp` fixture. At minimum map:
+
+```text
+CachedReadBufferTruncatedObjectPredownload -> truncated/predownload boundary and handoff
+CachedReadBufferReadBigAtSourceFailure      -> source failure releases downloader/reader state
+CachedReadBufferSourceFailure               -> next-path source failure and healthy-reader recovery
+reader seek/handoff/concurrent-reader cases -> region-relative seek plus Q1/Q2 reader reuse
+```
+
+Use `FileCacheBufferedInput` / `FileCacheInputStream`, the real Task-012
+`FileSegment`, and a temporary cache directory; do not port the
+`CachedOnDiskReadBufferFromFile` class itself. Record each audited CH case and
+its destination or explicit exclusion in the Task-014 receipt. These focused
+tests own reader state-machine/handoff behavior; whole-system scenario coverage
+belongs to Task 015.
+
 ### Mandatory review checkpoint
 
 After Task 014 is accepted, stop. Run a whole-port source-contract review of

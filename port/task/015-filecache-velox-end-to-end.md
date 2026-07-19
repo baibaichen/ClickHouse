@@ -31,6 +31,34 @@ different non-empty etags → different keys
 manager shutdown while stream is alive but not actively reading
 ```
 
+### ClickHouse integration-test migration ownership
+
+Audit the applicable scenarios in:
+
+```text
+tests/integration/test_filesystem_cache/test.py
+tests/integration/test_cache_bypass_on_disk_failure/test.py
+tests/queries/0_stateless/*filesystem_cache*
+```
+
+Port selected end-to-end behavior, not ClickHouse server/configuration plumbing.
+The Velox E2E fixture must cover at least:
+
+```text
+cold miss -> cache fill -> later hit
+partial segment continuation across readers
+cache write failure -> configured bypass or propagated failure
+truncated/invalid cached data -> source recovery without stale reader state
+reserve-ahead/downloaded-size accounting at the public FileCache boundary
+random seeks across hit/miss/bypass paths
+```
+
+Record a migration matrix in the Task-015 receipt: original CH test/scenario,
+Velox test name, and any explicit exclusion. Task 012 remains the owner of
+focused `FileSegment` resume/reconciliation UTs, and Task 014 remains the owner
+of focused reader/handoff tests. Task 015 must exercise those behaviors through
+the assembled public path without duplicating their internal test logic.
+
 Deliverables:
 - Velox focused test binary `velox_ch_filecache_e2e_test`.
 - Velox benchmark binary `velox_ch_filecache_seek_benchmark`.
