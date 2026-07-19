@@ -7,16 +7,14 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Task 003 reopened by cross-profile review
-Repair before resume:  Task 003 B1/B2 corrective contract (numbered task and
-                       receipt now amended with the exact name lists, RED, and
-                       false-green mutation requirements) and its
-                       implementation
-Then dispatch:         Task 003 corrective Worker only; do not start Task 011
-Task 011 allowed only after Task 003 acceptance and explicit user approval.
+Current state:        Task 003 B1/B2 corrected and accepted
+Repair before resume: none
+Then dispatch:         Task 011 priority/eviction Worker
+Task 011 is allowed: the review has zero unresolved findings and the user
+  explicitly approved continuous execution through Task 014.
 Tasks 011-014 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, and false-green
-  probe requirements; they still may not start ahead of Task 003 acceptance.
+  probe requirements.
 Optional Velox work:  Tasks 016-017, only after a separate decision
 Deferred Gluten:       Tasks 018-019, not in the current phase
 ```

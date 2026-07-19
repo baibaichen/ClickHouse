@@ -627,3 +627,316 @@ Task 011 and Task 012 must not start until a corrective Worker attempt below
 records B1/B2 RED, mutation, and final-green evidence, and a Controller
 review accepts it.
 ```
+
+## Corrective source-contract audit 3 (B1/B2 `ProfileEvents`/`CurrentMetrics` name surfaces)
+
+```text
+status: success
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 003 (corrective Task 2 dispatch: filecache-003-014-task-2-brief.md)
+```
+
+Scope of this attempt is exactly the reopened B1/B2 no-op enum-name surface
+from `port/task/003-filecache-basic-common-shims.md`
+("Corrective scope B1/B2") and
+`port/task/fullreview/cross-profile/1/003-010-review-decisions.md`. No other
+Task 003 area (queue API, `chassert`, exception categories, filesystem
+exceptions, logger placeholder) was touched — those remain as accepted in
+"Corrective source-contract audit" and "Corrective source-contract audit 2"
+above. No Task 011 file was created or modified.
+
+### Corrective Velox baseline
+
+```text
+repository: /root/oss/velox
+branch:     filecache (tracking baibaichen/filecache)
+HEAD:       89039901aa4287ce811a3b1628867b0796c76678
+dirty status before editing: clean (git status --short --branch showed no
+  tracked/untracked changes)
+```
+
+```text
+repository: /root/oss/clickhouse
+branch:     ch-filecache (tracking baibaichen/ch-filecache, ahead 5)
+HEAD:       5f962f995db11418126bc88df6be073cf68a34d7
+dirty status before editing: clean
+```
+
+Both HEADs match the corrective dispatch's stated baselines.
+
+### Corrective files changed
+
+```text
+/root/oss/velox/velox/ch/Common/ProfileEvents.h           (M: +34 Event names)
+/root/oss/velox/velox/ch/Common/CurrentMetrics.h           (M: +5 Metric names)
+/root/oss/velox/velox/ch/Common/tests/BasicShimsTest.cpp  (M: +2 compile-coverage tests, +4 includes)
+/root/oss/clickhouse/port/task/result/003-filecache-basic-common-shims-result.md (this section, append-only)
+```
+
+Exactly the four files in the dispatch's "Exact scope". `git --no-pager status
+--short` in Velox lists only the three files above (all `M`, no new/deleted
+files); `git --no-pager status --short` in ClickHouse is clean until this
+append (result files are handoff artifacts, not committed).
+
+### Corrective RED evidence
+
+```text
+TDD-first: BasicShimsTest.cpp gained two new compile-coverage tests before any
+  enum name was added —
+  ProfileEventsCoverageTest.AllRequiredEventNamesCompile (references all 16
+  pre-existing + 34 required B1 names via a `constexpr ProfileEvents::Event[]`
+  array, `static_assert(std::size(...) == 50)`, then a loop calling
+  ProfileEvents::increment on each) and
+  CurrentMetricsCoverageTest.AllRequiredMetricNamesCompile (same pattern for
+  the 6 pre-existing + 5 required B2 names, `static_assert(... == 11)`,
+  CurrentMetrics::add on each).
+
+Building velox_ch_common_test against the pre-change ProfileEvents.h/
+  CurrentMetrics.h (34/5 names absent) failed to compile, exit code 1, with
+  the first diagnostic:
+
+    /root/oss/velox/velox/ch/Common/tests/BasicShimsTest.cpp:589:24: error:
+    'FileSegmentFailToIncreasePriority' is not a member of
+    'facebook::velox::ch::ProfileEvents'
+
+  followed by one "is not a member of" error per missing B1 name (31 more)
+  and, after the `static_assert(std::size(kRequiredEvents) == 50)` line, a
+  static-assertion failure. This is a genuine RED caused by absent required
+  names, not a pre-existing unrelated failure.
+
+Log: /root/oss/velox/_build/debug/build_task_003_enum_red.log
+```
+
+### Commands and log paths
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| RED build: `ninja velox_ch_common_test` (pre-change enums) | 1 (expected) | `/root/oss/velox/_build/debug/build_task_003_enum_red.log` |
+| GREEN build: `ninja velox_ch_common_test velox_ch_chassert_release_probe velox_ch_chassert_sanitizer_gate_test` (after adding 34/5 names) | 0 | `/root/oss/velox/_build/debug/build_task_003_enum_green.log` |
+| GREEN ctest: the same three targets | 0 | `/root/oss/velox/_build/debug/test_task_003_enum_green.log` |
+| Direct gtest run of `velox_ch_common_test` binary (test count/skip check) | 0 | `/root/oss/velox/_build/debug/test_task_003_enum_direct.log` |
+| Mutation build: `OpenedFileCacheMicroseconds` deleted from `ProfileEvents.h` | 1 (expected) | `/root/oss/velox/_build/debug/build_task_003_enum_mutation_pe.log` |
+| Mutation build: `FilesystemCacheKeys` deleted from `CurrentMetrics.h` (after restoring the `ProfileEvents.h` name) | 1 (expected) | `/root/oss/velox/_build/debug/build_task_003_enum_mutation_cm.log` |
+| Final GREEN rebuild (both names restored): the three targets | 0 | `/root/oss/velox/_build/debug/build_task_003_enum_green_final.log` |
+| Final GREEN ctest (both names restored) | 0 | `/root/oss/velox/_build/debug/test_task_003_enum_green_final.log` |
+| Post-self-review verification rebuild (confirms working tree unchanged after the review agent's own mutation/restore probe) | 0 | `/root/oss/velox/_build/debug/build_task_003_enum_postreview_verify.log` |
+| Post-self-review verification ctest | 0 | `/root/oss/velox/_build/debug/test_task_003_enum_postreview_verify.log` |
+| Non-mono gate build (`VELOX_MONO_LIBRARY=OFF`, reusing the existing Task-010 non-mono build dir; no CMake/registration change was needed since no new file or public-interface target was added) | 0 | `/root/oss/velox/_build/debug-task010-nonmono/build_task_003_enum_nonmono.log` |
+| Non-mono gate ctest | 0 | `/root/oss/velox/_build/debug-task010-nonmono/test_task_003_enum_nonmono.log` |
+| `git --no-pager diff --check` (Velox) | 0 (clean, no whitespace errors) | inline |
+| `git --no-pager diff --check` (ClickHouse) | 0 (clean) | inline |
+
+All configure/build/test commands sourced `/root/oss/velox-helper/env.sh` and
+used the existing `root-oss` mono (`/root/oss/velox/_build/debug`) and
+non-mono (`/root/oss/velox/_build/debug-task010-nonmono`) build directories.
+No `-j` was passed to ninja.
+
+### Corrective contract verification
+
+```text
+B1 (34 ProfileEvents names): all 34 approved names added verbatim, in the
+  exact approved spelling, none renamed/reinterpreted. Verified
+  programmatically (parsed the enum, diffed against the approved list): exact
+  match, no extras, no omissions, no duplicates.
+B2 (5 CurrentMetrics names): all 5 approved names added verbatim. Same
+  programmatic diff: exact match.
+Forbidden names: FilesystemCacheEvictionThreads, FilesystemCacheEvictionThreadsActive,
+  FilesystemCacheEvictionThreadsScheduled, and FilesystemCacheOvercommitUsers do
+  not appear anywhere in the diff (grep-confirmed).
+No-op preserved: ProfileEvents::increment, CurrentMetrics::add,
+  CurrentMetrics::sub, and CurrentMetrics::Increment bodies are byte-for-byte
+  unchanged (`{}` no-ops); the diff only inserts enumerator lines, touching no
+  other line in either header.
+Compile coverage: one test per enum (ProfileEventsCoverageTest,
+  CurrentMetricsCoverageTest) references every existing and newly-required
+  name via a constexpr array plus a `static_assert` on element count, so
+  deleting any single required name (old or new) fails compilation of
+  BasicShimsTest.cpp.
+Mono/non-mono: no CMakeLists.txt change was needed or made — ProfileEvents.h,
+  CurrentMetrics.h, and tests/CMakeLists.txt's `velox_ch_common_test` target
+  were already registered by prior accepted tasks, and this attempt only adds
+  enumerator lines and test bodies inside already-registered files. Both mono
+  (`/root/oss/velox/_build/debug`) and non-mono
+  (`/root/oss/velox/_build/debug-task010-nonmono`) builds/tests pass.
+```
+
+### B1/B2 false-green mutation evidence
+
+```text
+ProfileEvents mutation: deleted `OpenedFileCacheMicroseconds,` (the last B1
+  name) from ProfileEvents.h. `ninja velox_ch_common_test` failed, exit code 1:
+
+    /root/oss/velox/velox/ch/Common/tests/BasicShimsTest.cpp:624:24: error:
+    'OpenedFileCacheMicroseconds' is not a member of
+    'facebook::velox::ch::ProfileEvents'; did you mean 'OpenedFileCacheMisses'?
+    ...:628:46: error: static assertion failed
+
+  Log: /root/oss/velox/_build/debug/build_task_003_enum_mutation_pe.log
+  Restored the name; the file is byte-identical to its pre-mutation content
+  (confirmed via `git --no-pager diff` producing the same three-file diff as
+  before the mutation).
+
+CurrentMetrics mutation: deleted `FilesystemCacheKeys,` (the last B2 name)
+  from CurrentMetrics.h. `ninja velox_ch_common_test` failed, exit code 1:
+
+    /root/oss/velox/velox/ch/Common/tests/BasicShimsTest.cpp:656:25: error:
+    'FilesystemCacheKeys' is not a member of
+    'facebook::velox::ch::CurrentMetrics'; did you mean 'FilesystemCacheSize'?
+    ...:660:47: error: static assertion failed
+
+  Log: /root/oss/velox/_build/debug/build_task_003_enum_mutation_cm.log
+  Restored the name.
+
+Confirmation both were restored and final build/test are green:
+  `ninja velox_ch_common_test velox_ch_chassert_release_probe
+  velox_ch_chassert_sanitizer_gate_test` exit 0
+  (build_task_003_enum_green_final.log); `ctest -R
+  '^(velox_ch_common_test|velox_ch_chassert_release_probe|velox_ch_chassert_sanitizer_gate_test)$'`
+  → "100% tests passed, 0 tests failed out of 3"
+  (test_task_003_enum_green_final.log). `git --no-pager diff` for
+  ProfileEvents.h/CurrentMetrics.h after restoration shows only the intended
+  +34/+5 additions, with no leftover mutation.
+```
+
+### Test counts
+
+```text
+ctest (3 focused targets): 3/3 pass, 0 failed, 0 skipped/disabled.
+direct gtest binary (velox_ch_common_test): 34 tests from 9 test suites ran,
+  34 passed, 0 failed, 0 skipped/disabled (32 pre-existing cases plus the 2
+  new coverage tests: ProfileEventsCoverageTest.AllRequiredEventNamesCompile
+  and CurrentMetricsCoverageTest.AllRequiredMetricNamesCompile).
+velox_ch_chassert_release_probe: process exit 0 (pass).
+velox_ch_chassert_sanitizer_gate_test: 1 death-test case pass.
+Non-mono gate: identical 3/3 ctest pass in
+  /root/oss/velox/_build/debug-task010-nonmono.
+No test was skipped or disabled in any run.
+```
+
+### Self-review
+
+```text
+review subagent: one read-only code-review agent (agent_type: code-review)
+  over the complete working (unstaged) diff (`git --no-pager diff`, saved to
+  a temporary patch file and deleted afterward), given the corrective task
+  contract and cross-profile decisions file as context.
+scope reviewed: exact name-set match for both B1 (34) and B2 (5) against the
+  approved lists; absence of the four forbidden names; no-op preservation of
+  increment/add/sub/Increment; odr-use compile coverage of every existing and
+  new name in both enums; Allman brace style in the new test code; no
+  unrelated/out-of-scope changes.
+findings: none (blocker/major/minor). The reviewer additionally re-ran the
+  false-green mutation independently (deleted `OpenedFileCacheMicroseconds`,
+  rebuilt, confirmed the same compile failure, restored via `git apply` from
+  the saved patch, rebuilt, and reran the full 34-test binary green) as part
+  of its own verification.
+post-review verification: after the review agent's own mutate/restore probe,
+  the working tree was confirmed byte-identical to the pre-review diff
+  (`git --no-pager diff` unchanged), and the three focused targets were
+  rebuilt and retested green once more
+  (build_task_003_enum_postreview_verify.log,
+  test_task_003_enum_postreview_verify.log) before writing this receipt.
+resolutions: none needed.
+unresolved findings: none.
+```
+
+### Task 011 declaration
+
+```text
+No Task 011 (priority/eviction) work occurred during this corrective attempt.
+No file under velox/ch/Interpreters/FileCache/ (or any other Task 011/012/013
+area) was created, modified, staged, or committed. Only the two `ProfileEvents.h`/
+`CurrentMetrics.h` no-op enum-name headers and the BasicShimsTest.cpp
+compile-coverage test were touched, exactly matching the reopened B1/B2 scope.
+```
+
+### Blocking errors
+
+```text
+None.
+```
+
+### Worker declaration
+
+```text
+Only the reopened Task 003 B1/B2 corrective scope was attempted in this pass
+(dispatch: filecache-003-014-task-2-brief.md, "Task 2: Correct Task 003 Enum
+Surfaces").
+Changes are unstaged and uncommitted in both repositories:
+  Velox: velox/ch/Common/ProfileEvents.h, velox/ch/Common/CurrentMetrics.h,
+    velox/ch/Common/tests/BasicShimsTest.cpp (all modified, not staged).
+  ClickHouse: this receipt append only (not staged).
+No repository was staged, committed, amended, rebased, or pushed.
+The worker stopped immediately after writing this receipt.
+```
+
+## Controller review 2 — cross-profile B1/B2 correction
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+```
+
+Scope:
+
+- Inspected the complete three-file Velox diff and the append-only receipt.
+- Confirmed no Task 011 or unrelated implementation was touched.
+- Independently matched the changes against the cross-profile 34-name
+  `ProfileEvents` list and five-name `CurrentMetrics` list.
+
+Implementation:
+
+- Added exactly 34 unique no-op `ProfileEvents` names and five unique no-op
+  `CurrentMetrics` names.
+- `increment`, `add`, `sub`, `Increment`, and timer behavior remain unchanged
+  no-ops.
+- The three eviction-thread metrics and `FilesystemCacheOvercommitUsers` remain
+  absent.
+- The two coverage tests individually reference every required enum name; they
+  do not rely only on total counts.
+
+Evidence:
+
+```text
+Worker RED:
+  build_task_003_enum_red.log
+  missing required enum name -> compile failure
+
+Worker false-green:
+  build_task_003_enum_mutation_pe.log
+  build_task_003_enum_mutation_cm.log
+  deleting either required name -> compile failure
+
+Controller mono:
+  build_task_003_enum_controller.log
+  test_task_003_enum_controller.log
+  3/3 CTest targets passed
+
+Controller non-mono:
+  debug-task010-nonmono/CMakeCache.txt: VELOX_MONO_LIBRARY=OFF
+  build_task_003_enum_controller.log
+  test_task_003_enum_controller.log
+  3/3 CTest targets passed
+
+Skipped/disabled:
+  0
+```
+
+Independent task review:
+
+```text
+spec compliance: approved
+technical quality: approved
+findings: none
+```
+
+Accepted Velox commit:
+
+```text
+1b41f73382668ffdc8d902e6dc5268e2e22832e2
+Task 003: Complete `FileCache` metric names
+```
+
+Task 003 B1/B2 is corrected and accepted. The post-Task-010 review gate now has
+zero unresolved findings under the approved cross-profile decisions.

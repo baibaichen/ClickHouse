@@ -84,13 +84,15 @@ environment_profile: root-oss
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    89039901aa4287ce811a3b1628867b0796c76678 Task 010: Add `FileCache` settings
+    1b41f73382668ffdc8d902e6dc5268e2e22832e2 Task 003: Complete `FileCache` metric names
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
       ClickHouse: c30a218c481
       Corrective Velox: c755512a8
       Corrective ClickHouse: 172d11361df
+      Cross-profile corrective Velox: 1b41f73382668ffdc8d902e6dc5268e2e22832e2
+      Cross-profile corrective ClickHouse: this acceptance commit
     Task 004
       Velox:      f948fb6a4
       ClickHouse: d20e9b241d4
@@ -141,9 +143,8 @@ environment_profile: root-oss
 
 Current task:
 
-- Existing accepted implementation commits remain the baseline. Task 003 is
-  selected for a corrective reopen; its task/receipt amendment is the next step.
-- Velox is clean at `89039901aa4287ce811a3b1628867b0796c76678`.
+- Task 003 B1/B2 is corrected and accepted.
+- Velox is clean at `1b41f73382668ffdc8d902e6dc5268e2e22832e2`.
 - Task 005 remains accepted.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
@@ -155,7 +156,7 @@ Current task:
     `port/task/fullreview/root-oss/1/003-010-review-decisions.md`;
     `port/task/fullreview/root-oss/1/evidence/011-012-consumer-contract-ledger.md`;
     `port/task/fullreview/root-oss/1/evidence/003-010-full-review-result.md`.
-- Task 003 must add the approved no-op `ProfileEvents` and `CurrentMetrics` name
+- Task 003 added the approved no-op `ProfileEvents` and `CurrentMetrics` name
   surfaces with compile-coverage and false-green evidence.
 - Task 006 remains accepted. F-CALLERID and SD8 are deferred to Task 017.
 - Task 009 remains accepted. SD1 is an explicitly approved `F14FastMap`
@@ -166,14 +167,8 @@ Current task:
   consumer path. It must not add an errno-unavailable fallback.
 - Structured errno production in the FileCache concrete writer is a separate
   pre-release gate and does not block Tasks 011/012 development.
-- Task 003 has been marked `reopened_by_contract_audit` in its task file and
-  receipt, with the exact B1/B2 name lists, no-op requirement,
-  compile-coverage test requirement, and delete-one-name false-green
-  mutation requirement now written into
-  `port/task/003-filecache-basic-common-shims.md` and
-  `port/task/result/003-filecache-basic-common-shims-result.md`. No Velox
-  implementation was modified; only the task-authoring wave (Task 1 of the
-  continuous-execution plan) landed.
+- Task 003's accepted cross-profile corrective implementation is
+  `1b41f73382668ffdc8d902e6dc5268e2e22832e2`.
 - Tasks 011, 012, 013, and 014 have been amended with dependency pre-checks,
   CH consumer-contract excerpts (file:line), structure-deviation
   registrations (SD1-SD5), exact `ProfileEvents`/`CurrentMetrics` name lists
@@ -183,30 +178,26 @@ Current task:
   exception bullet and `offsetof`-based `LockedKey` test, Task-013's private
   `checkedAdd`, Task-014's dangling placeholder-fixture warning) has been
   removed or superseded in place.
-- Task 011 is not started and remains prohibited until Task 003's corrective
-  implementation is accepted and the user explicitly approves.
+- The cross-profile review has zero unresolved findings.
+- The user explicitly approved continuous execution through Task 014.
+- Task 011 is not started and is the next Worker dispatch.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Task 003 and its receipt are now marked `reopened_by_contract_audit` with
-   the exact B1/B2 corrective contract and RED/false-green requirements
-   written in place (done by the Task-1 authoring wave).
+1. Task 003 B1/B2 is corrected and accepted.
 2. The approved Task-011/012/013/014 authoring amendments and structure
    deviation registrations are written in place (done by the Task-1
    authoring wave).
-3. Dispatch and review the Task-003 corrective Worker next.
-4. Continue to Task 011 only with zero unresolved findings and explicit user
-   approval.
+3. Dispatch and review the Task-011 priority/eviction Worker next.
+4. Continue directly through Tasks 012, 013, and 014 after each Controller
+   acceptance.
 5. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: the Task-003 B1/B2 corrective contract is now
-  written (task-authoring wave complete); its implementation and Controller
-  acceptance are pending. Dispatch the Task-003 corrective Worker next.
-- Task 011 and Task 012 are prohibited until Task 003 is accepted and the
-  user explicitly approves.
+- Current stop condition: none before the next Worker; Task 011 may proceed.
+- Task 015 remains prohibited until the post-Task-014 full review.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
