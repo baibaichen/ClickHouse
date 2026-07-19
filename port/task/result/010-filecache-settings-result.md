@@ -550,3 +550,194 @@ unresolved findings:
 ## Commits
 
 No implementation or acceptance commit was created.
+
+## Worker attempt 3
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 010
+```
+
+Executed under the controller amendment (finite-ratio guard + complete parsing
+evidence). TDD-first: NaN/+inf/-inf RED tests added before the production fix;
+NaN was a genuine RED (no throw, directory created). ParseUncoveredKeys
+consolidated test added; mutation proof captured. Production fix applied:
+`!std::isfinite` guard precedes ordered comparisons. Review finding resolved:
+boolean bool-swap symmetry broken by alternating true/false values.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/velox` | `filecache` | `096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a` | exactly seven attempt-2 files dirty (M CMakeLists ×3; ?? FileCacheSettings.h/.cpp, FileCacheReadOptions.h, FileCacheSettingsTest.cpp) |
+| `/root/oss/clickhouse` | `ch-filecache` | `fffc6280c56` | clean |
+
+## Files changed
+
+```text
+/root/oss/velox/velox/ch/Common/CMakeLists.txt                                 (M, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt                 (M, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt           (M, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.h            (??, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.cpp          (??, one-line fix: !std::isfinite added to ratio range guard)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheReadOptions.h         (??, unchanged from attempt 2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/FileCacheSettingsTest.cpp (??, +4 new tests: NonFiniteRatioNaN/PosInf/NegInf + ParseUncoveredKeys)
+/root/oss/clickhouse/port/task/result/010-filecache-settings-result.md         (this receipt)
+```
+
+Exactly the 7 declared Velox files plus the receipt. No other file touched.
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| configure mono (attempt3 re-configure) | 0 | `/root/oss/velox/_build/debug/configure_task_010_attempt3_red.log` |
+| RED build (NaN/ParseUncovered tests, pre-fix) | 0 | `/root/oss/velox/_build/debug/build_task_010_attempt3_red.log` |
+| RED direct test (NaN fails, others pass) | 1 (expected) | `/root/oss/velox/_build/debug/test_task_010_attempt3_nonfinite_red.log` |
+| mutation build (idle-client-ttl-sec misrouted) | 0 | `/root/oss/velox/_build/debug/build_task_010_attempt3_mutation.log` |
+| mutation test (ParseUncoveredKeys fails) | 1 (expected) | `/root/oss/velox/_build/debug/test_task_010_attempt3_mutation.log` |
+| mutation restored; bool-symmetry fix applied; final GREEN build | 0 | `/root/oss/velox/_build/debug/build_task_010_attempt3_green2.log` |
+| GREEN direct test (58 tests) | 0 | `/root/oss/velox/_build/debug/test_task_010_attempt3_settings_direct.log` |
+| mutation re-verified with bool-asymmetric test | 1 (expected) | `/root/oss/velox/_build/debug/test_task_010_attempt3_mutation2.log` |
+| mutation restored; final production build | 0 | `/root/oss/velox/_build/debug/build_task_010_attempt3_final.log` |
+| focused CTest mono (velox_ch_settings_test) | 0 | `/root/oss/velox/_build/debug/test_task_010_attempt3_settings_ctest.log` |
+| accumulated Tasks 003-010 regression (10 tests) | 0 | `/root/oss/velox/_build/debug/test_task_010_attempt3_regression.log` |
+| configure non-mono | 0 | `/root/oss/velox/_build/debug-task010-nonmono/configure_task_010_attempt3_nonmono.log` |
+| non-mono build | 0 | `/root/oss/velox/_build/debug-task010-nonmono/build_task_010_attempt3_nonmono.log` |
+| non-mono direct test (58 tests) | 0 | `/root/oss/velox/_build/debug-task010-nonmono/test_task_010_attempt3_nonmono_direct.log` |
+| non-mono CTest discovery | 0 | `/root/oss/velox/_build/debug-task010-nonmono/test_task_010_attempt3_nonmono_ctest.log` |
+
+## Acceptance evidence
+
+```text
+test count: 58 gtest cases (mono and non-mono identical; +4 vs attempt 2)
+failed tests: 0 (final GREEN, mono and non-mono)
+skipped/disabled tests: 0
+accumulated regression: 10/10 CTest pass
+  (velox_ch_common, velox_ch_chassert_release_probe, velox_ch_chassert_sanitizer_gate_test,
+   velox_ch_threadpool, velox_ch_scheduler, velox_ch_guards, velox_ch_leaf_types,
+   velox_ch_sharded_map, velox_ch_settings, velox_ch_io)
+
+RED evidence:
+  - NonFiniteRatioNaN: genuinely RED pre-fix — test_task_010_attempt3_nonfinite_red.log
+    shows "it throws nothing" AND "Actual: true / Expected: false" (directory created).
+    +inf and -inf pass GREEN even pre-fix (caught by existing ordered comparisons).
+  - Mutation proof (idle-client-ttl-sec → idleClientCheckIntervalSec misrouted):
+    test_task_010_attempt3_mutation.log shows
+    "r.idleClientTtlSec which is: 604800 / 3'600u which is: 3600" — FAILED.
+    Same mutation confirmed RED after bool-asymmetry fix:
+    test_task_010_attempt3_mutation2.log identical failure.
+
+ParseUncoveredKeys covers all 15 controller-listed keys with exact field assertions:
+  allow-dynamic-cache-resize → allowDynamicCacheResize (true)
+  background-download-max-file-segment-size → backgroundDownloadMaxFileSegmentSize (8388608)
+  cache-hits-threshold → cacheHitsThreshold (42)
+  check-cache-probability → checkCacheProbability (0.05)
+  dynamic-resize-lock-wait-ms → dynamicResizeLockWaitMs (2500)
+  enable-filesystem-query-cache-limit → enableFilesystemQueryCacheLimit (false — breaks bool-swap symmetry)
+  expose-prometheus-eviction-metrics → exposePrometheusEvictionMetrics (true)
+  expose-prometheus-eviction-metrics-per-user → exposePrometheusEvictionMetricsPerUser (false)
+  idle-client-check-interval-sec → idleClientCheckIntervalSec (300)
+  idle-client-ttl-sec → idleClientTtlSec (3600)
+  keep-free-space-elements-ratio → keepFreeSpaceElementsRatio (0.15)
+  keep-free-space-remove-batch → keepFreeSpaceRemoveBatch (500)
+  skip-cache-on-disk-failure → skipCacheOnDiskFailure (true)
+  split-cache-ratio → splitCacheRatio (0.3)
+  write-cache-per-user-id-directory → writeCachePerUserIdDirectory (false)
+
+git diff --check: clean (no whitespace errors); only the 7 declared Velox files changed.
+```
+
+## Worker review
+
+```text
+review subagent: one read-only code-review subagent launched on the complete
+  attempt-3 diff (production fix + 4 new tests + full attempt-2 context).
+findings:
+  1. (medium) ParseUncoveredKeys: 6 all-"true" booleans were symmetric — a swap
+     between any two would be invisible (both fields end up true). The review
+     correctly identified that the comment's claim was false for intra-group swaps.
+resolutions:
+  1. Bool-swap symmetry broken by alternating true/false values: 3 booleans set to
+     "true" (allowDynamicCacheResize, exposePrometheusEvictionMetrics,
+     skipCacheOnDiskFailure) and 3 set to "false" (enableFilesystemQueryCacheLimit,
+     exposePrometheusEvictionMetricsPerUser, writeCachePerUserIdDirectory).
+     Any swap between a true-keyed and false-keyed field is now detectable.
+     Mutation proof re-verified GREEN after fix.
+unresolved findings: none.
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 010 was attempted (attempt 3).
+Changes are unstaged and uncommitted in both repositories.
+The 7 declared Velox files plus this receipt are the only changes;
+no Task 011 file and no out-of-scope file was touched.
+The worker stopped immediately after writing this receipt.
+```
+
+## Controller review 2
+
+```text
+controller_status: changes_requested
+environment_profile: root-oss
+task: 010
+worker_attempt_reviewed: 3
+```
+
+## Review evidence
+
+```text
+implementation review:
+  The isfinite guard now rejects NaN before directory/space/floor/conversion and
+  closes the UB. All production key/field mappings are mechanically correct.
+  Path containment, validations, read options, and CMake interfaces remain
+  correct.
+
+test evidence review:
+  Attempt 3 adds all fifteen keys to ParseUncoveredKeys, but three booleans are
+  set to false, equal to their struct defaults. Deleting or misrouting any of
+  those assignments to another false field leaves the test green.
+
+  More generally, the 3-true/3-false grouping cannot prove six boolean mappings:
+  swaps inside either same-valued group are invisible. The numeric mutation
+  proof exercises no boolean assignment. Therefore the amendment's claim that
+  every mapping has non-default direct evidence is not met.
+
+log review:
+  NaN RED, final 58/58 mono/non-mono, and the regression gate are otherwise
+  green. The newest regression contains 10 CTest entries; the older 8/8 count
+  belongs to attempt 2.
+
+independent review:
+  A fresh read-only Controller review confirmed the false-green boolean mapping
+  gap and found no production defect or other Blocker/Major issue.
+
+unresolved findings:
+  Six boolean key/field mappings are not independently distinguishable.
+```
+
+## Required changes
+
+```text
+1. Replace grouped boolean assertions with one-hot loader cases. For each of the
+   six keys, set only it to true, assert only its field is true, and assert the
+   other five remain false.
+2. Keep non-boolean fields at distinct non-default values.
+3. Capture a bool-mapping mutation (route one key into another field) and prove
+   the one-hot cases fail; preserve the numeric mutation proof.
+4. Correct attempt-3 receipt overstatements, rerun both modes/regression, launch
+   one fresh read-only review, and append Worker attempt 4.
+```
+
+## Commits
+
+No implementation or acceptance commit was created.

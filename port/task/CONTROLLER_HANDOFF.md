@@ -141,17 +141,15 @@ Current task:
 - Canonical design and Tasks 007/012 record this split; Tasks 012/014/015 also
   record the approved CH test migration ownership.
 - Task 009 is accepted.
-- Task 010 Worker attempt 2 implemented the settings contract, but Controller
-  review 1 requested two evidence/safety fixes:
-    reject non-finite max-size ratio before UB/side effects;
-    parse-test all fifteen previously uncovered key/field mappings.
-- Worker attempt 3 is ready. Task 011 and the Tasks 003-010 full review are not
-  started.
+- Task 010 attempt 3 fixed the NaN UB and added all missing keys, but Controller
+  review 2 found grouped boolean assertions false-green for same-valued swaps.
+- Worker attempt 4 must add one-hot coverage for all six boolean mappings.
+  Task 011 and the Tasks 003-010 full review are not started.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
 
-1. Dispatch Task 010 Worker attempt 3.
+1. Dispatch Task 010 Worker attempt 4.
 2. After Task 010 acceptance, stop for the mandatory Tasks 003-010 whole-port
    source-contract review.
 3. Continue to Task 011 only with zero unresolved findings and explicit user
@@ -160,7 +158,7 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: none; Task 010 Worker attempt 3 may proceed.
+- Current stop condition: none; Task 010 Worker attempt 4 may proceed.
 - Corrected Tasks 003, 004, 006, 007, and 008 plus Task 009 are accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.

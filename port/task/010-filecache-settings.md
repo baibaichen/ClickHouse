@@ -133,9 +133,25 @@ split-cache-ratio
 write-cache-per-user-id-directory
 ```
 
-Set each to a non-default value in a valid config and assert the corresponding
-`FileCacheConfig` field. Capture a focused mutation proof that misroutes at least
-one previously uncovered key/field pair and makes this test fail; restore it
+For numeric/double fields, set each to a non-default value in a valid config and
+assert the corresponding `FileCacheConfig` field.
+
+Six uncovered booleans all default to false, so one shared config cannot make
+their mappings pairwise distinguishable. Add one-hot cases: for each boolean key,
+load a config where only that key is true, assert only its target field is true,
+and assert the other five fields remain false:
+
+```text
+allow-dynamic-cache-resize
+enable-filesystem-query-cache-limit
+expose-prometheus-eviction-metrics
+expose-prometheus-eviction-metrics-per-user
+skip-cache-on-disk-failure
+write-cache-per-user-id-directory
+```
+
+Capture focused mutation proofs that misroute at least one numeric mapping and
+one boolean mapping; the corresponding tests must fail. Restore production
 before final validation.
 
 ## Goal
