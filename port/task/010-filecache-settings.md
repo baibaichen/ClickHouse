@@ -95,6 +95,49 @@ Run the normal mono gates and a separate full-profile non-mono build at
 discover, and run `velox_ch_settings_test` as a reduced public-interface
 consumer; persist configure/build/test/discovery logs there.
 
+### Controller amendment after Worker attempt 2 — finite ratio and complete parsing evidence
+
+`std::stod` accepts `nan`. Ordered comparisons with NaN are false, so the
+existing `(0, 1]` check can be bypassed and the later NaN-to-`uint64_t`
+conversion is undefined behavior.
+
+Before computing ratio-derived `maxSize`, require:
+
+```cpp
+std::isfinite(cfg.maxSizeRatioToTotalSpace)
+```
+
+and report the existing ratio-range diagnostic. Add behavioral RED for `nan`
+and positive/negative infinity; no non-finite value may reach directory creation,
+`filesystem::space`, `floor`, or integer conversion.
+
+The loader must also have direct non-default parse assertions for every config
+field/key mapping. Add one table-driven or consolidated test for the currently
+uncovered keys:
+
+```text
+allow-dynamic-cache-resize
+background-download-max-file-segment-size
+cache-hits-threshold
+check-cache-probability
+dynamic-resize-lock-wait-ms
+enable-filesystem-query-cache-limit
+expose-prometheus-eviction-metrics
+expose-prometheus-eviction-metrics-per-user
+idle-client-check-interval-sec
+idle-client-ttl-sec
+keep-free-space-elements-ratio
+keep-free-space-remove-batch
+skip-cache-on-disk-failure
+split-cache-ratio
+write-cache-per-user-id-directory
+```
+
+Set each to a non-default value in a valid config and assert the corresponding
+`FileCacheConfig` field. Capture a focused mutation proof that misroutes at least
+one previously uncovered key/field pair and makes this test fail; restore it
+before final validation.
+
 ## Goal
 
 Port `FileCacheSettings.h` and `FileCacheSettings.cpp` from ClickHouse to Velox

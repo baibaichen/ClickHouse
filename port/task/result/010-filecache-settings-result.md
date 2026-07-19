@@ -332,3 +332,221 @@ evidence:
 
 redispatch same task: yes
 ```
+
+## Worker attempt 2
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 010
+```
+
+Executed under the controller amendment (mono/non-mono registration). Preflight
+confirmed the amended scope resolves both attempt-1 CMake blockers and that no
+other unreviewed dependency remains, so implementation proceeded. TDD-first:
+missing-header RED, then a genuine behavioral containment RED against an
+old-unsafe string-prefix lexical-only check, then the safe canonicalizing
+component-prefix loop to GREEN.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/velox` | `filecache` | `096ba0c9ef8d68ca91ca62a7b15cf6a74bbc058a` | clean (Task 009 HEAD) |
+| `/root/oss/clickhouse` | `ch-filecache` | `212ed62e7520844a0da00496148d50802a83ec89` | clean (Task 010 CMake-scope amendment HEAD) |
+
+All four target Velox files were absent before this attempt. Velox HEAD is
+unchanged (no commit); changes are unstaged.
+
+## Preflight (amended-scope confirmation)
+
+```text
+- Controller amendment adds velox/ch/Common/CMakeLists.txt to Modify scope and
+  supersedes literal Step 7: source via velox_sources(velox_ch_filecache
+  PRIVATE FileCacheSettings.cpp); both public headers appended to the existing
+  non-mono PUBLIC FILE_SET HEADERS in FileCache/CMakeLists.txt; velox_common_config
+  added PUBLIC to the non-mono target_link_libraries(velox_ch_filecache ...) in
+  Common/CMakeLists.txt; focused test links only velox_ch_filecache + GTest
+  (reduced consumer); mono + separate full non-mono build required. This resolves
+  both attempt-1 blockers (mono-alias target_sources error; out-of-scope Common
+  CMake edit).
+- No unreviewed dependency: config::ConfigBase (Config.h, reviewed), fs +
+  throwFileCacheExceptionFromFilesystemError (Task 003), throwFileCacheException
+  -> VELOX_FAIL -> VeloxRuntimeError (Task 003), FileCachePolicy + FILECACHE_DEFAULT_*
+  (Task 008 fwd), FileCacheUtils::checkedAdd (Task 008; loader performs no size
+  addition, so none used and none duplicated). The pre-execution amendment's
+  canonicalizing component-prefix containment is the reviewed contract.
+```
+
+## Files changed
+
+```text
+/root/oss/velox/velox/ch/Common/CMakeLists.txt                                 (M: velox_common_config PUBLIC, non-mono)
+/root/oss/velox/velox/ch/Interpreters/FileCache/CMakeLists.txt                 (M: velox_sources + 2 public headers in non-mono FILE_SET)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt           (M: velox_ch_settings_test, reduced consumer)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.h            (new)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheSettings.cpp          (new)
+/root/oss/velox/velox/ch/Interpreters/FileCache/FileCacheReadOptions.h         (new)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/FileCacheSettingsTest.cpp (new)
+/root/oss/clickhouse/port/task/result/010-filecache-settings-result.md         (this receipt)
+```
+
+Exactly the 7 declared Velox files plus the receipt. No Task 011 file, no
+out-of-scope file.
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| configure mono (`VELOX_MONO_LIBRARY=ON`) | 0 | `/root/oss/velox/_build/debug/configure_task_010_settings.log` |
+| RED build (missing headers) — expected fail | 1 (expected) | `/root/oss/velox/_build/debug/build_task_010_red.log` |
+| reconfigure mono after CMake source registration | 0 | `/root/oss/velox/_build/debug/configure_task_010_containment_red.log` |
+| behavioral-RED build (old-unsafe containment) | 0 | `/root/oss/velox/_build/debug/build_task_010_containment_red.log` |
+| behavioral-RED test (containment fails) | 8 (expected) | `/root/oss/velox/_build/debug/test_task_010_containment_red.log` |
+| GREEN build mono (final, safe containment) | 0 | `/root/oss/velox/_build/debug/build_task_010_settings.log` |
+| GREEN test mono (ctest) | 0 | `/root/oss/velox/_build/debug/test_task_010_settings.log` |
+| GREEN test mono (direct gtest, 54 tests) | 0 | `/root/oss/velox/_build/debug/test_task_010_settings_direct.log` |
+| accumulated Tasks 003-010 regression build | 0 | `/root/oss/velox/_build/debug/build_task_010_regression.log` |
+| accumulated Tasks 003-010 regression (8 tests) | 0 | `/root/oss/velox/_build/debug/test_task_010_regression.log` |
+| configure non-mono (`VELOX_MONO_LIBRARY=OFF`) | 0 | `/root/oss/velox/_build/debug-task010-nonmono/configure_task_010_settings_nonmono.log` |
+| non-mono reduced-consumer build | 0 | `/root/oss/velox/_build/debug-task010-nonmono/build_task_010_settings_nonmono.log` |
+| non-mono reduced-consumer test (54 tests) | 0 | `/root/oss/velox/_build/debug-task010-nonmono/test_task_010_settings_nonmono.log` |
+
+All configure/build/test commands sourced `/root/oss/velox-helper/env.sh` and used
+the `root-oss` effective configuration; no `-j`, no `build.sh` as evidence.
+
+## Acceptance evidence
+
+```text
+test count: 54 gtest cases in 4 suites (mono and non-mono identical)
+failed tests: 0 (final GREEN, mono and non-mono)
+skipped/disabled tests: 0
+accumulated regression: 8/8 focused tests pass
+  (velox_ch_common/guards/threadpool/scheduler/io/leaf_types/sharded_map/settings)
+RED evidence:
+  - missing-header RED: build_task_010_red.log — "FileCacheSettings.h: No such file or directory".
+  - genuine behavioral containment RED (build_task_010_containment_red.log build 0;
+    test_task_010_containment_red.log ctest 8): against a string-prefix lexical-only
+    containment ONLY FileCacheContainmentTest.SiblingPrefixRejected and
+    SymlinkEscapeRejected failed ("it throws nothing"); the exact-root, descendant,
+    shorter-path, dot-dot-escape and side-effect cases passed even against the unsafe
+    impl. The safe weakly_canonical component-prefix loop turns all six GREEN.
+six mandatory containment cases (real temp dirs + real symlink escape): all pass —
+  ExactRootAccepted, DescendantAccepted, ShorterPathRejectedSafely,
+  SiblingPrefixRejected, DotDotEscapeRejected, SymlinkEscapeRejected; plus
+  OutsideRootRatioCreatesNoSideEffect proves path authorization precedes create/space.
+benchmark result, when required: n/a
+git diff --check: clean (no whitespace errors); only the 7 declared Velox files changed.
+```
+
+## Worker review
+
+```text
+review subagent: one read-only code-review agent over the complete task-owned diff
+  (config/path/symlink/side-effects/math/CMake/tests), given the task, designs, CH
+  source of truth, and test outcomes.
+findings: no blocker/major. Two low-severity latent findings in owned logic:
+  (1) containment mishandled a not-yet-existing allowedCacheRoot given with a
+      trailing separator (false rejection of a valid descendant) and an empty root
+      (fail-open acceptance of every path);
+  (2) scalar parsing via std::stoull/std::stod silently accepted a negative
+      wrap-around and trailing garbage.
+resolutions:
+  (1) allowed-root check now rejects an empty/relative allowedCacheRoot (fail closed)
+      and drops a trailing empty component on both canonicalized paths before the
+      component-prefix loop. New RED-first tests:
+      TrailingSlashNonExistentRootAcceptsDescendant, EmptyAllowedRootRejected,
+      RelativeAllowedRootRejected.
+  (2) integers parse with std::from_chars (rejects sign/trailing/overflow); doubles
+      reject trailing characters via the stod position. New tests: NegativeMaxSizeRejected,
+      TrailingGarbageInIntegerRejected, TrailingGarbageInDoubleRejected. Ratio-range
+      validation is unchanged and no new ratio normalization was added (per design 06).
+  Test count grew 48 -> 54; mono + non-mono + regression re-run GREEN after the fixes.
+unresolved findings: none.
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Recommended next task
+
+```text
+None to start. Per EXECUTION_PROTOCOL, after Task 010 acceptance the controller
+runs the mandatory whole-port Tasks 003-010 source-contract review before any
+Task 011 dispatch.
+```
+
+## Worker declaration
+
+```text
+Only Task 010 was attempted (attempt 2).
+Changes are unstaged and uncommitted in both repositories.
+The 7 declared Velox files plus this receipt are the only changes; no Task 011
+file and no out-of-scope file was touched.
+The worker stopped immediately after writing this receipt.
+```
+
+## Controller review 1
+
+```text
+controller_status: changes_requested
+environment_profile: root-oss
+task: 010
+worker_attempt_reviewed: 2
+```
+
+## Review evidence
+
+```text
+scope and CMake review:
+  Attempt 2 changed exactly the seven amended Task-010 Velox files and appended
+  this receipt. Mono-safe source registration, both public headers, PUBLIC
+  velox_common_config, and the reduced non-mono consumer follow the accepted
+  CMake convention and pass in both modes.
+
+implementation review:
+  Field/default/key mapping is a correct 1:1 bijection. Path normalization,
+  weak canonicalization, component-prefix containment, shorter-path safety,
+  sibling and dot-dot rejection, symlink escape rejection, and authorization
+  before create/space side effects match the approved contract.
+
+  max-size-ratio-to-total-space still accepts NaN. std::stod parses "nan"; both
+  ordered range comparisons are false, then floor(NaN) is cast to uint64_t.
+  That conversion is undefined behavior and can either produce a misleading
+  zero error or silently return a huge garbage maxSize depending on build mode.
+
+test and evidence review:
+  Worker logs prove 54/54 focused tests in mono/non-mono, zero disabled/skipped,
+  the containment RED, and Task 003-010 regression 8/8. No test covers NaN.
+
+  Fifteen loader key/field mappings have only default-struct assertions and are
+  never parsed with non-default values. The current mappings are mechanically
+  correct, but a key/field swap in any of them would leave the suite green.
+
+independent review:
+  A fresh read-only Controller review confirmed the NaN UB and mechanically
+  verified all current mappings. It found no other Blocker or Major defect.
+
+unresolved findings:
+  1. Non-finite max-size ratio can bypass validation and reach UB.
+  2. Fifteen loader mappings lack direct parse round-trip evidence.
+```
+
+## Required changes
+
+```text
+1. Reject non-finite max-size-ratio-to-total-space before side effects and
+   numeric derivation; add genuine RED for NaN and infinity.
+2. Add a valid consolidated/parameterized non-default parse test covering all
+   fifteen currently unexercised key/field pairs.
+3. Capture a behavioral mutation proof for a previously uncovered mapping.
+4. Rerun mono/non-mono focused gates and Task 003-010 regression; launch one
+   fresh read-only review and append Worker attempt 3.
+```
+
+## Commits
+
+No implementation or acceptance commit was created.

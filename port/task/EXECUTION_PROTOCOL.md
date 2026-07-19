@@ -7,7 +7,7 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:       Task 010 CMake blocker resolved; Worker attempt 2 ready
+Current state:       Task 010 Controller changes requested; Worker attempt 3 ready
 Repair before resume: none
 Then dispatch:       Tasks 009-014, subject to Task 010 and Task 014 review gates
 Optional Velox work: Tasks 016-017, only after a separate decision
