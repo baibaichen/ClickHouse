@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FileCache 后台调度：BackgroundSchedulePool 迁移设计</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fa;
+      --panel: #ffffff;
+      --panel-2: #f3f6fa;
+      --text: #24292f;
+      --muted: #57606a;
+      --line: #d0d7de;
+      --blue: #315fbe;
+      --green: #147d64;
+      --orange: #9a5b00;
+      --red: #b42318;
+      --purple: #6f42c1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.65 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 42px 24px 80px; }
+    h1 { margin: 0 0 12px; font-size: clamp(30px, 5vw, 48px); line-height: 1.15; }
+    h2 { margin-top: 0; color: #111827; }
+    h3 { margin: 0 0 8px; color: #111827; }
+    p { margin: 8px 0 12px; }
+    code {
+      padding: 2px 6px;
+      border-radius: 5px;
+      background: rgba(9,30,66,.07);
+      color: #172b4d;
+    }
+    pre {
+      overflow-x: auto;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #f6f8fa;
+      color: #24292f;
+      white-space: pre-wrap;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 11px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: rgba(49,95,190,.10); }
+    .subtitle { max-width: 880px; color: var(--muted); font-size: 17px; }
+    .section {
+      margin-top: 28px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+    }
+    .hero {
+      padding: 28px;
+      border: 1px solid rgba(126,162,255,.42);
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(49,95,190,.10), rgba(20,125,100,.08));
+    }
+    .hero strong { color: #111827; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+    .good { border-color: rgba(88,214,173,.52); }
+    .warn { border-color: rgba(255,193,107,.52); }
+    .bad { border-color: rgba(255,128,128,.52); }
+    .blue { color: var(--blue); }
+    .green { color: var(--green); }
+    .orange { color: var(--orange); }
+    .red { color: var(--red); }
+    .lanes {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 10px 16px;
+      align-items: center;
+    }
+    .actor {
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      text-align: center;
+      font-weight: 700;
+      background: #f8fafc;
+    }
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .step {
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+    .step .n {
+      display: inline-flex;
+      width: 28px;
+      height: 28px;
+      margin-bottom: 8px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(126,162,255,.22);
+      color: var(--blue);
+      font-weight: 800;
+    }
+    .scene {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 8px;
+    }
+    .scene .ch { border-left: 4px solid var(--blue); }
+    .scene .port { border-left: 4px solid var(--green); }
+    .scene .col {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+    .scene .col h3 { display: flex; align-items: center; gap: 8px; }
+    .tag {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+    .tag.ch { background: rgba(49,95,190,.14); color: var(--blue); }
+    .tag.port { background: rgba(20,125,100,.14); color: var(--green); }
+    .invariant {
+      padding: 14px;
+      border-left: 4px solid var(--green);
+      background: rgba(88,214,173,.08);
+    }
+    .source {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 14px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .source:last-child { border-bottom: 0; }
+    .source .where { color: var(--blue); font-family: ui-monospace, monospace; }
+    .decision {
+      padding: 20px;
+      border: 2px solid rgba(88,214,173,.58);
+      border-radius: 14px;
+      background: rgba(88,214,173,.08);
+    }
+    @media (max-width: 850px) {
+      .grid, .grid.three, .timeline, .scene { grid-template-columns: 1fr; }
+      .lanes { grid-template-columns: 1fr; }
+      .source { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1><code>FileCache</code> 后台调度：<code>BackgroundSchedulePool</code> 迁移设计</h1>
+  <p class="subtitle">
+    这份文档说明 ClickHouse <code>BackgroundSchedulePool</code> 的调度算法，以及 Velox
+    <code>FileCacheScheduler</code> 的迁移算法。正文以 <code>FileCache</code> 的两个真实后台
+    task 为例，逐个场景对比“CH 得到的算法”和“我们的迁移算法”；附录按三个类分组给出函数与
+    成员变量的精确映射。
+  </p>
+
+  <div class="hero">
+    <h2>先说结论</h2>
+    <p>
+      <strong>目标不是重新设计一个通用后台调度器。</strong>
+      目标是保留 <code>FileCache</code> 实际依赖的调度合同，把底层线程与定时机制换成 Velox
+      的 <code>folly::Timekeeper</code> 加 <code>FileCacheWorkerPool</code>。
+    </p>
+    <p>
+      允许改变：定时器实现（CH 集中式 <code>delayed_thread</code> 加 multimap → 每任务一个
+      <code>folly::Future</code>）、执行线程来源、命名、去掉 <code>StorageID</code> 与 task
+      grouping、去掉 ZooKeeper watch callback、去掉 <code>activate</code> 复活语义。
+    </p>
+    <p>
+      不允许改变：任务状态机、<code>schedule</code> 的幂等合并、<strong>immediate 请求压过
+      delayed 请求</strong>、<code>deactivate</code> 等待运行中回调结束、holder 析构即安全停任务。
+    </p>
+  </div>
+
+  <section class="section">
+    <h2>1. 为什么需要它</h2>
+    <p>
+      大白话：ClickHouse 里有海量“偶尔要跑一下、跑完就睡”的周期性小杂活——每张
+      <code>ReplicatedMergeTree</code> 表的队列拉取、mutation 检查、临时目录清理……如果一件活配
+      一个专职线程，一个集群几万张表就是几十万个基本在睡觉的线程，内存和调度全部爆炸。
+    </p>
+    <p>
+      <code>BackgroundSchedulePool</code> 的解法是<strong>一个共享的小工人班组，加一堆任务卡</strong>：
+      活不占线程，只占一个任务对象；真要跑的一瞬间才借一个 worker。它给出的核心保证写在头注释里：
+    </p>
+    <div class="invariant">
+      <strong>同一个任务永远不会被多个 worker 同时执行。</strong>不同任务之间可以并行。
+    </div>
+    <p>
+      <code>FileCache</code> 复用同一套设施来跑它自己的后台维护工作。Velox 侧没有
+      <code>BackgroundSchedulePool</code>，所以 <code>FileCacheScheduler</code> 把这套语义搬到
+      <code>folly::Timekeeper</code>（定时）加 <code>FileCacheWorkerPool</code>（执行）之上。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>2. 三个类，以及 <code>FileCache</code> 注册的两个 task</h2>
+    <p>迁移是<strong>类对类</strong>的，一共三个类：</p>
+    <table>
+      <thead><tr><th>角色</th><th>ClickHouse</th><th>Velox port</th></tr></thead>
+      <tbody>
+        <tr><td>调度器（工人班组）</td><td><code>BackgroundSchedulePool</code></td><td><code>FileCacheScheduler</code></td></tr>
+        <tr><td>任务（任务卡 + 状态）</td><td><code>BackgroundSchedulePoolTaskInfo</code></td><td><code>FileCacheScheduledTask</code></td></tr>
+        <tr><td>RAII 句柄</td><td><code>BackgroundSchedulePoolTaskHolder</code></td><td><code>FileCacheScheduledTaskHolder</code></td></tr>
+      </tbody>
+    </table>
+    <p>
+      port 用 <code>using</code> 别名保留 CH 的名字，让上层代码几乎不用改：
+    </p>
+    <pre>using BackgroundSchedulePool           = FileCacheScheduler;
+using BackgroundSchedulePoolTaskHolder = FileCacheScheduledTaskHolder;</pre>
+    <p>
+      <code>FileCache::initialize</code> 里注册了<strong>两个</strong> task，正文全程用它们举例：
+    </p>
+    <div class="grid">
+      <div class="card">
+        <h3 class="blue"><code>background_cleanup_task</code></h3>
+        <p><code>FileCache.cpp:559-563</code>。单一维护任务：清理失效条目 + 空闲客户端驱逐。
+        既被<strong>事件驱动</strong>（失效通知），又<strong>周期驱动</strong>（定时），是本文的黄金例子。</p>
+      </div>
+      <div class="card">
+        <h3 class="blue"><code>keep_up_free_space_ratio_task</code></h3>
+        <p><code>FileCache.cpp:591-592</code>。维持磁盘 free-space 比例，回调末尾自我
+        <code>scheduleAfter</code> 形成纯周期心跳。仅在配置了 ratio 时注册。</p>
+      </div>
+    </div>
+    <p>
+      两个 task 都通过 <code>getSchedulePool().createTask(...)</code> 登记，返回的 holder 存成
+      <code>FileCache</code> 成员。<strong>登记不等于派工</strong>——下面第一个场景就讲这点。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>场景一：登记，但先不跑</h2>
+    <p>
+      <code>FileCache</code> 初始化时创建 <code>background_cleanup_task</code>，随即打上第一次延迟；
+      如果初始化失败，要能安全撤掉：
+    </p>
+    <pre>background_cleanup_task = ...getSchedulePool().createTask(
+    StorageID::createEmpty(), "FileCacheBackgroundCleanup",
+    [this] { backgroundCleanupTaskFunc(); });          // 登记：只填卡
+main_priority->setInvalidateNotifier(threshold,
+    [this] { background_cleanup_task->schedule(); });   // 事件驱动的钩子
+background_cleanup_task->scheduleAfter(backgroundCleanupIntervalMs());  // 第一次延迟派工
+// 失败路径： if (background_cleanup_task) background_cleanup_task->deactivate();</pre>
+    <div class="scene">
+      <div class="col ch">
+        <h3><span class="tag ch">CH 算法</span>createTask</h3>
+        <p><code>createTask</code>（<code>BackgroundSchedulePool.cpp:447</code>）只做
+        <code>new TaskInfo(fn)</code>。此刻四个标记全 false：</p>
+        <pre>scheduled = false
+delayed   = false
+executing = false
+deactivated = false</pre>
+        <p>任务不在任何队列里，只是“存在”。随后 <code>scheduleAfter</code> 才把它交给
+        <code>delayed_thread</code> 排期。</p>
+      </div>
+      <div class="col port">
+        <h3><span class="tag port">迁移算法</span>createTask</h3>
+        <p><code>FileCacheScheduler::createTask</code> <code>new FileCacheScheduledTask</code>，
+        初始 <code>state_ = Idle</code>；holder 持有唯一的
+        <code>shared_ptr&lt;FileCacheScheduledTask&gt;</code>。</p>
+        <pre>state_ = Idle
+generation_ = 0
+callbackInFlight_ = false</pre>
+        <p><code>scheduleAfter</code> → <code>armTimerLocked</code> 挂上
+        <code>timekeeper_-&gt;after(delayMs)</code>，句柄存进 <code>timerFuture_</code>，
+        <code>state_ = Delayed</code>。</p>
+      </div>
+    </div>
+    <div class="invariant">
+      <strong>定时架构差异：</strong>CH 用一个进程级 <code>delayed_thread</code> + 按到期时间排序的
+      <code>multimap&lt;Timestamp, TaskInfoPtr&gt; delayed_tasks</code> 集中管理所有延迟任务；port
+      每个任务自带一个 <code>folly::Future timerFuture_</code>。公开语义相同，内部实现不同。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>场景二：失效通知来了，要立刻清（事件驱动）</h2>
+    <p>
+      当失效条目攒够阈值，priority 层通过 <code>setInvalidateNotifier</code> 注册的回调直接调
+      <code>background_cleanup_task->schedule()</code>。一次抖动可能触发很多次——必须合并成一次。
+    </p>
+    <div class="scene">
+      <div class="col ch">
+        <h3><span class="tag ch">CH 算法</span>schedule</h3>
+        <pre>schedule():                       // .cpp:47
+  if (deactivated || scheduled) return false   // 已排 → 合并掉
+  scheduled = true                             // scheduleImpl, .cpp:221
+  if (!executing) pool.scheduleTask(*this)     // 未执行 → 立即入队
+  if (delayed)    pool.cancelDelayedTask(*this)// 撤掉待跑的延迟</pre>
+        <p><code>scheduled</code> 是<strong>粘性 bool</strong>：多次 <code>schedule</code> 只产生
+        一次待执行。<code>delayed</code> 被取消 —— immediate 抢占 delayed。</p>
+      </div>
+      <div class="col port">
+        <h3><span class="tag port">迁移算法</span>schedule</h3>
+        <pre>schedule():
+  if (state_ == Deactivated) return false
+  if (Idle || Delayed):
+    cancelTimerLocked()          // 撤 timer, generation_++
+    queueImmediateLocked()       // state_ = Queued, 入 workerPool_
+  if (Queued) return false       // 合并
+  if (Running): pendingImmediate_ = true; pendingDelayed_ = false</pre>
+        <p><code>Queued</code> 状态本身就是 CH <code>scheduled=true</code> 的等价；重复
+        <code>schedule</code> 撞上 <code>Queued</code> 返回 false，实现同样的合并。</p>
+      </div>
+    </div>
+    <p>
+      注意 worker 闭包捕获的是 <code>weak_ptr</code> 加一个 <code>generation_</code> 快照，执行前
+      重新校验，避免 stale 派发——这一点在场景五展开。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>场景三：回调自我重排 —— 满批立刻，没满批延迟</h2>
+    <p>
+      <code>backgroundCleanupTaskFunc</code> 收尾（<code>FileCache.cpp:1954-1957</code>）根据这一轮
+      清了多少来决定下次什么时候再跑：
+    </p>
+    <pre>if (removed == invalidated_entries_cleanup_remove_batch)
+    background_cleanup_task->schedule();                        // 满批：可能还有，立刻续
+else
+    background_cleanup_task->scheduleAfter(backgroundCleanupIntervalMs());  // 没满批：例行间隔</pre>
+    <p>关键点：这两个调用发生在<strong>回调正在执行的当口</strong>（任务处于运行态）。</p>
+    <div class="scene">
+      <div class="col ch">
+        <h3><span class="tag ch">CH 算法</span>execute 收尾</h3>
+        <p>进入 <code>execute</code>（<code>.cpp:117</code>）时 <code>executing=true, scheduled=false</code>。
+        回调内的 <code>schedule()</code> 因 <code>executing</code> 只置
+        <code>scheduled=true</code>，不立即入队。收尾统一处理（<code>.cpp:202-218</code>）：</p>
+        <pre>executing = false
+if (scheduled) pool.scheduleTask(*this)  // 末尾才重排
+else           return                    // 回到空闲</pre>
+        <p>注释点明：不在这里直接再跑一遍，是为了“让所有任务都有机会执行”，避免自我高频重排饿死别人。</p>
+      </div>
+      <div class="col port">
+        <h3><span class="tag port">迁移算法</span>runCallback 收尾</h3>
+        <p><code>runCallback</code> 里 <code>state_ = Running</code>；回调内的
+        <code>schedule</code>/<code>scheduleAfter</code> 只<strong>攒标记</strong>，不立即动作。
+        回调返回后按优先级结算：</p>
+        <pre>if (pendingImmediate_) queueImmediateLocked()   // → Queued
+elif (pendingDelayed_) armTimerLocked(delay)    // → Delayed
+else                   state_ = Idle</pre>
+        <p><code>pendingImmediate_</code>/<code>pendingDelayed_</code> 就是 CH “执行期间被
+        <code>schedule</code>” 攒下来的意图，只是 port 把它拆成两个具名标记。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>场景四：清理途中失效通知又插进来 —— immediate 必须压过 delayed</h2>
+    <p>
+      这是整个迁移里最容易出错、也是 Task 006 corrective（<code>b3c2832e1</code>）修复的地方。真实并发：
+      cleanup 回调正在跑，它自己没满批、打算 <code>scheduleAfter</code> 例行续；与此同时外部失效
+      通知打进来要 <code>schedule</code> 立刻清。<strong>谁赢？</strong>
+    </p>
+    <div class="lanes">
+      <div class="actor" style="color:var(--purple)">回调运行中</div>
+      <div class="card">先 <code>schedule()</code>（失效通知）→ 记下“立刻续”；随后回调收尾
+        <code>scheduleAfter()</code>（例行）。<strong>例行不能把“立刻”改成“等一会”。</strong></div>
+    </div>
+    <div class="scene">
+      <div class="col ch">
+        <h3><span class="tag ch">CH 算法</span>scheduleAfter 的守卫</h3>
+        <pre>scheduleAfter(ms, ...):           // .cpp:57
+  if (deactivated || scheduled) return false   // ← 关键
+  if (delayed && !overwrite)    return false
+  if (!delayed && only_if_scheduled) return false
+  pool.scheduleDelayedTask(*this, ms)</pre>
+        <p>只要 immediate 已把 <code>scheduled</code> 置位，<code>scheduleAfter</code> 直接返回
+        false、<strong>不记录任何延迟</strong>。反向地，<code>schedule</code> 会 cancel 掉一个已排的
+        delayed。immediate 绝对优先。</p>
+      </div>
+      <div class="col port">
+        <h3><span class="tag port">迁移算法</span>Running 分支守卫</h3>
+        <pre>scheduleAfter(delayMs):
+  if (Deactivated) return false
+  if (Idle || Delayed): cancelTimerLocked(); armTimerLocked(); return true
+  if (Queued) return false
+  // state_ == Running:
+  if (pendingImmediate_) return false          // ← corrective 加的守卫
+  pendingDelayed_ = true; pendingImmediate_ = false; pendingDelayMs_ = delayMs</pre>
+        <p><code>schedule</code> 的 Running 分支做对称的反向操作
+        （<code>pendingImmediate_=true; pendingDelayed_=false</code>），一起重现 CH 的 immediate 优先。</p>
+      </div>
+    </div>
+    <div class="invariant">
+      <strong>corrective 之前的 bug：</strong>旧 port 的 <code>scheduleAfter</code> 在 Running 分支
+      无条件 <code>pendingDelayed_=true; pendingImmediate_=false</code>，即“谁最后调谁赢”。于是例行
+      <code>scheduleAfter</code> 反而把已排的“立刻续”降级成延迟——缓存明明还有一整批要清，系统却傻等
+      一个间隔。<code>b3c2832e1</code> 加上 <code>if (pendingImmediate_) return false</code> 修复。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>场景五：cache 关闭或初始化失败 —— 安全停任务</h2>
+    <p>
+      初始化 catch 里显式 <code>background_cleanup_task->deactivate()</code>；正常生命结束时，
+      <code>FileCache</code> 析构 → holder 析构 → 自动 <code>deactivate</code>。两条路径都必须：既停掉
+      未来的回调，又不能打断正在跑的那一次。
+    </p>
+    <div class="scene">
+      <div class="col ch">
+        <h3><span class="tag ch">CH 算法</span>deactivate 双锁</h3>
+        <pre>deactivate():                     // .cpp:76
+  lock exec_mutex                 // 拿不到 → 有回调在跑，等它
+  lock schedule_mutex
+  deactivated = true; scheduled = false
+  if (delayed) pool.cancelDelayedTask(*this)</pre>
+        <p>先抢 <code>exec_mutex</code> 天然等待运行中回调结束，再改标记；之后所有
+        <code>schedule</code>/<code>scheduleAfter</code> 因 <code>deactivated</code> 变 no-op。</p>
+      </div>
+      <div class="col port">
+        <h3><span class="tag port">迁移算法</span>单锁 + callbackInFlight_</h3>
+        <pre>deactivate():
+  lock mutex_
+  if (Deactivated) return
+  cancelTimerLocked()
+  wasRunning = (state_ == Running)
+  state_ = Deactivated
+  if (wasRunning) cv_.wait(lock, [&]{ return !callbackInFlight_; })</pre>
+        <p>port 不用第二把 <code>exec_mutex</code>，而是用 <code>callbackInFlight_</code> 标记加
+        <code>cv_</code> 等待——因为 <code>deactivate</code> 会把 <code>state_</code> 直接改成
+        <code>Deactivated</code>，<code>state_</code> 本身已无法区分“回调跑完没”。</p>
+      </div>
+    </div>
+    <div class="invariant">
+      <strong>holder 可独立销毁，无需先 drain worker pool：</strong>已进 worker 队列的
+      <code>Queued</code> 闭包、以及 <code>timerFuture_</code> 上的 <code>Delayed</code> continuation，
+      都只持 <code>weak_ptr</code>。任务对象被 holder 销毁后，它们 <code>lock()</code> 失败即成为安全
+      no-op；<code>generation_</code> 快照失配也会让它们提前 return。所以 <code>FileCache</code> 析构时
+      两个 holder 各自析构就够，不必先关掉共享的 <code>FileCacheWorkerPool</code>。这是 CH 靠共享
+      <code>shared_ptr</code> + 关闭前 join 达成的同一个保证，port 用 <code>weak_ptr</code> 达成。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>3. CH source of truth（一次完整生命）</h2>
+    <p>
+      下面把 <code>background_cleanup_task</code> 从登记到重排的一次完整生命串起来，每步同时标注
+      CH 源码行号与 port 对应函数。
+    </p>
+    <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant Cache as FileCache
+  participant Task as TaskInfo / FileCacheScheduledTask
+  participant Timer as delayed_thread / folly Timekeeper
+  participant Worker as pool worker / FileCacheWorkerPool
+
+  Note over Cache,Task: FileCache.cpp:559 createTask（登记，state=Idle）
+  Cache->>Task: scheduleAfter(interval)
+  Note over Task: CH scheduleAfter .cpp:57 ｜ port armTimerLocked（state=Delayed）
+  Task->>Timer: 排入 delayed_tasks ｜ timekeeper.after()
+
+  Note over Timer: 到期
+  Timer->>Task: 转为立即执行
+  Note over Task: CH scheduleImpl .cpp:221 ｜ port queueImmediateLocked（state=Queued）
+  Task->>Worker: 入执行队列
+
+  Worker->>Task: execute ｜ runCallback（state=Running）
+  Note over Task: 回调内 schedule/scheduleAfter 只攒标记
+  Cache-->>Task: 失效通知 schedule()（pendingImmediate_）
+  Task->>Task: 收尾重排 CH execute .cpp:202-218 ｜ port runCallback 尾部
+  Note over Task: pendingImmediate_ 优先 → 再次 Queued；否则 Delayed；否则 Idle
+    </pre>
+    <div class="source">
+      <div class="where"><code>FileCache.cpp:559-563</code></div>
+      <div>注册 cleanup task，装上失效通知钩子，打第一次延迟。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>FileCache.cpp:1919-1957</code></div>
+      <div><code>backgroundCleanupTaskFunc</code>：清理 + idle 驱逐，收尾按“满批 / 没满批”选
+        <code>schedule</code> 或 <code>scheduleAfter</code>。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>BackgroundSchedulePool.cpp:47-74</code></div>
+      <div><code>schedule</code> / <code>scheduleAfter</code> 的三条 early-return 与 immediate 优先。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>BackgroundSchedulePool.cpp:202-218</code></div>
+      <div><code>execute</code> 收尾：执行期间被 <code>schedule</code> 则末尾统一重排。</div>
+    </div>
+    <div class="source">
+      <div class="where"><code>BackgroundSchedulePool.cpp:76-97</code></div>
+      <div><code>deactivate</code> 双锁：等运行中回调结束后使后续调度全部 no-op。</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>4. 已知遗留（不被这两个 task 触发）</h2>
+    <div class="grid">
+      <div class="card warn">
+        <h3>自 deactivate 死锁</h3>
+        <p>若回调同步对<strong>自己的</strong> task 调 <code>deactivate</code>，port 会永久等
+        <code>callbackInFlight_</code>。CH 用 running-thread-id 检查规避，port 缺这一层。
+        <code>background_cleanup_task</code>、<code>keep_up_free_space_ratio_task</code> 都不自
+        deactivate，不触发。</p>
+      </div>
+      <div class="card warn">
+        <h3><code>tasks_</code> 无界增长</h3>
+        <p><code>FileCacheScheduler::tasks_</code> 里过期的 <code>weak_ptr</code> 只在
+        <code>shutdown</code> 时清理。<code>FileCache</code> 只注册两个 task，无害。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>附录 A：<code>BackgroundSchedulePool</code> ↔ <code>FileCacheScheduler</code></h2>
+    <h3>函数</h3>
+    <table>
+      <thead><tr><th>ClickHouse</th><th>Velox port</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>createTask(StorageID, name, fn)</code></td><td><code>createTask(name, fn)</code></td><td>port 去掉 <code>StorageID</code>；shutdown 后返回空 holder</td></tr>
+        <tr><td><code>scheduleTask</code> / <code>scheduleDelayedTask</code> / <code>cancelDelayedTask</code></td><td>（并入 task 的 <code>queueImmediateLocked</code> / <code>armTimerLocked</code> / <code>cancelTimerLocked</code>）</td><td>CH 由 pool 管理集中队列，port 下沉到每个 task</td></tr>
+        <tr><td><code>join</code></td><td><code>shutdown</code></td><td>deactivate 所有存活 task 并等待</td></tr>
+        <tr><td><code>getTasks</code> / <code>increaseThreadsCount</code></td><td>（无）</td><td>system-table introspection 与动态扩容，FileCache 不需要</td></tr>
+      </tbody>
+    </table>
+    <h3>成员</h3>
+    <table>
+      <thead><tr><th>ClickHouse</th><th>Velox port</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>delayed_thread</code> + <code>delayed_tasks</code>（multimap）</td><td><code>timekeeper_</code>（<code>shared_ptr&lt;folly::Timekeeper&gt;</code>）</td><td>集中定时线程 → 每任务 future</td></tr>
+        <tr><td><code>threads</code> / <code>task_groups</code> / global pool</td><td><code>workerPool_</code>（<code>FileCacheWorkerPool &amp;</code>）</td><td>port 复用 Task 005 的执行池，无 grouping</td></tr>
+        <tr><td><code>shutdown</code>（atomic）</td><td><code>shutdown_</code>（bool，<code>mutex_</code> 保护）</td><td>—</td></tr>
+        <tr><td>（pool 队列持 <code>TaskInfoPtr</code>，shared）</td><td><code>tasks_</code>（<code>vector&lt;weak_ptr&gt;</code>）</td><td>port 只弱引用，仅 shutdown 用</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>附录 B：<code>BackgroundSchedulePoolTaskInfo</code> ↔ <code>FileCacheScheduledTask</code></h2>
+    <h3>函数</h3>
+    <table>
+      <thead><tr><th>ClickHouse</th><th>Velox port</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>schedule</code></td><td><code>schedule</code></td><td>幂等合并；immediate 优先</td></tr>
+        <tr><td><code>scheduleAfter(ms, overwrite=true, only_if_scheduled=false)</code></td><td><code>scheduleAfter(delayMs)</code></td><td>port 去掉两个参数；FileCache 两 task 都用默认值，不依赖它们</td></tr>
+        <tr><td><code>deactivate</code></td><td><code>deactivate</code></td><td>等运行中回调；后续调度 no-op</td></tr>
+        <tr><td><code>scheduleImpl</code></td><td><code>queueImmediateLocked</code></td><td>置 scheduled/Queued 并入执行队列</td></tr>
+        <tr><td>（delayed 到期 → schedule）</td><td><code>armTimerLocked</code> + timer continuation</td><td>定时到期转 Queued</td></tr>
+        <tr><td><code>execute</code></td><td><code>runCallback</code></td><td>跑回调；收尾按 pending 重排</td></tr>
+        <tr><td>（<code>cancelDelayedTask</code> 经 pool）</td><td><code>cancelTimerLocked</code></td><td>撤定时，<code>generation_++</code></td></tr>
+        <tr><td><code>getWatchCallback</code></td><td>（无）</td><td>ZooKeeper watch，FileCache 不需要</td></tr>
+        <tr><td><code>activate</code> / <code>activateAndSchedule</code></td><td>（无）</td><td>port 的 <code>Deactivated</code> 是终态，无复活；FileCache 不用</td></tr>
+        <tr><td>（无）</td><td><code>setCallback</code></td><td>port 特有，测试用</td></tr>
+      </tbody>
+    </table>
+    <h3>成员（状态标记）</h3>
+    <table>
+      <thead><tr><th>ClickHouse</th><th>Velox port</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>bool scheduled</code></td><td><code>state_ == Queued</code> ＋ <code>pendingImmediate_</code></td><td>CH 单粘性 bool ↔ port 枚举 + Running 期标记</td></tr>
+        <tr><td><code>bool delayed</code></td><td><code>state_ == Delayed</code> ＋ <code>pendingDelayed_</code> / <code>pendingDelayMs_</code></td><td>“scheduled 与 delayed 互斥”在 port 由枚举天然保证</td></tr>
+        <tr><td><code>bool executing</code></td><td><code>state_ == Running</code> ＋ <code>callbackInFlight_</code></td><td>port 拆两处：枚举给状态机，bool 给 <code>deactivate</code> 等待</td></tr>
+        <tr><td><code>bool deactivated</code></td><td><code>state_ == Deactivated</code></td><td>终态</td></tr>
+        <tr><td>（无）</td><td><code>generation_</code></td><td>port 特有：异步闭包 staleness 校验</td></tr>
+        <tr><td><code>std::mutex schedule_mutex</code></td><td><code>std::recursive_mutex mutex_</code></td><td>port 用 recursive：folly 内联 continuation 可能在持锁线程重入</td></tr>
+        <tr><td><code>std::mutex exec_mutex</code></td><td>（并入 <code>mutex_</code> ＋ <code>callbackInFlight_</code> ＋ <code>cv_</code>）</td><td>CH 双锁 ↔ port 单锁 + 标记 + 条件变量</td></tr>
+        <tr><td><code>DelayedTasks::iterator iterator</code></td><td><code>folly::Future&lt;folly::Unit&gt; timerFuture_</code></td><td>延迟句柄的两种表示</td></tr>
+        <tr><td><code>function</code> / <code>storage</code> / <code>log_name</code></td><td><code>callback_</code> / （去掉） / <code>name_</code></td><td>port 无 <code>StorageID</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>附录 C：<code>BackgroundSchedulePoolTaskHolder</code> ↔ <code>FileCacheScheduledTaskHolder</code></h2>
+    <table>
+      <thead><tr><th>ClickHouse</th><th>Velox port</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>move-only；析构调 <code>deactivate</code></td><td>同</td><td>RAII：持有者销毁即停任务</td></tr>
+        <tr><td><code>task_info</code>（<code>shared_ptr&lt;TaskInfo&gt;</code>）</td><td><code>task_</code>（<code>shared_ptr&lt;FileCacheScheduledTask&gt;</code>）</td><td>唯一强引用</td></tr>
+        <tr><td><code>operator bool</code> / <code>operator-&gt;</code> / <code>getTaskInfoPtr</code></td><td><code>operator bool</code> / <code>operator-&gt;</code> / <code>get</code></td><td>接口一致</td></tr>
+      </tbody>
+    </table>
+    <h3>所有权链（谁持有任务对象与它的状态标记）</h3>
+    <table>
+      <thead><tr><th>角色</th><th>ClickHouse</th><th>Velox port</th></tr></thead>
+      <tbody>
+        <tr><td>唯一强引用</td><td><code>TaskHolder::task_info</code>（shared）</td><td><code>Holder::task_</code>（shared）</td></tr>
+        <tr><td>异步执行闭包</td><td>pool 队列持 <code>TaskInfoPtr</code>（shared）</td><td>worker / timer 闭包持 <code>weak_ptr</code></td></tr>
+        <tr><td>调度器登记</td><td><code>task_groups</code> / <code>delayed_tasks</code>（shared）</td><td><code>FileCacheScheduler::tasks_</code>（weak）</td></tr>
+      </tbody>
+    </table>
+    <p>
+      两边状态标记都由任务自己的锁保护（CH 的 <code>schedule_mutex</code> ↔ port 的
+      <code>mutex_</code>）。差别在异步闭包：CH 靠共享 <code>shared_ptr</code> 加关闭前 join 保证不悬空，
+      port 靠 <code>weak_ptr</code> 加 <code>generation_</code>，让 holder 能独立、随时安全销毁。
+    </p>
+  </section>
+
+  <div class="decision">
+    <h2>最终决定</h2>
+    <p>
+      采用 <strong>精确公开语义 + 换底层实现</strong>：<code>FileCacheScheduler</code> 保留
+      <code>BackgroundSchedulePool</code> 的状态机、幂等合并、immediate 优先与 deactivate 语义，
+      底层换成 <code>folly::Timekeeper</code> 加 <code>FileCacheWorkerPool</code>，并用
+      <code>weak_ptr</code> + <code>generation_</code> 达成 holder 独立销毁的生命周期安全。
+      CH 中 FileCache 不用的能力（<code>overwrite</code> / <code>only_if_scheduled</code> /
+      <code>activate</code> / task grouping / watch callback / system-table introspection）不移植。
+    </p>
+  </div>
+</main>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "default",
+    themeVariables: {
+      primaryColor: "#eef4ff",
+      primaryTextColor: "#24292f",
+      primaryBorderColor: "#315fbe",
+      lineColor: "#57606a",
+      secondaryColor: "#edf8f5",
+      tertiaryColor: "#fff8e8",
+      noteBkgColor: "#fff8e8",
+      noteBorderColor: "#9a5b00",
+      actorBkg: "#ffffff",
+      actorBorder: "#315fbe",
+      actorTextColor: "#24292f",
+      signalColor: "#315fbe",
+      signalTextColor: "#24292f"
+    }
+  });
+</script>
+</body>
+</html>
