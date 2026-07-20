@@ -1,4 +1,4 @@
-# Full Review: Tasks 003–014 (Phase D — mandatory post-Task-014 FileCache sweep)
+# Full Review: Tasks 003–014 — `root-oss` Review 2 Evidence
 
 > Single Phase-D agent, strict read-only cross-repository source-contract + structural review.
 > Nothing was modified/staged/committed/pushed in either repository. Verdicts are re-derived

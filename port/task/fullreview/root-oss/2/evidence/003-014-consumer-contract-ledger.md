@@ -1,4 +1,4 @@
-# Task 7-A — Phase-A Consumer-Contract & Structural Recovery Ledger (Tasks 003–014)
+# Task 7-A — Phase-A Consumer-Contract & Structural Recovery Ledger (Tasks 003–014) — `root-oss` Review 2 Evidence
 
 > Mandatory post-Task-014 FileCache full review, **Phase A only**: top-down CH-source
 > contract derivation per §A and §3 of

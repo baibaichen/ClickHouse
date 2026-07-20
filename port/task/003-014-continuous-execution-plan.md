@@ -727,9 +727,9 @@ git -C /root/oss/velox commit \
 
 **Files:**
 - Create:
-  `port/task/fullreview/cross-profile/2/003-014-consumer-contract-ledger.md`
+  `port/task/fullreview/root-oss/2/evidence/003-014-consumer-contract-ledger.md`
 - Create:
-  `port/task/fullreview/cross-profile/2/003-014-full-review-result.md`
+  `port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md`
 - Modify: `port/task/CONTROLLER_HANDOFF.md`
 - Modify: `port/task/EXECUTION_PROTOCOL.md`
 

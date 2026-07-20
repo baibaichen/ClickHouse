@@ -198,16 +198,17 @@ Current task:
 - Task 014 is accepted with 24/24 focused tests in mono and non-mono, including
   corrected background reader handoff.
 - The mandatory Tasks 003-014 full review is complete. Its artifacts are:
-    `port/task/fullreview/cross-profile/2/003-014-consumer-contract-ledger.md`;
-    `port/task/fullreview/cross-profile/2/003-014-full-review-result.md`;
-    `port/task/fullreview/cross-profile/2/014-senior-review-corrective-result.md`.
-- The review proposes corrective reopen work:
-    Task 011 for cursor/SLRU test-plane gaps;
-    Task 012 for direct-IO background alignment, handoff-race evidence, and
-    SCC-owned queue-pipeline coverage;
-    Task 014 for the direct-IO/background integration test.
+    `port/task/fullreview/root-oss/2/003-014-review-decisions.md`;
+    `port/task/fullreview/root-oss/2/evidence/003-014-consumer-contract-ledger.md`;
+    `port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md`;
+    `port/task/fullreview/root-oss/2/evidence/014-senior-review-corrective-result.md`.
+- The user approved the Review-2 decisions:
+    B1 direct-IO/background alignment is deferred to Task 015 E2E/hardening;
+    B2/B3 Task-011 cursor/SLRU evidence is required now;
+    B4 Task-012/014 handoff-race evidence is required now;
+    B5 Task-012 SCC-owned queue-pipeline evidence is required now.
 - No affected numbered task or receipt has yet been marked
-  `reopened_by_contract_audit`; wait for the user's remediation decision.
+  `reopened_by_contract_audit`; that authoring wave is the next action.
 - Task 015 is prohibited.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -217,16 +218,14 @@ Resume procedure:
 2. The approved Task-011/012/013/014 authoring amendments and structure
    deviation registrations are written in place (done by the Task-1
    authoring wave).
-3. Review the Tasks 003-014 full-review findings with the user.
-4. If accepted, amend the affected tasks/receipts and execute the corrective
-   work before rerunning the review gate.
+3. Amend Tasks 011 and 012/014 plus their receipts with B2-B5.
+4. Execute and review the corrective test/evidence work.
 5. Continue to Task 015 only with zero unresolved findings and explicit user
    approval.
 
 Continuous execution target:
 
-- Current stop condition: full-review findings await the user's remediation
-  decision.
+- Current stop condition: approved B2-B5 corrective work is pending.
 - Task 015 remains prohibited until the post-Task-014 full review.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.

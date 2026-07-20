@@ -1,4 +1,4 @@
-# Task-014 Senior Review — Corrective Result (Task 007 reader-detach + Task 014 integration)
+# Task-014 Senior Review — Corrective Result — `root-oss` Review 2 Evidence
 
 Read-only senior review of the accepted-but-uncommitted Task-014
 (`FileCacheBufferedInput` / `FileCacheInputStream`) surfaced a Task-007/012 vs
