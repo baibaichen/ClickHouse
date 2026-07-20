@@ -77,6 +77,79 @@ injection:
 Where this amendment and the original Step text below disagree, this amendment
 and the CH source win.
 
+### D1/D2/D3 CH-aligned contracts (2026-07-20, user-decided: do it in Task 013)
+
+The first Task-013 worker correctly stopped at the unreviewed-dependency gate on
+three items (D1 OpenedFileCache internal contract, D2 the B7 injection shape, D3
+the FileCache ownership-move signature). User decision: implement all three in
+Task 013, aligned to CH. These are the fixed contracts — the worker must follow
+them and not re-derive:
+
+**D1 — `OpenedFileCache` internal contract (port CH `src/IO/OpenedFileCache.h`,
+118 lines, faithfully; only the two forced substitutions below).**
+- Structure 1:1 with CH: `static constexpr size_t buckets = 1024;` a
+  vector/array of `buckets` shards, each a `{ std::mutex; map<Key, WeakPtr> }`.
+  `Key = std::pair<std::string /*path*/, int /*flags*/>`. Bucket =
+  `hash(path) % buckets` (CH uses CityHash64; Velox may use `folly::hash` /
+  `std::hash<std::string>` — pure in-memory bucket distribution, no persistence,
+  no bit-compat requirement; register as an infra substitution).
+- **Handle substitution (user-confirmed):** CH caches
+  `std::shared_ptr<OpenedFile>` (fd + mmap). The Velox port caches the read
+  handle for a cache-segment file: `std::shared_ptr<velox::ReadFile>` (value
+  stored as `std::weak_ptr<velox::ReadFile>`). `get(path, flags)` returns a
+  `shared_ptr<ReadFile>`: on a live weak hit, reuse it (increment a hit event);
+  else open via the injected `filesystems::FileSystem::openFileForRead(path)`
+  and install it with a custom deleter that erases the map entry on last release
+  (mirroring CH's deleter at `OpenedFileCache.h:65-76`).
+- `remove(path, flags)`: erase the key (idempotent), same as CH `:82-87`.
+- **Ownership substitution (design 02):** NOT a process singleton and NOT the
+  Hive `FileHandleCache`. `FileCacheManager` owns one `OpenedFileCache`
+  (`openedFileCache_`), constructed with the injected `filesystems::FileSystem&`
+  (for opening) — CH's `memoryPool` is for mmap accounting and is NOT needed for
+  the ReadFile-based port; if the illustrative header lists a `memoryPool&`
+  param, drop it unless a concrete use appears (record the drop).
+- Stats: `FileHandleCacheStats` / the `FileCacheStats` fields that
+  `refreshStats`/`FileCacheManagerStats` need — define minimal real fields
+  (e.g. cached-handle count, hits, misses); do not invent unused surface.
+
+**D2 — B7 injection shape (aligned to CH remove/rename sites).**
+- Inject `OpenedFileCache &` (a reference to the Manager-owned instance), NOT a
+  `std::function`. Thread it: `FileCacheManager` -> `FileCache` ctor ->
+  `CacheMetadata` ctor (reference member) -> reached by `FileSegment` via its
+  key-metadata back-reference for the rename seam.
+- Wire the two Task-012 no-op+TODO seams to call it after the physical change:
+  - removal seam `Metadata.cpp removeFileSegmentImpl` (after `fs::remove`):
+    invalidate the removed path. CH pairs `remove(path, flags)` and
+    `remove(path, flags | O_DIRECT)` (`Metadata.cpp:1267-1268`); the Velox port
+    invalidates the path's cached handle(s) — since local cache-segment reads do
+    not use O_DIRECT, a single `remove(path, flags)` is sufficient; if the key
+    keeps `flags`, drop all flag-variants for the path.
+  - rename seam `FileSegment.cpp renameToIncludeSizeInNameUnlocked` (after
+    `fs::rename`): invalidate the OLD path (CH `FileSegment.cpp:800-802`).
+- Add a real test: a path's cached handle is dropped after remove/rename (this
+  replaces the Task-012 "S4 tests must avoid the opened-handle path" note).
+
+**D3 — FileCache resource-ownership move (own -> injected reference).**
+- Move ownership of `FileCacheWorkerPool`, `folly::Timekeeper` +
+  `FileCacheScheduler`, and `commonUserId` from `FileCache` (where Task 012 put
+  them as owned members) to the Manager. `FileCache` receives them by reference
+  via its constructor; per design `02:373-382` each `FileCache` is constructed
+  with explicit references: `workerPool`, `scheduler`, `openedFileCache`,
+  `localFileSystem`, `memoryPool` (drop `memoryPool` if unused per D1),
+  `commonUserId`.
+- The Manager owns these and MUST outlive every `FileCache`. Manager
+  destruction order (design 02:299-300, 013 shutdown order
+  "cache workers -> timers -> physical pool -> handles"): destroy the
+  factory/registry (and thus all `FileCache`s) BEFORE the opened-file cache,
+  scheduler/timekeeper, and worker pool. Encode this via Manager member
+  declaration order so the owned resources are declared BEFORE the factory and
+  destroyed after it.
+- After the move, `velox_ch_filecache_core_scc_test` MUST still pass
+  (0 failed / 0 skipped): the SCC test constructs a `FileCache`, so provide/adapt
+  a test fixture that supplies the now-required injected references (a minimal
+  Manager or a direct-injection helper). The observable scheduling / worker /
+  eviction semantics must not change.
+
 ## Goal
 
 Implement the real `FileCacheFactory` (sole registry/name/path aliasing) and
