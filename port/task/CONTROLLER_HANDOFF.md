@@ -147,8 +147,25 @@ environment_profile: home-chang
   (Task 010 R2/R10; Task 011 SD1/SD2/SD3/SD4/SD5; Task 012 D3/D9/D11 + errno +
   R2/R7; Task 005 SD6; Task 006 SD7/SD8/F-CALLERID; Task 007 SD9; Task 009
   receipt SD1 sign-off). With Task 003 B1/B2 accepted and these registrations
-  landed, the pre-011 whole-port gate is at zero unresolved findings; Task 011
-  starts only on explicit user approval.
+  landed, the pre-011 whole-port gate is at zero unresolved findings.
+
+- **Task 011 is accepted** (Velox `e5b2af1a9`; ClickHouse receipt+handoff = this
+  commit). During Task 011 the Worker twice hit the unreviewed-dependency gate;
+  the user reviewed and approved these mappings, now recorded in the Task 011
+  file's "## Approved dependency mappings" table:
+    D-011-1 ProfileEvents timer -> ProfileEventTimeIncrement no-op (H2 -> Task 003)
+    D-011-2 randomSeed/pcg64     -> folly::Random
+    D-011-3 LockMemoryExceptionInThread -> omitted (no-op)
+    D-011-4 WriteBufferFromOwnString    -> std::ostringstream
+    D-011-5 failpoint bernoulli  -> no-op with no-op failpoint
+    D-011-6 assert_cast          -> dynamic_cast + VELOX_CHECK
+    D-011-7 TSA_* macros         -> velox/ch/Common/ClickHouseTSA.h (verbatim;
+                                    Clang honors, GCC ignores without error)
+    CacheUsage.h FilesystemCacheOvercommitUsers member dropped (B2/O2).
+  Task 011 has no green build gate (atomic-stage Part A). **Task 012 is next and
+  must restore the full compile/link/test closure** using the Task-012
+  amendments already recorded (D3/D9/D11 mappings, FileCacheErrnoException
+  contract, R2 value-comparison, R7 typed-subtype, SD1/SD3/SD4/SD5).
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;

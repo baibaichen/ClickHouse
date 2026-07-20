@@ -62,6 +62,7 @@ src/Interpreters/FileCache/EvictionCandidates.h / .cpp
 Create:
 
 ```text
+<velox_repo>/velox/ch/Common/ClickHouseTSA.h
 <velox_repo>/velox/ch/Interpreters/FileCache/CacheUsage.h
 <velox_repo>/velox/ch/Interpreters/FileCache/IFileCachePriority.h
 <velox_repo>/velox/ch/Interpreters/FileCache/IFileCachePriority.cpp
@@ -99,6 +100,31 @@ OvercommitFileCachePriority
 Cloud-only distributed-cache branches
 SQL/system-table presentation
 ```
+
+## Approved dependency mappings (unblock 2026-07-20, user-reviewed)
+
+The first Task-011 Worker correctly stopped at the unreviewed-dependency gate on
+seven items. The user reviewed each; apply these exact mappings. Any OTHER
+unreviewed dependency still triggers the gate — do not extend this list yourself.
+
+| # | CH dependency (call site) | Approved Velox mapping |
+|---|---|---|
+| D-011-1 | `CurrentThread::getProfileEvents().timer(ProfileEvents::FilesystemCacheEvictMicroseconds)` (`EvictionCandidates.cpp:267`) — ledger hole H2 | Use the Task-003 `ProfileEventTimeIncrement<Microseconds>` RAII no-op shim (already in `ProfileEvents.h`) instead of `.timer()`. Owner: Task 003 (H2 resolved to 003). Real timing stays Task 017. |
+| D-011-2 | `randomSeed()` + `pcg64` (`LRUFileCachePriority.cpp:86` queue_id, `:862` shuffle) | `folly::Random` (`folly/Random.h`): `queue_id = folly::Random::rand64()`; shuffle via `folly::Random`. Faithful to CH's random source (queue_id uniqueness is probabilistic, as in CH). Registered structural note: RNG source CH `pcg64`→`folly::Random`. |
+| D-011-3 | `LockMemoryExceptionInThread(VariableContext::Global)` (`LRUFileCachePriority.cpp:208,310`) | **No-op / omit.** Velox has no CH memory-tracker fault-injection, so there is nothing to block in these `noexcept` invalidated-ref paths. Drop the guard; the surrounding logic is unchanged. |
+| D-011-4 | `WriteBufferFromOwnString` (`EvictionCandidates.cpp:39,75`, two `toString` bodies) | `std::ostringstream` (or `fmt`). These are debug/diagnostic string builders only; not the ported file WriteBuffer adapter. |
+| D-011-5 | `thread_local_rng` + `std::bernoulli_distribution` inside a failpoint body (`SLRUFileCachePriority.cpp:587`) | The failpoint is a Task-003 no-op in this phase, so the entire bernoulli fault-injection branch is no-op with it. Do not add a live RNG here. |
+| D-011-6 | `assert_cast<SLRUIterator*>(...)` (SLRU downcasts, e.g. `SLRUFileCachePriority.cpp:131,267,369,557,603`) | Debug-checked downcast: `VELOX_CHECK` + `dynamic_cast` (or an equivalent debug-only type check) in debug/sanitizer builds, `static_cast` in release — matching CH `assert_cast` semantics (exact-type check in debug, `static_cast` in release). |
+| D-011-7 | CH Clang thread-safety annotation macros `TSA_GUARDED_BY` / `TSA_REQUIRES` / `TSA_SUPPRESS_WARNING_FOR_READ` (`base/defines.h:58-67`; used at `LRUFileCachePriority.h:181,182,186,187,193`, `LRUFileCachePriority.cpp:856,857`, `SLRUFileCachePriority.h:219`) | **CREATE `velox/ch/Common/ClickHouseTSA.h`** and copy the CH `TSA_*` macro definitions verbatim (they are standard Clang `__attribute__((guarded_by(...)))` / `((requires_capability(...)))` etc., plus `TSA_SUPPRESS_WARNING_FOR_READ`). These are compile-time-only, zero runtime effect. **Clang** honors them → the CH lock-to-data contract (ledger ST7) keeps its static thread-safety check. **GCC** (the home-chang `cmake-build-debug-gcc13` compiler) ignores these attributes without error, so the build passes either way. Include this header where the priority sources use the macros. Do NOT define them as empty (that would drop the Clang check). |
+
+**Task-vs-decision conflict — `CacheUsage.h` overcommit member.** CH
+`CacheUsage.h:116` increments `CurrentMetrics::FilesystemCacheOvercommitUsers`,
+which the approved B2 decision forbids adding (overcommit excluded, ledger O2).
+Port `CacheUsage.h` but **drop that overcommit-observability member** (the
+`CurrentMetrics::Increment metric_increment{...OvercommitUsers}` at `:116` and
+its `extern const Metric` at `:16`). Overcommit machinery as a whole is not
+ported; only the minimal reachable subset (EvictionInfo pin, `CacheUsageStatGuard`,
+base no-op hooks) is in scope.
 
 ## Structural deviations — review-enforced (whole-port review 2026-07-20)
 
