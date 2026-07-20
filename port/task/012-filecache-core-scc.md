@@ -147,6 +147,79 @@ that physically commits a strict prefix and then throws `FileCacheErrnoException
 (ENOSPC/EDQUOT). Reconciliation must happen inside production `FileSegment`, never
 inside the test double — the double only injects the fault.
 
+### S2 unblock — three structural resolutions (2026-07-20)
+
+The S2 Worker correctly blocked on three real structural gaps that require
+editing files outside the raw S2 `.cpp` list. All three are now resolved; S2's
+scope is expanded exactly as follows (nothing more):
+
+- **B1 — `EvictionCandidates.h` portability fix (authorized).** The header was
+  copied verbatim from CH and uses C++23 "deducing this"
+  (`auto begin(this auto&& self)`) and `folly::F14FastSet::merge`, neither of
+  which compiles under the home-chang g++ 13.3 / gnu++20 toolchain. Task 011 was
+  "structural check only" so this was never compiled. S2 is authorized to edit
+  `EvictionCandidates.h`: replace deducing-this with explicit const / non-const
+  `begin`/`end` overloads, and replace `kept_alive_cache_usage.merge(other...)`
+  with an insert-range loop. Behavior is unchanged; this is a pure portability
+  fix, CH semantics preserved.
+
+- **B2a — inject the reserve timeout (authorized; executes approved design).**
+  CH `Metadata.cpp:966` reads
+  `reserve_space_wait_lock_timeout_milliseconds` from the global `Context`. The
+  approved design (`08-filecache-metadata-files-design.md:471-473`) already
+  mandates injecting it from `FileCacheConfig` into `CacheMetadata` instead. S1
+  simply omitted the plumbing. S2/S3 are authorized to add:
+  a `reserve_space_wait_lock_timeout_milliseconds` field to `FileCacheConfig`
+  (`FileCacheSettings.h`, name e.g. `reserveSpaceWaitLockTimeoutMilliseconds`,
+  default matching CH), a matching `CacheMetadata` constructor parameter + member
+  (`Metadata.h`), and the `FileCache` pass-through at construction
+  (`FileCache.h`/`.cpp`, wired in S3). `downloadImpl` reads the injected member,
+  not any global Context.
+
+- **B2b — opened-file-handle invalidation: throw not-supported + TODO (user
+  decision 2026-07-20).** CH calls `OpenedFileCache::instance().remove(path,
+  flags)` (idempotent) after a rename (`FileSegment.cpp:800-802`) and after a
+  removal (`Metadata.cpp:1267-1268`). `OpenedFileCache` is a process singleton
+  that belongs to the Task-013 Manager and does not exist in the SCC phase. Per
+  the user decision, **do NOT** inject a no-op (a silent fallback). Instead, at
+  each of the two call sites, add a `TODO(Task 013)` and `throw` a
+  not-supported/not-implemented exception (`VELOX_NYI` or a FileCache
+  not-implemented exception) in place of the `OpenedFileCache::remove` calls, so
+  any code path that actually reaches opened-handle invalidation fails loudly
+  rather than silently skipping a correctness-relevant step. Task 013 replaces
+  the throw with the real Manager-backed invalidation. This relaxes the design
+  `08:571` "no-stub" rule for this one item, recorded here as the amendment:
+  the SCC phase intentionally throws-not-implemented here, and the mandatory S4
+  tests do NOT exercise the rename/remove opened-handle-invalidation paths.
+
+### S2 unblock 2 — B3 CacheMetadata worker pool injection (2026-07-20, authorized)
+
+The S2 redispatch completed 6 of 7 TUs; `Metadata.cpp` blocked on B3: the Velox
+`FileCacheWorker` (Task 005) ctor is `FileCacheWorker(FileCacheWorkerPool&,
+Function)` — unlike CH's `ThreadFromGlobalPool`, which draws from an implicit
+global pool — so `CacheMetadata` cannot start its download/cleanup threads
+without an explicit `FileCacheWorkerPool&`. This is **not** a new architecture
+decision: the approved thread-pool design already fixes it.
+
+- Design `1-dependencies/04-filecache-thread-pool-design.md:11,45-48`:
+  `GlobalThreadPool` → **manager-owned `FileCacheWorkerPool`**; the
+  `FileCacheManager` holds the single shared worker pool and stops it at
+  shutdown; `04:142` keeps `CacheMetadata::download_threads` on
+  `ThreadFromGlobalPool` (= Velox `FileCacheWorker`).
+- Since the Manager is Task 013, the SCC phase injects the pool by reference:
+  `CacheMetadata`'s constructor takes a `FileCacheWorkerPool&` parameter + stores
+  a reference member; `CacheMetadata::startup` creates its download/cleanup
+  `FileCacheWorker`s bound to that pool (mirroring CH `Metadata.cpp:1024,1027`).
+  In the SCC phase the pool is owned by `FileCache` and passed to `CacheMetadata`
+  at construction; Task 013 later moves ownership to the Manager and injects it
+  the same way (no CacheMetadata signature change at 013).
+
+Authorized (executes approved design 04): S2/S3 add the `FileCacheWorkerPool&`
+ctor parameter + reference member to `CacheMetadata` (`Metadata.h`), reach it
+from `startup` (`Metadata.cpp`), and have `FileCache` own the pool and pass it in
+(`FileCache.h`/`.cpp`, wired in S3). Do NOT make `CacheMetadata` own the pool
+(design says manager/FileCache owns the single shared pool).
+
 ### Mandatory executable tests
 
 Each case below must contain real setup, execute the production path, and assert the

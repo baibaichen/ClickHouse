@@ -445,3 +445,717 @@ unresolved findings: None for S1.
 | Repository | Commit |
 |---|---|
 | `/home/chang/OpenSource/velox` | `853840ae5 Task 012: Port center-SCC headers (sub-attempt S1)` |
+
+## Worker attempt (S2 FileSegment/Metadata + finish Task-011 cpp)
+
+```text
+worker_status: blocked
+environment_profile: home-chang
+task: 012 (sub-attempt S2 — FileSegment.cpp + Metadata.cpp + finish Task-011 .cpp; compile-only)
+```
+
+S2 was to CREATE `FileSegment.cpp` and `Metadata.cpp` and MODIFY the five committed
+Task-011 `.cpp` (`IFileCachePriority/LRU/SLRU/Split/EvictionCandidates.cpp`) so they
+compile per-TU against the real S1 headers, with a per-TU COMPILE-ONLY check (no link,
+no test — that is S4). The declared S2 file scope is exactly those two new `.cpp`, the
+five existing `.cpp`, optionally `tests/`-less `CMakeLists.txt`, and optionally a small
+FileCache-owned header for `FileCacheErrnoException`. It does NOT include editing the
+accepted S1 headers (`FileSegment.h`, `Metadata.h`, `FileCache.h`, `FileCacheSettings.h`)
+or the Task-011 header `EvictionCandidates.h`.
+
+Both pre-implementation gates were worked, then S2 stopped `blocked` on **two concrete
+structural conflicts that can only be resolved by editing headers outside the S2 file
+scope**. Neither is a "pick the closest API" guess; each is a reviewed mapping whose
+required injection point was never built into the S1/Task-011 headers. Per protocol
+worker rule 4 (stop, do not silently expand scope) and the fallback/unreviewed-dependency
+rules, S2 does not guess an API, add a no-op/stub, or edit accepted headers.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `853840ae5` | clean (0 files); `filecache2...baibaichen/filecache [ahead 3]` |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache` | `da28e83e8b3` | clean |
+
+`HEAD 853840ae5` = "Task 012: Port center-SCC headers (sub-attempt S1)". No pre-existing
+dirty files in either repository. No source file was created or modified in this attempt;
+the Velox worktree remains exactly at the clean S1 baseline (`git status --porcelain`
+empty). No staging/commit/amend/rebase/push. Only build-directory probe logs were written
+(under `<velox_build_dir>`, outside the worktree).
+
+## Files changed
+
+```text
+None. No .cpp was written and no CMake/header edited: S2 stopped blocked before any
+in-scope file could be made to compile, because compilation is impossible without header
+edits that lie outside the S2 file scope (see Blockers).
+```
+
+## Contract-derivation done before stopping
+
+```text
+Full CH source read and contract-derived: src/Interpreters/FileCache/FileSegment.cpp
+(1554 lines) and Metadata.cpp (1425 lines), plus their design docs
+(09-filecache-file-segment-design.md, 08-filecache-metadata-files-design.md) and the
+committed S1 headers. A complete CH-dependency -> velox-shim map was built (recon over
+velox/ch): throwFileCacheException, logger_useful no-op macros, ProfileEvents/
+CurrentMetrics no-op shims, ProfileEventTimeIncrement<Microseconds>, WriteBufferFrom-
+VeloxWriteFile/ReadBufferFromVeloxReadFile + CacheBuffer, FileCacheQueryIdScope::
+currentQueryId/getCallerId + folly::getOSThreadID, folly SCOPE_EXIT (no SCOPE_EXIT_SAFE),
+chassert (no UNUSED macro -> use (void)/[[maybe_unused]]), Guards.h lock types,
+FileCacheUtils::roundUpToMultiple, ShardedMap withShard/forEachShard, ThreadFromGlobalPool
+= FileCacheWorker (make_unique<ThreadFromGlobalPool>(workerPool, callable) + join()),
+DeltaCpuWallTimeStopWatch (velox/common/time/CpuWallTimer.h, confirmed present).
+
+CH-source-authority reconciliations noted for the .cpp (would have been applied):
+  - FileSegment::wait: committed S1 header is `State wait(size_t offset)` WITHOUT the
+    folly::CancellationToken the task Step 10 / 09-design illustrate. The accepted S1
+    header wins (CH-source-authority + accepted-receipt): port `wait` with the 1s-slice /
+    60s-deadline cv loop but no injected token / QueryStatus (background never calls
+    wait; query cancellation is simply not wired in this MVP). This is NOT a blocker.
+  - magic_enum::enum_name(KeyState/State) in Metadata.cpp -> explicit switch/name helper.
+  - toString(FileSegmentKind) defined in FileSegment.cpp via the switch helper (no
+    magic_enum), matching the S1 declaration in FileSegmentInfo.h.
+  - WriteBufferFromOwnString (getInfoForLogUnlocked) -> fmt/std::string assembly.
+  - timeInSeconds(system_clock::now()) -> duration_cast<seconds>(now().time_since_epoch()).
+  - Memory<> owned buffer (downloadImpl) -> std::optional<CacheBuffer> per S1 Metadata.h
+    downloadImpl signature and D3.
+```
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| Extract real project compile flags from `compile_commands.json` (FileCacheSettings.cpp TU) | 0 | `/tmp/ch_flags.txt` (flags string; `-std=gnu++20`, real includes/defines) |
+| Per-TU compile probe `IFileCachePriority.cpp` (`/usr/bin/c++` g++ 13.3, real flags, `-fsyntax-only`) | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2_IFileCachePriority_probe.log` |
+| Per-TU compile probe `LRUFileCachePriority.cpp` (same flags, `-fsyntax-only`) | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2_LRUFileCachePriority_probe.log` |
+| Copy of first-blocker evidence (EvictionCandidates.h header defect) | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2_evictioncandidates_header_defect.log` |
+
+No `-j` was passed. The probes reuse the exact include/define/std flags the project uses
+to compile an existing FileCache TU. No configure was re-run (S1's configure is still
+valid; the blocker is source/header-structural, not a configure failure). No link and no
+test were attempted (correct for S2 by design).
+
+## Acceptance evidence
+
+```text
+per-TU object compiles: 0 of the targeted TUs compile. Root cause is NOT the (unwritten)
+  FileSegment.cpp/Metadata.cpp — it is that the five Task-011 .cpp I must finish cannot
+  compile because a Task-011 HEADER outside the S2 modify-scope does not parse under the
+  project's real g++ 13.3 / gnu++20 toolchain, AND the .cpp cannot be written faithfully
+  because the accepted S1 headers lack two reviewed injection points.
+link/test: NOT attempted in S2 by design (the center SCC has no intermediate link step;
+  FileCache.cpp/QueryLimit.cpp are S3, tests+final green are S4).
+git diff --check: n/a (no changes). git status --porcelain empty; baseline 853840ae5
+  preserved.
+```
+
+## Worker review
+
+```text
+review subagent: not launched.
+findings: N/A — protocol rule 10 launches the read-only reviewer over a COMPLETED task-
+  owned diff after local validation. S2 produced no diff (blocked before any in-scope file
+  could compile); reviewing an empty/baseline tree yields no actionable finding. This
+  mirrors how the S1-precursor blocked attempt handled the same situation.
+resolutions: N/A
+unresolved findings: the two structural blockers below.
+```
+
+## Blockers
+
+```text
+S2 is blocked on structural gaps that can only be closed by editing files OUTSIDE the
+declared S2 file scope. Both are reviewed mappings; neither is an unreviewed-dependency
+"closest API" choice, and neither may be stubbed/no-op'd (forbidden fallback) or worked
+around by silently expanding scope (worker rule 4).
+
+BLOCKER B1 — Task-011 header `EvictionCandidates.h` does not compile under the project
+toolchain, and it is NOT in the S2 modify-scope.
+  First actionable error (task012_s2_IFileCachePriority_probe.log / _header_defect.log):
+    EvictionCandidates.h:125:32: error: 'class folly::F14FastSet<std::shared_ptr<
+      facebook::velox::ch::CacheUsage>>' has no member named 'merge'
+        (EvictionInfo::takeKeptAliveCacheUsage calls kept_alive_cache_usage.merge(...))
+    EvictionCandidates.h:157:16: error: expected identifier before 'this'
+        auto begin(this auto && self) { return self.candidates.begin(); }   // C++23
+    EvictionCandidates.h:158:14: error: expected identifier before 'this'
+        auto end(this auto&& self) { return self.candidates.end(); }        // C++23
+  Cause: the header uses C++23 "deducing this" (unsupported by g++ 13.3 even at
+  -std=gnu++23) and `folly::F14FastSet::merge` (absent in this folly). It has never been
+  compiled (Task 011 was "structural check only"; EvictionCandidates.cpp is absent from
+  compile_commands.json). Every Task-011 .cpp I must "finish" includes this header
+  transitively (IFileCachePriority.cpp:17 -> EvictionCandidates.h directly; LRU/SLRU/Split
+  reach it via FileCache.h -> ... ), so ALL five fail at the SAME first errors before any
+  of my SCC-type wiring is even exercised.
+  S1's own receipt flagged exactly these defects "for S2/S4 to resolve" — but S2's declared
+  file scope lists only the two new .cpp and the five existing .cpp, NOT EvictionCandidates.h
+  (a header). Fixing it (replace `this auto&&` deducing-this with const/non-const overloads;
+  replace F14FastSet::merge with an insert-range loop) is a small, safe header edit, but it
+  is a scope expansion the Controller must authorize.
+
+BLOCKER B2 — the accepted S1 headers lack two reviewed injection points that Metadata.cpp
+and FileSegment.cpp REQUIRE per the design's explicitly non-stubbable list; adding them
+means editing accepted S1 headers, also outside S2 scope.
+  (a) Background-download reserve timeout. CH Metadata.cpp:966 reads
+      Context::getGlobalContextInstance()->getReadSettings()
+        .filesystem_cache_settings.reserve_space_wait_lock_timeout_milliseconds
+      and passes it to FileSegment::reserve. The reviewed design
+      (08-filecache-metadata-files-design.md:471-473) mandates: "背景下载的 reserve timeout
+      不再从 global Context 取。把 reserve_space_wait_lock_timeout_milliseconds 从
+      FileCacheConfig 注入 CacheMetadata." BUT: FileCacheConfig (FileCacheSettings.h) has NO
+      reserve_space_wait_lock_timeout_milliseconds field, and CacheMetadata (Metadata.h) has
+      NO constructor parameter/member for it. There is no velox Context. So downloadImpl
+      cannot obtain the timeout without either (i) adding the config field + CacheMetadata
+      member (edits FileCacheSettings.h + Metadata.h, out of scope), or (ii) a hard-coded
+      literal / no-op (forbidden fallback + contradicts the reviewed injection contract).
+  (b) Opened-file-handle invalidation. CH FileSegment.cpp:801-802
+      (renameToIncludeSizeInNameUnlocked) and Metadata.cpp:1267-1268 (removeFileSegmentImpl)
+      call OpenedFileCache::instance().remove(path, flags [| O_DIRECT]). The reviewed design
+      (08:511-517 and 09-filecache-file-segment-design.md:646-653) mandates replacing the
+      singleton with "an injected opened-file cache invalidation callback/reference, 不创建
+      新的 singleton", and 08:571 lists "file removal + opened handle invalidation" among the
+      "第一阶段不允许 stub 的内容" (must NOT be stubbed in phase 1). BUT: OpenedFileCache is a
+      Task-013 Manager concept (3-consumers/02-filecache-manager-design.md:35,89,244 —
+      manager-owned), it does not exist in velox/ch yet, and neither FileSegment nor
+      CacheMetadata has any injected callback/reference member in the committed S1 headers.
+      So the invalidation cannot be expressed without (i) adding an injected
+      std::function/reference member to CacheMetadata (and reaching it from FileSegment)
+      — edits Metadata.h/FileSegment.h, out of scope — or (ii) dropping/omitting the call
+      (a stub explicitly forbidden by 08:571).
+
+Exact decision needed from the Controller (any one path unblocks a redispatch):
+  1. B1: authorize S2 to also edit the Task-011 header EvictionCandidates.h with the two
+     minimal portability fixes (deducing-this -> const/non-const overloads; F14FastSet::
+     merge -> insert-range), since the S1 receipt already scoped these to "S2/S4"; or move
+     them into a dedicated fix.
+  2. B2(a): authorize adding `reserve_space_wait_lock_timeout_milliseconds` (name TBD, e.g.
+     `reserveSpaceWaitLockTimeoutMs`) to FileCacheConfig AND a matching CacheMetadata
+     constructor parameter/member, and confirm FileCache passes it through at construction
+     — i.e. amend FileCacheSettings.h + Metadata.h (+ FileCache.h/FileCache.cpp wiring in
+     S3) within the S2/S3 scope.
+  3. B2(b): confirm the concrete opened-file invalidation injection shape for the SCC —
+     e.g. a `std::function<void(const std::string& path)>` (or an
+     `OpenedFileCache*`/reference) member on CacheMetadata, injected at construction and
+     reached by FileSegment through its cache/key-metadata — and authorize adding that
+     member to Metadata.h (and the reach path in FileSegment.h) in S2, OR explicitly rule
+     that opened-handle invalidation is deferred to Task 013 and that omitting the call in
+     the SCC is acceptable for now (which would relax 08:571's non-stub rule and must be
+     recorded as an amendment, since silently omitting it here is otherwise a forbidden
+     stub).
+
+First actionable evidence: task012_s2_IFileCachePriority_probe.log shows the B1 first
+errors verbatim. CH line anchors for B2: Metadata.cpp:966 (Context reserve timeout);
+FileSegment.cpp:801-802 and Metadata.cpp:1267-1268 (OpenedFileCache::instance().remove).
+Design anchors: 08:471-473, 08:511-517, 08:571; 09:646-653; 02-manager:35,89,244.
+```
+
+## Worker declaration
+
+```text
+Only Task 012 sub-attempt S2 was attempted.
+No source or CMake file was created or modified; the Velox worktree is at the clean S1
+baseline commit 853840ae5 (git status --porcelain empty). Only build-directory probe logs
+were written. Changes are unstaged and uncommitted (there are none).
+The worker stopped after writing this receipt.
+```
+
+## Controller unblock response 2 (S2 structural gaps)
+
+```text
+controller_status: blocker_resolved
+task: 012 S2
+resolved: 2026-07-20
+```
+
+## Resolution
+
+```text
+root cause:
+  Three structural gaps that need edits outside the raw S2 .cpp list. Controller
+  independently verified all three:
+  B1  EvictionCandidates.h (verbatim from CH) uses C++23 deducing-this
+      (this auto&&) + folly::F14FastSet::merge; g++13.3/gnu++20 rejects both.
+      Never compiled (Task 011 was structural-only). All five Task-011 .cpp
+      include it transitively and die at the same first errors.
+      Confirmed: EvictionCandidates.h:35,36 deducing-this; :3 (line 99 in CH)
+      .merge. Matches CH verbatim.
+  B2a Metadata.cpp:966 reads reserve_space_wait_lock_timeout_milliseconds from
+      global Context; design 08:471-473 mandates injecting it from FileCacheConfig
+      into CacheMetadata. S1 omitted the field/member. Confirmed CH:964-967 +
+      design 08:471-473.
+  B2b FileSegment.cpp:800-802 + Metadata.cpp:1263-1268 call
+      OpenedFileCache::instance().remove(path,flags) (idempotent) to invalidate
+      cached open handles; OpenedFileCache is a Task-013 Manager singleton absent
+      in the SCC phase. Confirmed CH call sites + OpenedFileCache.h:110 instance().
+
+decision:
+  B1 (Controller-authorized, executes a portability fix, CH semantics unchanged):
+     S2 may edit EvictionCandidates.h — deducing-this -> explicit const/non-const
+     begin/end overloads; F14FastSet::merge -> insert-range loop.
+  B2a (Controller-authorized, executes approved design 08:471-473):
+     add reserve_space_wait_lock_timeout_milliseconds to FileCacheConfig
+     (FileCacheSettings.h), a CacheMetadata ctor param+member (Metadata.h), and
+     the FileCache pass-through (FileCache.h/.cpp wired in S3). downloadImpl reads
+     the injected member, not a global Context.
+  B2b (USER decision 2026-07-20): do NOT inject a no-op (silent fallback).
+     At both call sites add TODO(Task 013) and THROW a not-supported/not-
+     implemented exception (VELOX_NYI or a FileCache not-implemented exception)
+     in place of OpenedFileCache::remove, so any path reaching opened-handle
+     invalidation fails loudly. Task 013 replaces the throw with the real
+     Manager-backed invalidation. Relaxes design 08:571 no-stub for THIS item
+     only; S4 tests do NOT exercise the rename/remove opened-handle paths.
+
+task update:
+  Recorded in the Task-012 amendment "### S2 unblock — three structural
+  resolutions (2026-07-20)". S2 file scope expands to include EvictionCandidates.h,
+  FileCacheSettings.h, and the Metadata.h/FileSegment.h injection points, plus
+  the two throw-not-implemented call sites.
+
+redispatch: yes — S2 with the expanded, enumerated scope.
+```
+
+## Worker attempt (S2 redispatch — FileSegment/Metadata + finish Task-011 cpp)
+
+```text
+worker_status: blocked
+environment_profile: home-chang
+task: 012 (sub-attempt S2 redispatch — FileSegment.cpp + Metadata.cpp + finish Task-011 .cpp; per-TU compile-only)
+```
+
+S2 (redispatched after the Controller resolved B1/B2a/B2b) delivers `.cpp` source with a per-TU
+COMPILE-ONLY check (no link, no test — that is S4). The three structural resolutions were applied
+exactly. All authorized deliverables are on disk and compile per-TU EXCEPT `Metadata.cpp`, which is
+blocked by ONE remaining structural gap (B3) outside the B1/B2a/B2b authorization: `CacheMetadata`
+cannot construct its download/cleanup `ThreadFromGlobalPool` workers without an injected
+`FileCacheWorkerPool &`, which the accepted S1 header does not carry and which does not exist in the
+SCC phase (it is manager-owned, Task 013). Per protocol worker rule 4 and the unreviewed-scope gate,
+S2 does not fabricate a global pool, add an unauthorized member, or force S3 `FileCache.cpp` wiring.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `853840ae5` | clean (0 files); `filecache2...baibaichen/filecache [ahead 3]` |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache` | `da28e83e8b3` | clean |
+
+`HEAD 853840ae5` = "Task 012: Port center-SCC headers (sub-attempt S1)". No pre-existing dirty
+files. No staging/commit/amend/rebase/push. Only build-directory probe logs were written under
+`<velox_build_dir>` (outside the worktree).
+
+## Files changed
+
+```text
+NEW:
+  velox/ch/Interpreters/FileCache/FileSegment.cpp            (ported from CH FileSegment.cpp, 1554 lines)
+  velox/ch/Interpreters/FileCache/Metadata.cpp              (ported from CH Metadata.cpp, 1425 lines)
+  velox/ch/Interpreters/FileCache/FileCacheErrnoException.h (FileCache-owned typed errno exception; getErrno()->int)
+MODIFIED (authorized structural fixes):
+  velox/ch/Interpreters/FileCache/EvictionCandidates.h      (B1: deducing-this -> const/non-const begin/end; F14FastSet::merge -> insert-range loop)
+  velox/ch/Interpreters/FileCache/FileCacheSettings.h       (B2a: reserveSpaceWaitLockTimeoutMilliseconds = 1000; operator== stays = default)
+  velox/ch/Interpreters/FileCache/Metadata.h                (B2a: CacheMetadata ctor param + const member reserve_space_wait_lock_timeout_milliseconds)
+MODIFIED (finish Task-011 .cpp against real headers):
+  velox/ch/Interpreters/FileCache/EvictionCandidates.cpp    (fmt: KeyState enum -> static_cast<int>)
+  velox/ch/Interpreters/FileCache/SLRUFileCachePriority.cpp (D9: CH-form SCOPE_EXIT({...}) -> folly SCOPE_EXIT { ... };)
+  velox/ch/Interpreters/FileCache/SplitFileCachePriority.cpp(C++23 std::to_underlying -> static_cast<underlying_type_t>)
+NOT MODIFIED:
+  CMakeLists.txt  — deliberately left unmodified. Adding Metadata.cpp to the existing
+    velox_ch_filecache source list would break that library's build on B3; the Step-15
+    velox_ch_filecache_core target also needs FileCache.cpp/QueryLimit.cpp (S3). Registration is
+    deferred to S3/S4 once B3 is resolved and the S3 .cpp exist. The S2 checkpoint is per-TU
+    compile-only (via the real project flags), not a library/link.
+```
+
+## Three structural resolutions applied (B1/B2a/B2b)
+
+```text
+B1  EvictionCandidates.h: `auto begin(this auto&& self)` / `auto end(this auto&&)` replaced by
+    explicit const + non-const begin/end overloads; `kept_alive_cache_usage.merge(other...)`
+    replaced by an insert-range loop that also clears the source (dedup by shared_ptr value; CH
+    semantics preserved). This alone made IFileCachePriority.cpp and LRUFileCachePriority.cpp
+    compile immediately (they die transitively on this header before B1).
+B2a FileCacheConfig gained `reserveSpaceWaitLockTimeoutMilliseconds` (default 1000, matching CH
+    `filesystem_cache_reserve_space_wait_lock_timeout_milliseconds`). CacheMetadata gained a ctor
+    parameter (default 1000) + a `const size_t reserve_space_wait_lock_timeout_milliseconds` member.
+    `downloadImpl` reads the injected MEMBER, never a global Context (there is no velox Context).
+B2b At BOTH opened-file-handle invalidation sites the OpenedFileCache::instance().remove calls are
+    NOT ported and NOT replaced by a no-op. Each site adds `// TODO(Task 013)` and THROWs `VELOX_NYI`.
+    IMPORTANT (from the review): both throws are placed OUTSIDE the surrounding best-effort/fs
+    try/catch(...) blocks so the not-implemented error propagates loudly instead of being swallowed:
+      - rename site (FileSegment.cpp renameToIncludeSizeInNameUnlocked): the fs::rename stays inside
+        the best-effort try; on success a `renamed` flag is set and the VELOX_NYI is raised after the
+        try. The mandatory S4 tests do NOT exercise the rename/remove opened-handle paths.
+      - removal site (Metadata.cpp removeFileSegmentImpl): the fs::remove stays inside the fs try;
+        a flag records that invalidation is required, and the VELOX_NYI is raised after the try
+        (before/around the erase).
+```
+
+## Other CH-source-authority reconciliations applied
+
+```text
+- FileCacheErrnoException (NEW header): FileCache-owned typed exception, `getErrno()->int`. Replaces
+  CH `ErrnoException` on the write path. FileSegment::write reconcile: catch FileCacheErrnoException
+  -> setDownloadFailed; if file exists: downloaded_size==0 -> fs::remove (CH cleanup branch restored
+  per review finding #1), else ENOSPC(28)/EDQUOT(122) -> read physical size, enforce
+  downloaded<=physical<=reserved, set downloaded=physical; rethrow ORIGINAL. catch(...) -> mark
+  failed + rethrow. NO reconcile-every-exception fallback. The production LocalWriteFile::append
+  reports short writes via VELOX_CHECK, not this typed exception, so no production PRODUCER exists yet
+  (documented pre-release gap; S4 injects the fault via a production WriteFile that commits a strict
+  prefix then throws FileCacheErrnoException).
+- Writer: CH `make_unique<WriteBufferFromFile>(path,0,flags)` -> make_shared<WriteBufferFromVeloxWriteFile>
+  over velox::LocalWriteFile(path, shouldCreateParentDirectories=false, shouldThrowOnFileAlreadyExists=false,
+  bufferIo=true), which seeks to end (append) and creates-if-absent; external-only writer (buffer size 0).
+- FileSegment::wait: accepted S1 header takes NO cancellation token, so the 1s-slice/60s-deadline cv
+  loop is ported without QueryStatus/CurrentThread (query cancellation is not wired in this MVP).
+- getCallerId -> FileCacheQueryIdScope::getCallerId(); toString(FileSegmentKind)/stateToString/keyStateName
+  -> explicit switch helpers (no magic_enum); timeInSeconds -> duration_cast<seconds>; OpenTelemetry
+  SpanHolder / ProfileEvents / CurrentMetrics / logging -> existing no-op shims.
+- removeFileSegmentImpl accesses `file_segment->queue_iterator` DIRECTLY (LockedKey is a friend of
+  FileSegment) instead of the public getQueueIterator(); getQueueIterator() re-locks the
+  non-recursive FileSegmentGuard we already hold and would self-deadlock (review finding #9 fixed).
+- downloadImpl: CH reused an owned Memory<>(DBMS_DEFAULT_BUFFER_SIZE) as the reader's external target;
+  the S1 signature is std::optional<CacheBuffer>& and the reader owns a MemoryPool-charged buffer
+  (SD9), so the port reads through the reader's OWN buffer (buf->set(nullptr,0)) and leaves `memory`
+  unused. Reviewer assessed this as a faithful, behavior-preserving reconciliation.
+- getCommonOrigin: CH getKeyMetadata skipped client-access tracking for the common-origin user via a
+  STATIC FileCache::getCommonOrigin(); the accepted S1 header makes it an INSTANCE method and
+  CacheMetadata has no FileCache back-reference, so the port skips only empty + internal ids and
+  documents that common-id filtering moves into the injected on_client_access callback (S3).
+- cancel-before-join preserved in CacheMetadata::shutdown (download_queue->cancel() +
+  cleanup_queue->cancel() precede all joins).
+- §3: KeyMetadata stays ordered std::map; MetadataBucket F14 with no escaping iterator/ref;
+  ShardedMap callbacks return by value (getOrCreateSharedOrigin copies the shared_ptr;
+  removeSharedOrigins mutates in place); LockedKey member order (key_metadata before lock) preserved.
+```
+
+## Commands and outcomes
+
+Per-TU COMPILE-ONLY probes with the project's real flags (extracted from `compile_commands.json`
+for the existing `FileCacheSettings.cpp` TU: `/usr/bin/c++` g++ 13.3, `-std=gnu++20`, real
+includes/defines), `-fsyntax-only`. No `-j`. No link, no test (correct for S2 by design). No
+configure re-run (S1's configure is still valid; the blocker is source/header-structural).
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| compile-only `IFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2b_IFileCachePriority.log` |
+| compile-only `LRUFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2b_LRUFileCachePriority.log` |
+| compile-only `SLRUFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2b_SLRUFileCachePriority.log` |
+| compile-only `SplitFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2b_SplitFileCachePriority.log` |
+| compile-only `EvictionCandidates.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2b_EvictionCandidates.log` |
+| compile-only `FileSegment.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2b_FileSegment.log` |
+| compile-only `Metadata.cpp` | 1 (B3 only) | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2b_Metadata.log` |
+
+## Acceptance evidence
+
+```text
+per-TU object compiles: 6 of 7 targeted TUs pass -fsyntax-only under the project's real g++ 13.3 /
+  gnu++20 flags (all 5 Task-011 .cpp + FileSegment.cpp). Metadata.cpp fails on EXACTLY ONE
+  structural gap (B3), 3 identical errors, all `'worker_pool' was not declared in this scope`
+  (Metadata.cpp:989, 991, 1031 in CacheMetadata::startup / setBackgroundDownloadThreads). Nothing
+  else in Metadata.cpp errors.
+link/test: NOT attempted in S2 by design (SCC has no intermediate link step; FileCache.cpp/
+  QueryLimit.cpp are S3; tests + final green are S4). No green link or test is claimed.
+git diff --check: n/a for new files; the modified files carry no whitespace errors.
+git status --short: exactly the 6 modified + 3 new FileCache files listed above; baseline 853840ae5
+  preserved; unstaged/uncommitted.
+```
+
+## Worker review
+
+```text
+review subagent: one read-only general-purpose reviewer over the S2 diff, given the CH source
+  (FileSegment.cpp, Metadata.cpp), the amendment + three resolutions, and the shim/header surface.
+  Asked for source-contract fidelity, errno/reconcile, cancel-before-join, B2b throw placement, B2a
+  injection, B1 correctness, §3, F14 invariant, over-port, and confirmation that B3 is the sole
+  compile blocker.
+findings (actionable, all resolved):
+  1. [high] B2b VELOX_NYI at BOTH sites was thrown INSIDE a swallowing try/catch(...), so in release
+     builds the not-implemented error was logged and suppressed (defeats "fail loudly").
+     RESOLVED: both throws moved OUTSIDE the try/catch — rename site guards on a `renamed` flag and
+     throws after the best-effort try; removal site records an `opened_handle_invalidation_required`
+     flag and throws after the fs try (around the erase). Re-probed: FileSegment.cpp still exit 0;
+     Metadata.cpp still only B3.
+  2. [med] FileSegment::write dropped CH's `downloaded_size==0 -> fs::remove` cleanup branch on the
+     errno path. RESOLVED: restored the full CH three-way structure (exists -> {==0 remove; else
+     ENOSPC/EDQUOT reconcile}).
+  3. [med] removeFileSegmentImpl called getQueueIterator() which re-locks the non-recursive
+     FileSegmentGuard already held -> self-deadlock. RESOLVED: access the friend member
+     file_segment->queue_iterator directly (as CH does), no relock.
+findings assessed as acceptable / not defects:
+  - downloadImpl reader-owned-buffer reconciliation (faithful; SD9 pool-charged buffer); dropping
+    CH's internalBuffer().empty() assert (acceptable since no external buffer is installed).
+  - getCommonOrigin instance-vs-static reconciliation: acceptable, with common-id filtering deferred
+    to the S3-injected callback (flagged for S3 verification).
+  - errno catch(Exception&)/catch(fs::filesystem_error&) collapse into catch(...): faithful
+    (mark-failed + rethrow original; no blanket reconcile).
+  - §3 / F14 no-escaping-reference invariant, state-machine transition order, cancel-before-join: OK.
+verdict: safety-critical items #1 (errno reconcile) and #5 (cancel-before-join) satisfied; #2 (B2b
+  throw placement) NOW satisfied after moving the throws outside the swallowing try/catch.
+unresolved findings: none of the review findings remain unresolved. The ONLY unresolved item is the
+  external structural blocker B3 below (needs a Controller/user decision, not a code fix).
+```
+
+## Blockers
+
+```text
+BLOCKER B3 — CacheMetadata cannot construct its background workers without an injected
+FileCacheWorkerPool, which is manager-owned (Task 013) and absent from the accepted S1 headers.
+
+First actionable error (task012_s2b_Metadata.log), Metadata.cpp:989, 991, 1031:
+    error: 'worker_pool' was not declared in this scope
+in CacheMetadata::startup and CacheMetadata::setBackgroundDownloadThreads, where CH does
+    download_threads.back()->thread = std::make_unique<ThreadFromGlobalPool>([this, thread]{ ... });
+    cleanup_thread = std::make_unique<ThreadFromGlobalPool>([this]{ cleanupThreadFunc(); });
+
+Root cause (structural, reviewed dependency, missing injection point — parallel to B2a/B2b):
+  - `ThreadFromGlobalPool` is aliased to `FileCacheWorker` (velox/ch/Common/ThreadPool.h:96), whose
+    ONLY non-default constructor is `FileCacheWorker(FileCacheWorkerPool & pool, Function function)`
+    (ThreadPool.h:61). There is no bare-callable constructor.
+  - The thread-pool design MANDATES injecting the shared pool at every ThreadFromGlobalPool site:
+    `port/1-dependencies/04-filecache-thread-pool-design.md:148-154` —
+    "所有原 ThreadFromGlobalPool(lambda) call sites 显式注入 shared pool:
+     std::make_unique<ThreadFromGlobalPool>(worker_pool, load_function);"
+    and 04:11 "GlobalThreadPool -> manager-owned FileCacheWorkerPool".
+  - The accepted S1 `Metadata.h` `CacheMetadata` has NO `FileCacheWorkerPool &` (or `*`) member and
+    no ctor parameter for one (grep of Metadata.h shows only download_threads / cleanup_thread /
+    download_threads_num). The accepted S1 `FileCache.h` also owns NO `FileCacheWorkerPool` — only a
+    `std::unique_ptr<ThreadPool> eviction_pool` (= FileCacheThreadPool) and BackgroundSchedulePool
+    task holders, both of which are ALSO injected a FileCacheWorkerPool by the manager. So there is
+    no worker pool anywhere in the SCC-phase headers to pass down to CacheMetadata.
+  - This is NOT one of the three resolved gaps (B1/B2a/B2b): B2a authorized only the reserve-timeout
+    ctor param+member on CacheMetadata; it did not authorize a worker-pool member. Adding one forces
+    FileCache (S3) to own/construct a FileCacheWorkerPool and pass it through — i.e. it forces
+    FileCache.cpp changes, which the S2 prompt explicitly says to leave as an S3 TODO ("Do NOT edit
+    FileCache.h beyond what B2a pass-through needs ... leave the FileCache-side wiring TODO for S3").
+
+Why not resolved in the .cpp: `startup`/`setBackgroundDownloadThreads`/`shutdown` bodies are the only
+Metadata.cpp code that needs the pool, and they cannot compile without naming a real
+`FileCacheWorkerPool &`. Fabricating a process-global pool singleton, hard-coding a pool, or marking
+the workers no-op are all forbidden (unreviewed-dependency / no-fallback / no-silent-stub rules). The
+manager-owned pool genuinely does not exist in the SCC phase — this is directly analogous to B2b's
+manager-owned OpenedFileCache, which the user resolved by decision.
+
+Exact decision needed from the Controller/user (any one path unblocks a redispatch of S2's Metadata.cpp):
+  (a) authorize adding a `FileCacheWorkerPool &` (or `FileCacheWorkerPool *`) member + ctor parameter
+      to `CacheMetadata` (Metadata.h), with FileCache passing it through at construction wired in S3
+      (FileCache.h/.cpp) — i.e. the exact B2a-style injection, extended to the worker pool; OR
+  (b) decide, per a B2b-style relaxation, that in the SCC phase CacheMetadata's background download +
+      cleanup workers are deferred to Task 013: e.g. `startup`/`setBackgroundDownloadThreads` throw
+      not-implemented (VELOX_NYI) in place of constructing threads, with the S4 tests not exercising
+      the background-download / delayed-cleanup worker paths (the "ShutdownJoinsWorkers" and
+      "queue pipeline" S4 cases would then need a decision on whether they run against real workers,
+      which requires (a)); OR
+  (c) provide/confirm an SCC-phase source for the FileCacheWorkerPool (e.g. a fixture-owned pool the
+      test injects) and the exact member/parameter shape to add.
+
+Reference anchors: velox/ch/Common/ThreadPool.h:61,96; Metadata.h CacheMetadata (no pool member);
+FileCache.h:334 (eviction_pool only); design 04:11,148-154; CH Metadata.cpp:1020-1028
+(startup construction), 1049-1096 (setBackgroundDownloadThreads).
+```
+
+## Worker declaration
+
+```text
+Only Task 012 sub-attempt S2 (redispatch) was attempted.
+Two new .cpp (FileSegment.cpp, Metadata.cpp) + one new header (FileCacheErrnoException.h) were
+created; three headers (EvictionCandidates.h, FileCacheSettings.h, Metadata.h) and three Task-011
+.cpp (EvictionCandidates.cpp, SLRUFileCachePriority.cpp, SplitFileCachePriority.cpp) were modified.
+The three structural resolutions (B1/B2a/B2b) were applied exactly; the read-only review's three
+actionable findings were all resolved and re-probed. 6 of 7 targeted TUs compile per-TU; Metadata.cpp
+is blocked solely by B3 (worker-pool injection, outside the B1/B2a/B2b authorization). CMakeLists was
+intentionally not modified (registration deferred to S3/S4 with B3 + the S3 .cpp). Link and test were
+not attempted (S4). Changes are unstaged and uncommitted. The worker stopped after writing this
+receipt.
+```
+
+## Controller unblock response 3 (B3 CacheMetadata worker pool)
+
+```text
+controller_status: blocker_resolved
+task: 012 S2
+resolved: 2026-07-20
+```
+
+## Resolution
+
+```text
+root cause:
+  Velox FileCacheWorker (Task 005) ctor requires FileCacheWorkerPool& (no implicit
+  global pool like CH ThreadFromGlobalPool), so CacheMetadata cannot start its
+  download/cleanup threads without an injected FileCacheWorkerPool&. S1 headers
+  omitted that injection point. Controller verified: CH CacheMetadata ctor
+  (Metadata.h:189) takes only background_download_threads_ (count), starts threads
+  via make_unique<ThreadFromGlobalPool>(...) at Metadata.cpp:1024,1027 — implicit
+  global pool. Velox FileCacheWorker ctor = (FileCacheWorkerPool&, Function)
+  (ThreadPool.h:61).
+
+decision (Controller-authorized; executes approved design
+  1-dependencies/04-filecache-thread-pool-design.md:11,45-48,142):
+  The single shared FileCacheWorkerPool is manager/FileCache-owned (NOT
+  CacheMetadata-owned). SCC phase: add a FileCacheWorkerPool& ctor parameter +
+  reference member to CacheMetadata (Metadata.h); CacheMetadata::startup binds its
+  download/cleanup FileCacheWorkers to it; FileCache owns the pool and passes it in
+  (FileCache.h/.cpp, wired in S3). Task 013 later moves pool ownership to the
+  Manager and injects it the same way (no CacheMetadata signature change at 013).
+
+work preservation:
+  The S2-redispatch working tree is PRESERVED (not reverted): 6 modified + 3 new
+  files already implement B1/B2a/B2b, FileSegment.cpp, FileCacheErrnoException.h,
+  and all five finished Task-011 .cpp (6 of 7 TUs compile-only clean). The next
+  worker continues on this working tree and only needs to add the B3 injection so
+  Metadata.cpp compiles.
+
+redispatch: yes — S2 finish, B3 injection only, on the existing working tree.
+```
+
+## Worker attempt (S2 finish — B3 worker pool injection)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 012
+```
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `853840ae52ca70f17eb9669f237b8fe5eed3d017` | dirty (prior S2 work preserved) |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache2` | `eb500d41e2a2a0e99736d51bc7c9ae5597a3a1b3` | receipt append only |
+
+Preserved pre-existing working-tree changes (not reverted): EvictionCandidates.{h,cpp},
+FileCacheSettings.h, Metadata.h, SLRUFileCachePriority.cpp, SplitFileCachePriority.cpp,
+FileCacheErrnoException.h, FileSegment.cpp, Metadata.cpp.
+
+## Files changed (this attempt — B3 only)
+
+```text
+velox/ch/Interpreters/FileCache/Metadata.h
+velox/ch/Interpreters/FileCache/Metadata.cpp
+```
+
+## B3 edit
+
+CH `CacheMetadata` starts its download/cleanup threads with `ThreadFromGlobalPool`
+(implicit global pool). In Velox `ThreadFromGlobalPool` = `FileCacheWorker`, whose
+ctor is `FileCacheWorker(FileCacheWorkerPool &, Function)` (Task 005,
+`velox/ch/Common/ThreadPool.h`), so `CacheMetadata` needs an explicit
+`FileCacheWorkerPool &`. Authorized by Task 012 amendment "S2 unblock 2 — B3" and
+approved design `1-dependencies/04-filecache-thread-pool-design.md:11,45-48,142`.
+
+- `Metadata.h`: added a `FileCacheWorkerPool & worker_pool_` ctor parameter to
+  `CacheMetadata` (inserted before the trailing defaulted
+  `reserve_space_wait_lock_timeout_milliseconds_`), and a
+  `FileCacheWorkerPool & worker_pool;` reference member placed right after
+  `write_cache_per_user_directory` (matching member-init order, no `-Wreorder`).
+- `Metadata.cpp`: added the matching ctor parameter and the
+  `, worker_pool(worker_pool_)` member initializer.
+- `startup` and `setBackgroundDownloadThreads` already bound their
+  `FileCacheWorker`s to `worker_pool` (mirroring CH `Metadata.cpp:1024,1027`) and
+  now compile against the new member. `shutdown` cancel-before-join
+  (`Metadata.cpp:998-1007`) is unchanged.
+- `CacheMetadata` does NOT own the pool (reference member, not value/unique_ptr).
+  The `FileCache`-side ownership + pass-through at construction is S3; no
+  `FileCache.cpp` was written. Metadata.h already includes `ThreadPool.h`, which
+  forward-declares `FileCacheWorkerPool`, so no new forward decl was needed.
+
+## Commands and outcomes (per-TU COMPILE-ONLY, `-fsyntax-only`, no link, no `-j`)
+
+Flags derived from `compile_commands.json` (`FileCacheKey.cpp` entry), `-o`/`-c`
+stripped, `-fsyntax-only -c <src>` appended. Run from
+`/home/chang/OpenSource/velox/cmake-build-debug-gcc13`.
+
+| TU | Exit code | Log |
+|---|---:|---|
+| `EvictionCandidates.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2c_EvictionCandidates.log` |
+| `FileSegment.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2c_FileSegment.log` |
+| `Metadata.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2c_Metadata.log` |
+| `IFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2c_IFileCachePriority.log` |
+| `LRUFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2c_LRUFileCachePriority.log` |
+| `SLRUFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2c_SLRUFileCachePriority.log` |
+| `SplitFileCachePriority.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s2c_SplitFileCachePriority.log` |
+
+All 7 target TUs compile-only clean (exit 0). `Metadata.cpp` (the B3 blocker) now
+passes: `grep -c "error:" task012_s2c_Metadata.log` = 0, no `-Wreorder`/"will be
+initialized after" warning. Link/test NOT attempted by design — the full
+library/test link is S4, and `FileCache.cpp`/`QueryLimit.cpp` are S3.
+
+## Worker review
+
+```text
+review subagent: general-purpose, read-only, B3 delta (Metadata.h/.cpp) + design anchors
+findings: none — injection correct; member-init order matches declaration order (no -Wreorder);
+          worker_pool is a reference member (CacheMetadata does not own the pool);
+          shutdown cancel-before-join intact; no over-port; only authorized dependency FileCacheWorkerPool.
+resolutions: none required
+unresolved findings: none
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 012 (S2 finish — B3) was attempted.
+Changes are unstaged and uncommitted; all prior working-tree changes preserved.
+The worker stopped after writing this receipt.
+```
+
+## Controller review (S2 finish, accepted)
+
+```text
+controller_status: accepted (sub-attempt S2; stage gate remains S4)
+environment_profile: home-chang
+task: 012 S2
+reviewed: 2026-07-20
+```
+
+## Review evidence (S2)
+
+```text
+scope: 6 modified + 3 new files (EvictionCandidates.{h,cpp}, FileCacheSettings.h,
+  Metadata.h, SLRU/Split .cpp; new FileSegment.cpp, Metadata.cpp,
+  FileCacheErrnoException.h). git diff --check clean.
+
+compile-only (independently verified logs): all 7 target TUs -fsyntax-only exit 0
+  (task012_s2c_*.log), incl. Metadata.cpp 0 errors. No link/test claimed (SCC has
+  no intermediate link step; green gate is S4). FileCache.cpp/QueryLimit.cpp are S3.
+
+source-contract fidelity (independent Controller review subagent) — CLEAN, 8/8:
+  1. errno reconcile: FileSegment::write catches FileCacheErrnoException first,
+     reconciles physical<=... only on ENOSPC/EDQUOT, `throw;` rethrows the ORIGINAL
+     (not wrapped), generic catch(...) marks failed + rethrows, no reconcile-every-
+     exception fallback; getErrno()->int noexcept. Faithful to CH:501-539.
+  2. B2b throw (CRITICAL, prior-round swallow bug fixed): rename site
+     (FileSegment.cpp:723-727) and removal site (Metadata.cpp:1250-1253) raise
+     VELOX_NYI OUTSIDE the best-effort try/catch — not swallowed; OpenedFileCache
+     not ported; no no-op.
+  3. B2a: downloadImpl reads injected reserve_space_wait_lock_timeout_milliseconds
+     member (Metadata.cpp:935 / Metadata.h:304); no residual global Context.
+  4. B3: CacheMetadata ctor takes FileCacheWorkerPool& (Metadata.h:229), reference
+     member (301, not owned); startup binds workers to it.
+  5. cancel-before-join: shutdown cancels queues (Metadata.cpp:1000-1001) then
+     joins (1003-1009). Matches CH:1032-1042.
+  6. §3: KeyMetadata private std::map; MetadataBucket F14 no-escape; LockedKey
+     member order key_metadata-before-lock; ShardedMap withShard copy-out.
+  7. B1: deducing-this -> const/non-const begin/end; F14FastSet::merge -> insert-
+     range loop preserving shared_ptr dedup.
+  8. over/under-port: no OpenedFileCache singleton; no overcommit/cloud/system-table.
+
+advisory (not a defect, forwarded to Task 013): at the removal site the port
+  erases (Metadata.cpp:1249-1250) before the VELOX_NYI, whereas CH erases at the
+  final return. Harmless in the SCC phase (the throw aborts anyway); Task 013 must
+  keep erase + opened-handle invalidation coupled when it replaces the throw with
+  real Manager-backed invalidation.
+
+unresolved findings: None for S2.
+```
+
+## Commits (S2)
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `dd7eaf43f Task 012: Port FileSegment/Metadata + finish priority .cpp (sub-attempt S2)` |
