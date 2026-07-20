@@ -785,3 +785,179 @@ None. Task 015 perf extension accepted.
 |---|---|
 | `/home/chang/OpenSource/velox` | (this acceptance — see Velox `Task 015:` perf commit) |
 | `/home/chang/SourceCode/ClickHouse` | receipt = this commit |
+
+## Perf 扩展 2 (TPCH AbBenchmark)
+
+### Worker attempt 1
+
+```text
+worker_status: blocked
+environment_profile: home-chang
+task: 015 (TPCH AbBenchmark extension)
+```
+
+### Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `8958b2042` | clean (no changes) |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache2` | `4d63850e0e0` | clean before receipt append |
+
+Reference read read-only via `git show ch-filecache:<path>` (branch not checked out).
+
+### Blocker: `--input_source=filecache` requires an unreviewed production wiring change
+
+The A/B benchmark itself ports cleanly, but the **`filecache` engine cannot route
+any read** in our `filecache2` tree without modifying a production file, and the
+required modification is an unreviewed design decision. Per EXECUTION_PROTOCOL
+"Unreviewed dependency gate" and this task's hard rule ("Modify ONLY
+`velox/ch/benchmarks/**`; do NOT touch production code"), I stopped instead of
+inventing a mapping or expanding scope.
+
+Root cause — how the reference makes `--input_source=filecache` work:
+
+1. `AbBenchmarkMain.cpp` (reference) only **installs a process-wide FileCache
+   singleton** (`ch::FileCache::setInstance`) and sets `--cache_gb=0`. It does
+   **not** itself construct any `FileCacheBufferedInput`.
+2. The actual read-path routing lives in a **production file** on `ch-filecache`:
+   `velox/connectors/hive/HiveConnectorUtil.cpp` `createBufferedInput` was
+   modified to add a first branch:
+   ```cpp
+   if (auto* fileCache = ch::FileCache::getInstance()) {
+     VELOX_CHECK_NULL(connectorQueryCtx->cache(), ...);
+     return std::make_unique<ch::FileCacheBufferedInput>(
+         fileHandle.file, readerOpts.memoryPool(), fileCache,
+         ch::FileCacheKey::fromPath(fileHandle.file->getName()),
+         ch::FileCache::getCommonOrigin(),
+         ch::CreateFileSegmentSettings{}, std::move(ioStatistics));
+   }
+   ```
+3. Our `filecache2` `velox/connectors/hive/HiveConnectorUtil.cpp`
+   `createBufferedInput` has **zero** FileCache references
+   (`grep -c FileCache … = 0`). It knows only `CachedBufferedInput` (cbi),
+   plain `BufferedInput`, and `DirectBufferedInput`. TPCH TableScan reads
+   therefore never reach our `velox/ch/Disks/IO/FileCacheBufferedInput`.
+
+So `--input_source=filecache` in a ported benchmark would install a FileCache
+that **nothing ever reads through** — the benchmark would silently run direct
+reads and mislabel them "filecache" (a false-green result the protocol forbids).
+Making it real requires editing production `HiveConnectorUtil.cpp`, which is out
+of the declared `velox/ch/benchmarks/**` scope.
+
+### Why this is an unreviewed-dependency STOP, not a "minimal integration fix"
+
+The reference wiring assumes a **bare global singleton** FileCache
+(`ch::FileCache::getInstance()` + `ch::FileCache::getCommonOrigin()`). Our
+FileCache is **Manager-owned** and our contract (adaptation point b) explicitly
+**forbids bare `ch::FileCache::getInstance`**. Our `FileCacheManager` exposes
+`getInstance()/instance()/getDefault()` (returns `FileCachePtr`), and our
+`FileCacheBufferedInput` ctor signature differs (it takes
+`FileCacheOriginInfo origin`, `FileCacheReadOptions`, `FileCacheRequestContext`,
+and a second `velox::IoStats`, not the reference's positional
+`getCommonOrigin()`/`CreateFileSegmentSettings{}` form).
+
+Porting the connector branch therefore requires deciding, with no approved
+mapping:
+
+- How a Manager-owned FileCache is exposed to `HiveConnectorUtil` at read time
+  (via `FileCacheManager::getInstance()->getDefault()`? a new accessor?), since
+  the connector must not construct or bare-`getInstance` a `FileCache`.
+- What `FileCacheOriginInfo origin` the connector passes (the reference's
+  `ch::FileCache::getCommonOrigin()` is a bare static that our Manager-owned
+  design may not expose identically).
+- How to populate our ctor's `FileCacheReadOptions` / `FileCacheRequestContext`
+  / second `IoStats` from the connector's `readerOpts`/`ioStats`.
+- The mutual-exclusion invariant with `connectorQueryCtx->cache()`
+  (AsyncDataCache) in our tree.
+
+These are production-integration design decisions (a Task-016/017-class read-path
+seam), not a localized benchmark bug. The protocol requires stopping and asking
+for user review rather than choosing a "closest" API or adding the branch.
+
+### What CAN be ported cleanly today (not done, pending the decision)
+
+- `direct` engine: needs no FileCache; ports near-verbatim.
+- `cbi` engine: native `AsyncDataCache` via `--cache_gb>0`; ports near-verbatim.
+- The `AbBenchmarkBase` sweep/CSV harness and a TPCH `numQueries`/`buildPlan`
+  subclass (via `TpchQueryBuilder`): port cleanly.
+- Only the `filecache` third engine is blocked, and it is the entire point of
+  the extension, so a partial two-engine deliverable would not satisfy the
+  three-engine acceptance gate.
+
+### Decision needed from the user
+
+Approve (and record in the design + Task-015 amendment) the production wiring for
+routing Hive-connector reads to our Manager-owned `FileCacheBufferedInput`:
+which accessor exposes the Manager's `FileCachePtr` to `createBufferedInput`,
+what `origin` / `FileCacheReadOptions` / `FileCacheRequestContext` / `IoStats`
+the connector supplies, and the AsyncDataCache mutual-exclusion rule. Once
+approved, redispatch this extension; the benchmark port itself is
+straightforward on top of that seam.
+
+### Acceptance evidence (as far as reached)
+
+```text
+production diff: EMPTY (git status --short clean; no files modified)
+HiveConnectorUtil.cpp FileCache refs (our tree): 0
+build/smoke gates: not run — blocked before any file was created
+split=1 requirement: understood (--num_splits_per_file gflag, QueryBenchmarkBase.cpp:58 default 10);
+  would be passed on every TPCH command once unblocked
+```
+
+### Blockers
+
+```text
+Routing `--input_source=filecache` reads to our FileCacheBufferedInput requires
+modifying production velox/connectors/hive/HiveConnectorUtil.cpp
+(createBufferedInput), which is (1) outside the declared velox/ch/benchmarks/**
+scope and (2) an unreviewed design decision (Manager-owned FileCache exposure +
+origin/options/context mapping + AsyncDataCache mutual exclusion). Stopped per
+the Unreviewed-dependency gate. No production or benchmark file was changed.
+```
+
+### Worker declaration
+
+```text
+Only the Task 015 TPCH-extension was attempted.
+No files were changed; the tree is clean.
+The worker stopped after writing this receipt.
+```
+
+## Controller unblock response — Perf 扩展 2 (TPCH) : waiting_for_user / parked
+
+```text
+controller_status: waiting_for_user
+task: 015-tpch
+```
+
+## Resolution
+
+```text
+root cause (worker 正确 blocked, Controller 核实属实):
+  要让 TPCH 查询真的走我们的 FileCache, 必须让 Velox Hive 连接器的
+  createBufferedInput (velox/connectors/hive/HiveConnectorUtil.cpp, 所有 TPCH 读的
+  必经入口) 选择 FileCacheBufferedInput。我们 filecache2 的这个生产函数里 FileCache
+  字样为 0 (grep 确认) —— TPCH 读到不了我们的 FileCache。
+  ch-filecache 那条线是靠直改此生产函数 + 塞裸单例 `if(ch::FileCache::getInstance())`
+  接的 (HiveConnectorUtil.cpp:666)；那正是我们 Manager-owned 设计明确禁止的裸单例,
+  且我们的 FileCacheBufferedInput ctor 签名不同。硬接需要一整套未 review 的读路径
+  集成决策 (Manager 如何把 FileCachePtr 暴露给连接器、origin/options/context/IoStats、
+  与 AsyncDataCache 的互斥)。不接就编译 benchmark 会静默跑成 direct 读却标称 filecache
+  (假绿)。故 worker 未硬来、未造裸单例、未假绿, 正确 blocked。生产零改动, 树干净。
+
+task 归属核查 (Controller):
+  连接器集成在规划里属 Task 018 (Gluten Host Integration): 经
+  GlutenBufferedInputBuilder::create 选择 FileCache, 且经 FileCacheManager —— 不像
+  ch-filecache 那样直改 Velox 主干连接器塞裸单例。这更对齐"不污染 velox 主干 + 经
+  Manager"的原则。也就是说: 纯 Velox (无 Gluten) 环境下让 TPCH 读走 fcbi, 当前架构
+  没有入口, 入口设计在 Task 018 的 Gluten Builder 里。
+
+decision (user 待定):
+  TPCH 三引擎端到端对比依赖连接器集成 (Task 018 / 或新立纯-Velox 集成 task)。用户
+  当前优先做 Task 017 (可观测性: 点亮 ProfileEvents/CurrentMetrics 以便性能测试能收集
+  真实缓存指标 + 真日志 + 查询取消 + F-CALLERID + SD8)。TPCH 扩展 PARKED, 待连接器
+  集成路径确定 (018 或独立 task) 后再解冻。已移植的 AbBenchmark cbi/direct 两引擎骨架
+  可留待那时接上 filecache 引擎。
+
+redispatch same task: no (parked; 转 Task 017)
+```
