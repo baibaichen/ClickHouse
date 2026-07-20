@@ -197,7 +197,17 @@ Current task:
 - Task 013 is accepted with 42/42 focused tests in mono and non-mono.
 - Task 014 is accepted with 24/24 focused tests in mono and non-mono, including
   corrected background reader handoff.
-- The mandatory Tasks 003-014 full review is the next action.
+- The mandatory Tasks 003-014 full review is complete. Its artifacts are:
+    `port/task/fullreview/cross-profile/2/003-014-consumer-contract-ledger.md`;
+    `port/task/fullreview/cross-profile/2/003-014-full-review-result.md`;
+    `port/task/fullreview/cross-profile/2/014-senior-review-corrective-result.md`.
+- The review proposes corrective reopen work:
+    Task 011 for cursor/SLRU test-plane gaps;
+    Task 012 for direct-IO background alignment, handoff-race evidence, and
+    SCC-owned queue-pipeline coverage;
+    Task 014 for the direct-IO/background integration test.
+- No affected numbered task or receipt has yet been marked
+  `reopened_by_contract_audit`; wait for the user's remediation decision.
 - Task 015 is prohibited.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -207,13 +217,16 @@ Resume procedure:
 2. The approved Task-011/012/013/014 authoring amendments and structure
    deviation registrations are written in place (done by the Task-1
    authoring wave).
-3. Dispatch no Task-015 Worker.
-4. Run the mandatory Tasks 003-014 whole-port review.
-5. Continue only with zero unresolved findings and explicit user approval.
+3. Review the Tasks 003-014 full-review findings with the user.
+4. If accepted, amend the affected tasks/receipts and execute the corrective
+   work before rerunning the review gate.
+5. Continue to Task 015 only with zero unresolved findings and explicit user
+   approval.
 
 Continuous execution target:
 
-- Current stop condition: mandatory Tasks 003-014 full review.
+- Current stop condition: full-review findings await the user's remediation
+  decision.
 - Task 015 remains prohibited until the post-Task-014 full review.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.

@@ -7,11 +7,10 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Task 014 buffered input accepted
-Repair before resume: none
-Then dispatch:         mandatory Tasks 003-014 full review only
-Task 015 is prohibited until that review has zero unresolved findings and the
-  user explicitly approves.
+Current state:        mandatory Tasks 003-014 full review complete
+Repair before resume: Tasks 011 and 012/014 corrections proposed
+Then dispatch:         no Worker; await user remediation decision
+Task 015 is prohibited: the review has five unresolved findings.
 Tasks 011-014 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, and false-green
   probe requirements.
