@@ -187,6 +187,39 @@ environment_profile: home-chang
   among its own scope, wire the real OpenedFileCache invalidation into the two
   no-op+TODO seams left by B7, and take over ownership of the worker pool /
   timekeeper / scheduler / commonUserId that FileCache holds in the SCC phase.
+
+- **PAUSE POINT (2026-07-20, user-requested before session compaction).**
+  State is clean: both repos have no dirty files; Velox HEAD `13b2dc63d`
+  (Task 012 S4), ClickHouse HEAD is the latest `Task 013:` amendment commit
+  (`f2e4f82a27c` "Task 013: Fix D1/D2/D3 contracts CH-aligned", resolve exact
+  with `git log -1 --oneline`). Nothing is pushed (by user instruction — all
+  work stays on the local `ch-filecache2` / `filecache2` branches).
+  - Task 013 IMPLEMENTATION HAS NOT STARTED. Only its task file is fully
+    amended and ready: `port/task/013-filecache-factory-manager.md` carries
+    "### Post-Task-012 amendment: SCC-phase state Task 013 must reconcile" and
+    "### D1/D2/D3 CH-aligned contracts (2026-07-20, ...)". The receipt
+    `port/task/result/013-filecache-factory-manager-result.md` has the worker's
+    first (blocked) attempt and "## Controller unblock response 1 (D1/D2/D3
+    CH-aligned)". The D1/D2/D3 contracts are fixed; the next worker just executes.
+  - The Task-013 worker was dispatched then STOPPED for the pause; it wrote no
+    Velox source (working tree verified clean at `13b2dc63d`).
+  - RESUME = dispatch one fresh Task-013 Worker against the amended task
+    (D1 OpenedFileCache port of CH src/IO/OpenedFileCache.h with a
+    shared_ptr<velox::ReadFile> handle, Manager-owned; D2 inject OpenedFileCache&
+    and wire the two B7 seams; D3 move worker_pool/timekeeper/scheduler/
+    commonUserId ownership FileCache->Manager by reference; both
+    velox_ch_filecache_manager_test and velox_ch_filecache_core_scc_test must be
+    green). Then Controller-verify + commit, then Task 014, then the mandatory
+    Tasks 003-014 whole-port review (STOP for explicit user approval before
+    Task 015).
+  - Deferred / parked (do NOT lose these): Task 006 F-CALLERID (post/pre-release
+    diagnostic); SD8 scheduler recursive_mutex (later task, controller suggests
+    off-lock continuation); Task 004 StatusFile crash diagnostics R3 (pre-release
+    blocker); Task 008 sipHash CH-oracle + malformed-char R4/R5 (post-019).
+  - Execution rules still in force: worker/controller file-only protocol; only
+    the Controller commits (user pre-authorized local commits, NEVER push);
+    no -j; per-task logs under the velox build dir; big .cpp authored
+    incrementally to avoid output-limit interruptions.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
