@@ -1159,3 +1159,486 @@ unresolved findings: None for S2.
 | Repository | Commit |
 |---|---|
 | `/home/chang/OpenSource/velox` | `dd7eaf43f Task 012: Port FileSegment/Metadata + finish priority .cpp (sub-attempt S2)` |
+
+## Worker attempt (S3 FileCache/QueryLimit)
+
+```text
+worker_status: blocked
+environment_profile: home-chang
+task: 012 (sub-attempt S3 — FileCache.cpp + QueryLimit.cpp; per-TU COMPILE-ONLY, no link/test by design)
+```
+
+S3 was to CREATE `FileCache.cpp` and `QueryLimit.cpp` with a per-TU COMPILE-ONLY check
+(no link, no test — that is S4), MAY minimally MODIFY `FileCache.h`/`QueryLimit.h`/
+`CMakeLists.txt` to complete the S2-deferred FileCache-side wiring (own the
+`FileCacheWorkerPool`, pass it + the reserve timeout into `CacheMetadata`, resolve
+S2 `TODO(S3)` markers). `QueryLimit.cpp` is delivered and compiles per-TU clean.
+`FileCache.cpp` is BLOCKED on structural gaps that require edits OUTSIDE the S3 file
+scope and/or a construction-time dependency-injection decision (commonUserId,
+scheduler/timekeeper ownership) — parallel to the S2 B2a/B3 injection-point gaps.
+Per protocol worker rule 4 and the unreviewed-dependency / no-fallback rules, S3 does
+not guess a mapping, add a no-op/stub shim for an unreviewed dependency, invent a
+commonUserId source, or silently change the public `FileCache(cache_name, settings)`
+constructor.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `dd7eaf43f` | clean (0 files); `filecache2...baibaichen/filecache [ahead 4]` |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache` | `da28e83e8b3` | clean (receipt append only) |
+
+`HEAD dd7eaf43f` = "Task 012: Port FileSegment/Metadata + finish priority .cpp
+(sub-attempt S2)". No pre-existing dirty files. No staging/commit/amend/rebase/push.
+Only build-directory probe logs were written under `<velox_build_dir>` (outside the
+worktree). The single new source `QueryLimit.cpp` is untracked; nothing else changed.
+
+## Files changed
+
+```text
+NEW (delivered, compiles per-TU clean):
+  velox/ch/Interpreters/FileCache/QueryLimit.cpp   (ported from CH QueryLimit.cpp, ~185 lines)
+NOT written (blocked):
+  velox/ch/Interpreters/FileCache/FileCache.cpp    (CH FileCache.cpp = 3248 lines; see Blockers)
+  FileCache.h wiring (own pool/scheduler/commonUserId) — depends on the B5 decision
+  CMakeLists.txt registration — deferred to S4 with FileCache.cpp present
+```
+
+## QueryLimit.cpp — contract fidelity + compile evidence
+
+```text
+CH QueryLimit.cpp (170 lines) ported faithfully. Reviewed mappings applied exactly:
+  - CurrentThread query-init  -> FileCacheQueryIdScope::currentQueryId() (non-empty == initialized).
+  - FilesystemCacheSettings   -> FileCacheReadOptions (maxDownloadSizePerQuery,
+                                 !skipDownloadIfExceedsPerQueryCacheWriteLimit — one-hot negation preserved).
+  - throw Exception(LOGICAL_ERROR, fmt, ...) -> throwFileCacheException(fmt, ..., key.toString()).
+  - std::unordered_map -> folly::F14FastMap (in the accepted S1 header).
+TOCTOU discipline preserved byte-for-byte: removeQueryContext resets this holder's
+  reference UNDER query_map_mutex before the use_count()==1 decision; doomed context is
+  moved out and destroyed by ~QueryContextHolder AFTER the cache write lock scope ends.
+Per-TU compile: exit 0, 0 errors (only the expected TSA -Wattributes / -Wchanges-meaning
+  warnings shared by every FileCache TU under g++ 13.3 / gnu++20).
+```
+
+## Commands and outcomes (per-TU COMPILE-ONLY, `-fsyntax-only`, no link, no `-j`)
+
+Flags extracted from `compile_commands.json` (the existing `FileCacheKey.cpp` TU:
+`/usr/bin/c++` g++ 13.3, `-std=gnu++20`, real project includes/defines), with
+`-c`/`-o` stripped and `-fsyntax-only -c <src>` appended. Saved to
+`<velox_build_dir>/task012_flags.txt`. No configure re-run (S2's configure is still
+valid; the blocker is source/header-structural, not a configure failure).
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| compile-only `QueryLimit.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s3_QueryLimit.log` |
+| gap probe: DimensionalMetrics/HistogramMetrics/CurrentMetrics::get/FailPointInjection absence | 1 (expected) | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s3_gap_probe.log` |
+
+## Acceptance evidence
+
+```text
+per-TU object compiles: QueryLimit.cpp passes -fsyntax-only (exit 0, 0 errors).
+  FileCache.cpp NOT written -> blocked before compile (structural gaps below).
+link/test: NOT attempted in S3 by design (SCC has no intermediate link step; the green
+  compile+link+test gate is S4). No green link or test is claimed.
+git diff --check: n/a (QueryLimit.cpp is new/untracked). git status --short shows exactly
+  one new file (QueryLimit.cpp); baseline dd7eaf43f preserved; unstaged/uncommitted.
+```
+
+## Contract-derivation done before stopping (FileCache.cpp)
+
+```text
+Full CH FileCache.cpp (3248 lines) + FileCache.h read and contract-derived against the
+accepted S1/S2 velox headers. A complete CH-dependency -> velox map was built. Of the
+FileCache.cpp dependency surface, these are RESOLVABLE in the S3 scope with already-
+reviewed mappings (would be applied in the redispatch, NOT blockers):
+  - ConcurrentBoundedQueue<T> -> FileCacheBoundedQueue<T> (infra matrix MPMC-queue mapping;
+    push/tryPush(timeoutMs)/pop/tryPop/finish all present and API-compatible).
+  - randomSeed()/pcg64_fast -> folly::Random (D-011-2, as in FileCacheKey.cpp/LRU .cpp).
+  - WriteBufferFromOwnString (Stat::toString, on_cannot_evict message) -> fmt assembly
+    (D-011-4, as in EvictionCandidates.cpp).
+  - parse<UInt64>/tryParse<UInt64> (loadMetadata name parsing) -> std::from_chars / folly::tryTo.
+  - getKeyTypePrefix / OriginInfo / FileSegmentKeyType -> existing velox leaf types.
+  - Stopwatch (D11) at freeSpaceRatioKeepingThreadFunc/backgroundCleanupTaskFunc: single
+    end-of-scope wall snapshot via DeltaCpuWallTimeStopWatch (elapsed().wallNanos/1e6);
+    drop CH `.stop()` (only feeds a no-op ProfileEvents::increment) — within D11's
+    call-site-limited surface.
+  - callOnce/OnceFlag -> std::call_once/std::once_flag (D8; header already declares it).
+  - ProfileEvents::increment / CurrentMetrics::Increment/add/sub -> existing no-op shims
+    (all enumerators FileCache.cpp needs on the non-metric path are present).
+  - eviction_pool: CH ctor takes CurrentMetrics thread enumerators; velox `ThreadPool`
+    = FileCacheThreadPool ctor is (workerPool, maxThreads, queueSize) — MUST use the velox
+    ctor anyway, which ELIMINATES the CurrentMetrics::FilesystemCacheEvictionThreads/
+    Active/Scheduled enumerators and CurrentMetrics::get from the port entirely.
+  - Prometheus DimensionalMetrics/HistogramMetrics registration block + the per-user
+    metric block in onSegmentEvicted are in the task's Explicit Exclusions
+    ("Prometheus/custom metrics (keep no-op shims)"); dropping them removes the only
+    references to those (nonexistent) shims. onSegmentEvicted keeps the two no-op
+    ProfileEvents::increment calls.
+  - fiu_fail / fiu_do_on / FailPointInjection::pauseFailPoint (debug-only test hooks):
+    map to no-op at the call site (FailPoint.h intent; the mandatory S4 tests do not
+    exercise these injection points), consistent with "metrics/debug no-op shims".
+```
+
+## Blockers
+
+```text
+S3 is blocked on FileCache.cpp by TWO structural gaps that need edits/decisions beyond the
+explicit S3 authorization (which named only: own the FileCacheWorkerPool, pass pool ref +
+reserve timeout into CacheMetadata, resolve S2 TODO(S3) markers). Both are reviewed
+DEPENDENCIES whose SCC-phase INJECTION POINT is missing — directly parallel to the S2
+B2a (reserve timeout) and B3 (worker pool) gaps the controller already resolved. Neither is
+an unreviewed "closest API" guess, and neither may be stubbed/no-op'd or worked around by
+silently changing the public FileCache constructor.
+
+BLOCKER B5 — commonUserId injection for FileCache::getCommonOrigin (no SCC-phase source).
+  CH getCommonOrigin() is a STATIC method whose user id comes from
+  Context::getGlobalContextInstance()->getFilesystemCacheUser() or ServerUUID
+  (FileCache.cpp:138-143, 427-431). Velox has no Context and no ServerUUID. The accepted S1
+  header already changed getCommonOrigin() to an INSTANCE method returning
+  `const FileCacheOriginInfo &` with a documented "host-injected stable commonUserId"
+  (FileCache.h:151-153), and the reviewed core design mandates host/manager injection
+  (10-filecache-core-files-design.md "manager-injected runtime dependencies" +
+  "common/internal origin": commonUserId must be non-empty, stable across restarts,
+  != "internal", shared by all caches, provided by FileCacheManager::Options). BUT:
+    - FileCache has NO commonUserId member and the constructor is the CH-fixed public apex
+      `FileCache(const std::string & cache_name, const FileCacheSettings & settings)`
+      (FileCache.h:136) with no injection point.
+    - There is no manager (Task 013) in the SCC phase and no velox Context/ServerUUID.
+  So getCommonOrigin() cannot be DEFINED in FileCache.cpp without either (i) adding a
+  commonUserId ctor parameter + member to FileCache (changes the public constructor
+  signature — an architecture decision), or (ii) hard-coding a literal user id
+  (forbidden fallback, and it would violate the design's stability/host-provided contract).
+  getInternalOrigin() (static, returns OriginInfo("internal")) is trivial and NOT blocked.
+
+BLOCKER B6 — background scheduler + timekeeper + worker-pool OWNERSHIP wiring in FileCache.
+  FileCache.cpp creates its two scheduled tasks via
+  Context::getGlobalContextInstance()->getSchedulePool().createTask(...) (FileCache.cpp:559,
+  591) and starts load_metadata_main_thread / idle-eviction / eviction_pool workers on the
+  global pool. In velox these map to (reviewed): BackgroundSchedulePool -> FileCacheScheduler
+  (createTask(name, callback)); ThreadFromGlobalPool -> FileCacheWorker(FileCacheWorkerPool&,
+  Function); ThreadPool -> FileCacheThreadPool(FileCacheWorkerPool&, maxThreads, queueSize)
+  (design 10 + 04 + 05). The S2/B3 resolution already authorized FileCache to OWN the single
+  FileCacheWorkerPool and pass it by reference into CacheMetadata. To also create scheduled
+  tasks and free-space/idle-eviction/load-metadata workers, FileCache must, in the SCC phase,
+  additionally OWN a FileCacheScheduler and its std::shared_ptr<folly::Timekeeper> (the
+  scheduler ctor is FileCacheScheduler(shared_ptr<Timekeeper>, FileCacheWorkerPool&)), and
+  construct load_metadata_main_thread / idle-eviction threads / eviction_pool bound to the
+  owned worker pool. The accepted S1 FileCache.h declares the holders
+  (BackgroundSchedulePoolTaskHolder keep_up_free_space_ratio_task / background_cleanup_task,
+  std::unique_ptr<ThreadPool> eviction_pool) but owns NO FileCacheWorkerPool, NO
+  FileCacheScheduler, and NO Timekeeper. Adding these members + wiring is exactly the B3-style
+  "manager-owned resource, owned by FileCache in the SCC phase" extension, but it was NOT
+  explicitly enumerated in the S3 prompt (which named only the worker pool + CacheMetadata
+  pass-through), and it changes how the metadata ctor and eviction_pool are constructed. This
+  needs the same controller authorization the pool got (B3), extended to the scheduler +
+  timekeeper, plus confirmation that FileCache owns them in the SCC phase (Task 013 moves
+  ownership to the Manager, same injection shape).
+
+Exact decision needed from the Controller/user (both unblock a FileCache.cpp redispatch):
+  1. B5: authorize adding a `commonUserId` (stable, non-empty, != "internal") injection to
+     FileCache for the SCC phase — either (a) a new ctor parameter + `const String
+     common_user_id` member on FileCache (getCommonOrigin() derives its OriginInfo from it;
+     Task 013 later passes FileCacheManager::Options.commonUserId the same way), OR
+     (b) confirm an SCC-phase source/shape the S4 test fixture provides. Do NOT accept a
+     hard-coded literal (violates the design's host-provided/stability contract).
+  2. B6: authorize FileCache to OWN, in the SCC phase, the FileCacheWorkerPool (already B3),
+     a FileCacheScheduler, and a std::shared_ptr<folly::Timekeeper>, and to construct its
+     scheduled tasks via FileCacheScheduler::createTask and its background workers
+     (load_metadata_main_thread, idle-client eviction threads, eviction_pool =
+     FileCacheThreadPool) bound to the owned pool — the B3 pattern extended to the scheduler
+     + timekeeper. Confirm the metadata ctor is constructed with the owned pool ref + the
+     FileCacheConfig reserveSpaceWaitLockTimeoutMilliseconds.
+  Once B5/B6 are authorized, the remaining FileCache.cpp port is mechanical: apply the
+  reviewed mappings listed under "Contract-derivation done before stopping" (queue,
+  randomSeed, fmt, parse, Stopwatch call-site, callOnce, no-op metrics/failpoints, velox
+  eviction_pool ctor), and register FileCache.cpp/QueryLimit.cpp/the S2 .cpp in
+  CMakeLists.txt for S4.
+
+First actionable evidence:
+  - QueryLimit.cpp compiles: task012_s3_QueryLimit.log (exit 0, 0 errors).
+  - Missing shims/injection points: task012_s3_gap_probe.log shows
+    DimensionalMetrics/HistogramMetrics/CurrentMetrics::get/FailPointInjection "has not
+    been declared" (the metric/failpoint ones are resolved by dropping the excluded
+    Prometheus block + using the velox eviction_pool ctor; they are recorded here only to
+    document that the shim edits are NOT needed once the excluded metrics are dropped).
+  - B5 anchors: CH FileCache.cpp:138-143,427-431; velox FileCache.h:151-153,136; design
+    10 "manager-injected runtime dependencies" / "common/internal origin".
+  - B6 anchors: CH FileCache.cpp:559,591 (createTask), 534 (load_metadata_main_thread),
+    583-593 (eviction_pool), 2666-2685 (shutdown ordering); velox FileCacheScheduler.h
+    ctor + createTask; ThreadPool.h FileCacheThreadPool/FileCacheWorkerPool ctors;
+    velox FileCache.h:326-338 (holders present, pool/scheduler/timekeeper absent);
+    design 04:11,45-48,142 + 10 "shared worker pool sizing"/"manager-injected".
+```
+
+## Worker review
+
+```text
+review subagent: one read-only general-purpose reviewer over the ONLY completed in-scope
+  diff (QueryLimit.cpp), given the CH QueryLimit.cpp, the accepted S1 QueryLimit.h, and the
+  reviewed mappings (FileCacheQueryIdScope, FileCacheReadOptions field names, F14 maps,
+  throwFileCacheException). FileCache.cpp produced no diff (blocked before it could be
+  written faithfully), so there was nothing else in-scope to review.
+findings: none. Reviewer confirmed all 5 critical correctness points (removeQueryContext
+  TOCTOU ordering, ~QueryContextHolder destroy-after-lock, getOrSetQueryContext one-hot
+  negation, QueryContext::add duplicate handling, tryGetQueryContext under mutex) and that
+  every symbol resolves (throwFileCacheException fmt-style, FileCacheKey::toString,
+  LRUFileCachePriority(QueueType,max,elems) ctor, IFileCachePriority::add 5-arg overload).
+resolutions: none required.
+unresolved findings: none from the review. The only unresolved items are the external
+  structural blockers B5/B6 (need a Controller/user decision, not a code fix).
+```
+
+## Worker declaration
+
+```text
+Only Task 012 sub-attempt S3 was attempted.
+Exactly one new file (QueryLimit.cpp) was created and compiles per-TU clean; no other file
+was created or modified; CMakeLists was not touched (S4). FileCache.cpp was not written:
+S3 stopped blocked on B5 (commonUserId injection) and B6 (scheduler/timekeeper/worker-pool
+ownership wiring), both manager-injected dependencies whose SCC-phase injection point is
+missing from the accepted headers and whose resolution changes the public FileCache
+constructor / ownership — beyond the explicit S3 authorization, parallel to S2 B2a/B3.
+Link and test were not attempted (S4). Changes are unstaged and uncommitted.
+The worker stopped after writing this receipt.
+```
+
+## Controller unblock response 4 (S3 B5/B6 FileCache injection)
+
+```text
+controller_status: blocker_resolved
+task: 012 S3
+resolved: 2026-07-20
+```
+
+## Resolution
+
+```text
+root cause:
+  QueryLimit.cpp done (compile-only clean, review 0 findings). FileCache.cpp
+  blocked on two "CH reads global Context, Velox injects from host/Manager" gaps
+  (same pattern as accepted B2a/B3), both already fixed by approved design:
+  B5 commonUserId: CH getCommonUserID reads Context->getFilesystemCacheUser() /
+     ServerUUID (FileCache.cpp:138-141). Design 10:43,138,164,193 -> manager-
+     injected stable commonUserId; no ServerUUID in Velox.
+  B6 scheduler: CH creates scheduled tasks via Context->getSchedulePool()
+     .createTask (FileCache.cpp:559,591). Design 05:21,162-173 -> FileCacheScheduler
+     (shared_ptr<folly::Timekeeper>, ...) replaces BackgroundSchedulePool.
+
+decision (Controller-authorized; executes approved design 10 + 05):
+  SCC-phase FileCache is extended to receive/establish the manager-injected deps
+  without a global Context: hold a stable commonUserId (B5, std::string) used by
+  getCommonOrigin/getCommonUserID; own a folly::Timekeeper + FileCacheScheduler
+  (B6) for createTask; own the FileCacheWorkerPool (B3) and pass it + the reserve
+  timeout (B2a) into CacheMetadata. Ownership stays FileCache/Manager (design 04/10);
+  Task 013 moves these to the Manager, injecting the same way (no CacheMetadata
+  signature change). Do NOT read a global Context; do NOT invent a ServerUUID.
+
+work preservation:
+  Working tree PRESERVED: QueryLimit.cpp (new, compile-only clean) stays. The next
+  worker continues on this working tree and adds FileCache.cpp + the FileCache.h
+  injection wiring.
+
+redispatch: yes — S3 finish (FileCache.cpp + FileCache.h wiring), B5/B6 authorized.
+```
+
+## Worker attempt (S3 finish 3 — FileCache.cpp incremental)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 012 (sub-attempt S3 finish — FileCache.cpp + QueryLimit.cpp; per-TU COMPILE-ONLY, no link/test by design)
+```
+
+S3 finish delivers `FileCache.cpp` (new, ported from CH `FileCache.cpp`, 3248 lines)
+on the preserved S3 working tree (`QueryLimit.cpp` already present and compile-only
+clean from the prior S3 attempt). The file was authored INCREMENTALLY in small
+batches to avoid the resource limit that stopped the two prior S3-finish workers.
+Both center-SCC TUs owned by S3 (`FileCache.cpp`, `QueryLimit.cpp`) now compile
+per-TU (`-fsyntax-only`, real project flags, no `-j`). No link and no test were
+attempted (the SCC has no intermediate link step; the green compile+link+test gate
+is S4). No FileCache.h edit was needed — the accepted B5/B6/B3 wiring
+(`common_user_id`, owned `worker_pool`/`timekeeper`/`scheduler`, extended ctor) was
+already present, and `FileCache.cpp` matches it exactly.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `dd7eaf43f` | dirty (S3 work preserved): ` M FileCache.h`, `?? QueryLimit.cpp` |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache` | `da28e83e8b3` | receipt append only |
+
+`HEAD dd7eaf43f` = "Task 012: Port FileSegment/Metadata + finish priority .cpp
+(sub-attempt S2)". Preserved pre-existing working-tree changes (NOT reverted):
+` M FileCache.h` (B5/B6/B3 injection wiring), `?? QueryLimit.cpp` (compile-only clean).
+No staging/commit/amend/rebase/push.
+
+## Files changed (this attempt)
+
+```text
+NEW (delivered, compiles per-TU clean):
+  velox/ch/Interpreters/FileCache/FileCache.cpp    (ported from CH FileCache.cpp, 3248 lines)
+MODIFIED (source registration for compilation; no link claimed):
+  velox/ch/Interpreters/FileCache/CMakeLists.txt   (added the 9 center-SCC .cpp to the
+                                                    existing velox_ch_filecache velox_sources
+                                                    list: IFileCachePriority/LRU/SLRU/Split/
+                                                    EvictionCandidates/FileSegment/Metadata/
+                                                    FileCache/QueryLimit .cpp. The dedicated
+                                                    velox_ch_filecache_core library + SCC test
+                                                    target remain S4.)
+PRESERVED (not modified this attempt):
+  velox/ch/Interpreters/FileCache/FileCache.h      ( M, prior B5/B6/B3 wiring — no edit needed)
+  velox/ch/Interpreters/FileCache/QueryLimit.cpp   (?? prior S3, compile-only clean)
+```
+
+## Applied deviations (all pre-authorized; recorded)
+
+```text
+B5  getCommonOrigin() returns the injected `common_origin` member (built from `common_user_id`
+    in the ctor). No global Context, no ServerUUID, no getCommonUserID(). getInternalOrigin()
+    stays static "internal".
+B6  background_cleanup_task / keep_up_free_space_ratio_task created via the owned
+    `scheduler.createTask(name, cb)` (FileCacheScheduler over an owned folly::ThreadWheelTimekeeper),
+    not Context::getGlobalContextInstance()->getSchedulePool(). Task names include the cache name
+    ("FileCache:<name>:background-cleanup", "FileCache:<name>:free-space").
+B3/B2a  `metadata` constructed in the ctor init-list with the owned `worker_pool` (by ref) +
+    `settings.reserveSpaceWaitLockTimeoutMilliseconds`. worker_pool/timekeeper/scheduler are
+    FileCache-owned and declared before `metadata` (no -Wreorder).
+R2  applySettingsIfPossible decides each field by value comparison `new != actual`
+    (matching CH FileCache.cpp:2800), not `.changed` tracking.
+R7  Overcommit policies (LRU_OVERCOMMIT/SLRU_OVERCOMMIT) rejected explicitly (throwFileCacheException);
+    reserve "cannot evict enough space" returns false, only evict()/candidate-evict failure throws.
+Three-phase shutdown  deactivateBackgroundOperations order matches CH:2666-2685
+    (shutdown.store -> stop_loading_metadata + join load_metadata_main_thread -> deactivate the two
+    scheduled tasks -> eviction_pool->wait() -> metadata.shutdown()).
+Mechanical mappings  ConcurrentBoundedQueue -> FileCacheBoundedQueue (load-metadata + free-space
+    pipelines); randomSeed()/pcg64_fast -> folly::Random (CheckCacheProbability::doCheck);
+    WriteBufferFromOwnString -> fmt (Stat::toString, on_cannot_evict message);
+    parse<UInt64>/tryParse<UInt64> -> std::from_chars (tryParseUInt64/parseUInt64, full-string match);
+    Stopwatch (D11) -> DeltaCpuWallTimeStopWatch, single elapsed().wallNanos/1'000'000 snapshot,
+    no .stop()/.reset()/.restart() (freeSpaceRatioKeepingThreadFunc, backgroundCleanupTaskFunc);
+    callOnce/OnceFlag (D8) -> std::call_once/std::once_flag (initialize);
+    ThreadFromGlobalPool(lambda) -> FileCacheWorker(worker_pool, lambda) (load_metadata_main_thread,
+    listing/loading threads, idle-client eviction threads); ThreadPool eviction_pool ->
+    FileCacheThreadPool(worker_pool, max_threads, queue_size) (no CurrentMetrics enumerators);
+    StatusFile(path, StatusFile::writeFullInfo()); FailPointInjection / fiu_* -> dropped (no-op);
+    ProfileEvents / CurrentMetrics / logging -> existing no-op shims;
+    DROPPED (Explicit Exclusions): Prometheus DimensionalMetrics/HistogramMetrics registration +
+    per-user eviction metric blocks; onSegmentEvicted is a no-op; overcommit priority impls.
+```
+
+## Commands and outcomes (per-TU COMPILE-ONLY, `-fsyntax-only`, no link, no `-j`)
+
+Flags extracted from `compile_commands.json` (the existing `FileCacheKey.cpp` TU:
+`/usr/bin/c++` g++ 13.3, `-std=gnu++20`, real project includes/defines), with `-c`/`-o`
+stripped and `-fsyntax-only -c <src>` appended. Run from `<velox_build_dir>`.
+
+| TU | Exit code | Log |
+|---|---:|---|
+| `FileCache.cpp`  | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s3d_FileCache.log` |
+| `QueryLimit.cpp` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s3d_QueryLimit.log` |
+
+Both TUs pass `-fsyntax-only` (exit 0, `grep -c error:` = 0). The only warnings are the
+expected benign TSA `-Wattributes` ("guarded_by"/"requires_capability" attribute ignored
+by GCC) and the pre-existing `-Wchanges-meaning` from `SplitFileCachePriority.h` — the same
+warnings every FileCache TU emits under g++ 13.3 / gnu++20 (documented in S1/S2). No
+`-Wreorder` / "will be initialized after". Link/test NOT attempted by design (S4).
+
+## Acceptance evidence
+
+```text
+per-TU object compiles: 2 of 2 S3 TUs pass -fsyntax-only under the project's real g++ 13.3 /
+  gnu++20 flags (FileCache.cpp, QueryLimit.cpp). 0 errors each.
+link/test: NOT attempted in S3 by design. No green link or test is claimed.
+git diff --check: clean (no whitespace errors).
+git status --short: ` M CMakeLists.txt`, ` M FileCache.h` (preserved), `?? FileCache.cpp`,
+  `?? QueryLimit.cpp` (preserved). Baseline dd7eaf43f preserved; unstaged/uncommitted.
+```
+
+## Worker review
+
+```text
+review subagent: one read-only general-purpose reviewer over FileCache.cpp (+ FileCache.h for
+  member/ctor names), given CH FileCache.cpp and the amendment (approved deviations, S2/S3 unblocks,
+  Explicit Exclusions). Asked for R2 value-comparison, R7, three-phase shutdown, B5/B6/B3 wiring,
+  no global Context/ServerUUID, dropped Prometheus/overcommit, core-algorithm fidelity (getImpl/
+  getOrSet/get/getDownloadedContiguousOrEmpty/doTryReserve/doEviction/loadMetadata*/freeSpaceRatioImpl/
+  doDynamicResizeImpl), D11 Stopwatch, from_chars parsing, and over/under-port.
+findings: 12/12 PASS. No actionable defects in FileCache.cpp/FileCache.h; the port is a faithful
+  behavioral reproduction of CH within the approved deviation set.
+  Non-blocking observations (not defects): (1) `running_removers` is incremented AFTER
+  scheduleOrThrowOnError, matching CH:1794 (the Step-14 "increment before submit" text is
+  illustrative; CH source is authoritative, so the port follows CH). (2) FileSegmentInfo.h
+  download_finished_time type is a different-file item (S1-owned), outside S3 scope.
+resolutions: none required (no actionable findings).
+unresolved findings: none.
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 012 sub-attempt S3 (finish 3 — FileCache.cpp incremental) was attempted.
+One new file (FileCache.cpp) was created and compiles per-TU clean; CMakeLists.txt was modified
+to register the 9 center-SCC .cpp for compilation (no link claimed; the dedicated
+velox_ch_filecache_core library + SCC test target remain S4). FileCache.h was NOT edited (the
+prior B5/B6/B3 wiring already matched); QueryLimit.cpp was preserved. Link and test were not
+attempted (S4). Changes are unstaged and uncommitted; all prior working-tree changes preserved.
+The worker stopped after writing this receipt.
+```
+
+## Controller review (S3 FileCache/QueryLimit, accepted)
+
+```text
+controller_status: accepted (sub-attempt S3; stage gate remains S4)
+environment_profile: home-chang
+task: 012 S3
+reviewed: 2026-07-20
+```
+
+## Review evidence (S3)
+
+```text
+note: FileCache.cpp was authored incrementally (two prior workers hit an output/
+  resource limit writing ~3248 lines in one shot; a third wrote it in batches).
+  This is a mechanical authoring strategy only; the content is a faithful port.
+
+scope: new FileCache.cpp (2643 lines, complete), new QueryLimit.cpp; modified
+  FileCache.h (B5/B6/B3 injection wiring), CMakeLists.txt (source list). diff
+  --check clean.
+
+compile-only (independently verified): FileCache.cpp + QueryLimit.cpp -fsyntax-only
+  exit 0, 0 errors (task012_s3d_*.log). No link/test claimed (S4 gate).
+
+source-contract fidelity (independent Controller review subagent) — CLEAN, 9/9:
+  1. getOrSet 8-arg matches CH FileCache.h; body line-for-line (holes/splitRange/
+     EMPTY); get uses fill_with_detached + DETACHED fallback, never creates cache
+     segments; getDownloadedContiguousOrEmpty contiguity+write-offset checks.
+  2. tryReserve/doEviction match CH; lock ordering cache_guard->key->cache_state_guard.
+  3. R2 applySettingsIfPossible value comparison new!=actual (Velox 2343-2456 vs
+     CH 2800+), early-out new==actual (CH:2802), NO .changed reliance.
+  4. three-phase shutdown byte-identical CH:2666-2684 (Velox 1912-1931).
+  5. B5 getCommonUserID/getCommonOrigin use injected common_user_id; no Context,
+     no ServerUUID (comment only).
+  6. B6 both tasks via owned scheduler.createTask (Velox 435,466) not getSchedulePool.
+  7. B3/B2a CacheMetadata ctor with worker_pool ref + reserveSpaceWaitLockTimeoutMilliseconds.
+  8. overcommit policies throw; Prometheus/metrics/failpoint dropped to no-op; no
+     OpenedFileCache singleton; FileCacheBoundedQueue/folly::Random/
+     DeltaCpuWallTimeStopWatch/std::call_once applied.
+  9. QueryLimit.cpp TOCTOU discipline, destroy-doomed-after-lock, max-download-size,
+     FileCacheKeyAndOffset map faithful; CurrentThread -> FileCacheQueryIdScope.
+  Minor benign deltas (magic_enum->literal 2; LOGICAL_ERROR->throwFileCacheException;
+  trimmed log tails) do not affect behavior.
+
+unresolved findings: None for S3.
+```
+
+## Commits (S3)
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `16b4fc155 Task 012: Port FileCache.cpp + QueryLimit.cpp (sub-attempt S3)` |

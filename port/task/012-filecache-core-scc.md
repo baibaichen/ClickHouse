@@ -220,6 +220,40 @@ from `startup` (`Metadata.cpp`), and have `FileCache` own the pool and pass it i
 (`FileCache.h`/`.cpp`, wired in S3). Do NOT make `CacheMetadata` own the pool
 (design says manager/FileCache owns the single shared pool).
 
+### S3 unblock — B5/B6 FileCache host-injected members (2026-07-20, authorized)
+
+S3 completed `QueryLimit.cpp` but blocked on two `FileCache.cpp` gaps, both the
+same "CH reads a global Context, Velox injects from the host/Manager" pattern as
+B2a/B3 — and both already fixed by the approved design. Controller-authorized
+(executes approved design; not a new decision):
+
+- **B5 — `commonUserId` injection.** CH `getCommonUserID` (`FileCache.cpp:138-141`)
+  reads `Context::getGlobalContextInstance()->getFilesystemCacheUser()`, falling
+  back to `ServerUUID::get()`. Design `10-filecache-core-files-design.md:43,138,
+  161,164,193` mandates: `ServerUUID/common cache user -> manager-injected stable
+  commonUserId`; "Velox 没有 CH `ServerUUID`；`FileCacheManager::Options.commonUserId`
+  必须由宿主显式提供", injected into `CacheMetadata`. SCC phase: `FileCache`
+  receives/holds a stable `commonUserId` (std::string) and uses it in
+  `getCommonOrigin`/`getCommonUserID`; no global Context, no ServerUUID. Task 013
+  supplies it from the Manager.
+- **B6 — `FileCacheScheduler` + `folly::Timekeeper` ownership.** CH creates its
+  `background_cleanup_task` / `keep_up_free_space_ratio_task` via
+  `Context::getGlobalContextInstance()->getSchedulePool().createTask(...)`
+  (`FileCache.cpp:559,591`). Design `05-filecache-scheduler-design.md:21,162-173`
+  replaces `BackgroundSchedulePool` with `FileCacheScheduler(shared_ptr<folly::
+  Timekeeper>, ...)`. SCC phase: `FileCache` owns a `folly::Timekeeper` + a
+  `FileCacheScheduler` and calls `createTask` on it (SD6/SD7 already registered).
+
+**FileCache construction shape (SCC phase).** CH `FileCache(cache_name,
+settings)` is 2-arg. To carry the manager-injected dependencies without a global
+Context, the SCC-phase `FileCache` constructor is extended to receive/establish:
+the `commonUserId` (B5), and it owns the `FileCacheWorkerPool` (B3) + the
+`folly::Timekeeper`/`FileCacheScheduler` (B6), passing the pool + reserve timeout
+(B2a) into `CacheMetadata`. Ownership stays FileCache/Manager (design 04/10);
+Task 013 moves these to the Manager and injects them the same way (no CacheMetadata
+signature change). Record any FileCache-ctor argument additions as the approved
+injection shape; do NOT read a global Context and do NOT invent a ServerUUID.
+
 ### Mandatory executable tests
 
 Each case below must contain real setup, execute the production path, and assert the
