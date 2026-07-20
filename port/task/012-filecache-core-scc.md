@@ -89,6 +89,64 @@ scheduler → `folly::Timekeeper` + per-task `Future`), SD9 (Task 007 owned buff
 accepted-interface / deferred-implementation item; see the deferred-work note in
 Task 006 / Task 017.
 
+### Task 012 execution — CH-source authority + sub-attempt plan (2026-07-20)
+
+The first Task-012 Worker cleared both pre-implementation gates (no unreviewed
+dependency; all mappings confirmed) but correctly returned `blocked` on **scope**:
+the SCC is ~7.9k lines of CH center source + ~2.9k lines of the Task-011 `.cpp`
++ 6 behavioral-RED tests, with no intermediate link step. A single monolithic
+pass cannot reach the required fidelity without risking false-green. Two Controller
+decisions (user-approved 2026-07-20):
+
+**CH source is authoritative over this task's illustrative signatures.** Steps
+9-13 show illustrative shapes; where they diverge from CH, port toward CH:
+- `FileCache::getOrSet` / `get` / `getDownloadedContiguousOrEmpty` / `set` /
+  `trySet` / `tryReserve` / `getQueryContextHolder` use the CH `FileCache.h`
+  signatures (e.g. `getOrSet(key, offset, size, file_size,
+  CreateFileSegmentSettings, file_segments_limit, origin, boundary_alignment)`),
+  NOT the `(key, Range, origin, options)` form.
+- `FileSegmentInfo::download_finished_time` is **`time_t`** (CH
+  `FileSegmentInfo.h:74`); all callers in Metadata/FileSegment stay consistent
+  with `time_t`.
+- `LockedKey::removeFileSegment` keeps CH's multiple arities
+  (`Metadata.h:391,397`): the `(offset, lock)` form and the
+  `(offset, lock, can_be_broken, invalidate_queue_entry)` form must both compile.
+- General rule: any other Step 9-13 shape that disagrees with CH
+  `FileSegment.h`/`Metadata.h`/`FileCache.h`/`QueryLimit.h` is reconciled toward
+  the CH header. New-file specs (e.g. FileSegmentInfo.h layout) win only where CH
+  has no counterpart.
+
+**Sub-attempt plan (multiple bounded Workers, ONE final green gate).** The stage
+is accepted only when the whole SCC compiles+links and every test passes
+(0 failed / 0 skipped) — that final gate does not change. To make delivery
+truthful, the Controller dispatches bounded sub-attempts against the SAME gate.
+Intermediate sub-attempts MUST NOT claim a link/test green (the SCC has no
+intermediate link step); they deliver source + a `configure`/compile-only sanity
+check and hand off. Suggested cut (Controller may adjust by dependency need):
+
+```text
+S1  FileSegmentInfo.h + FileSegment.h + Metadata.h + FileCache.h + QueryLimit.h
+    (headers only) — establishes the real types the Task-011 .cpp were written
+    against; configure succeeds; no link expected.
+S2  FileSegment.cpp + Metadata.cpp (+ finish the Task-011 .cpp against the real
+    headers) — compile-only per TU; no link expected.
+S3  FileCache.cpp + QueryLimit.cpp — compile-only per TU.
+S4  CMake registration + the 6 behavioral-RED tests + the FINAL green
+    compile+link+`velox_ch_filecache_core_scc_test` run (0 failed / 0 skipped).
+    This is the only sub-attempt that asserts the stage gate.
+```
+
+Each sub-attempt is a fresh Worker with a bounded file list, records its own
+receipt section, and is reviewed by the Controller before the next. A sub-attempt
+that cannot meet even its bounded compile-only checkpoint returns `blocked`. The
+`## Mandatory executable tests` and all amendments above remain binding on S4.
+
+**Partial-physical-append-failure test (confirmed approach).** Drive the real
+production `FileSegment::write` path over an injected production `velox::WriteFile`
+that physically commits a strict prefix and then throws `FileCacheErrnoException`
+(ENOSPC/EDQUOT). Reconciliation must happen inside production `FileSegment`, never
+inside the test double — the double only injects the fault.
+
 ### Mandatory executable tests
 
 Each case below must contain real setup, execute the production path, and assert the
