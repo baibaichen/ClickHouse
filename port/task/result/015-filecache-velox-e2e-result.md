@@ -355,3 +355,433 @@ None. Task 015 accepted. This is the final task of the current Velox MVP path.
 |---|---|
 | `/home/chang/OpenSource/velox` | (this acceptance — see Velox `Task 015:` commit) |
 | `/home/chang/SourceCode/ClickHouse` | receipt+handoff = this commit |
+
+## Perf 扩展 (wrapper benchmark)
+
+### Worker attempt (perf extension)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 015 (Post-MVP 性能测试扩展)
+```
+
+This section ADDS a performance benchmark per the task's
+"## Post-MVP 性能测试扩展" contract. It does NOT reopen the accepted Task 015
+E2E tests; those files are untouched except no shared CMake line was needed.
+
+### Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `4f764737f4b4cf4382598621066da663ee6a1ffc` | clean |
+| `/home/chang/SourceCode/ClickHouse` | `filecache2` (was `ch-filecache` at dispatch) | `4f764737f` | clean |
+
+Baseline note: dispatch said velox=`filecache2` HEAD `4f764737f`, CH branch
+`ch-filecache2`; the actual CH checkout is `filecache2`. Proceeded as instructed
+(branch-name mismatch not a blocker). Reference is on branch `ch-filecache`,
+read READ-ONLY via `git show ch-filecache:<path>` (never checked out).
+
+### Files changed (all under velox/ch/benchmarks/, production diff empty)
+
+```text
+velox/ch/benchmarks/CacheReadHarness.h            (new)
+velox/ch/benchmarks/CacheReadHarness.cpp          (new)
+velox/ch/benchmarks/FileCacheWrapperBenchmark.cpp (new)
+velox/ch/benchmarks/CMakeLists.txt                (modified: + velox_ch_filecache_wrapper_benchmark)
+velox/ch/benchmarks/FileCacheSeekBenchmark.cpp    (modified: microbench hardening)
+```
+
+Structure (per contract, user "dedupe via shared base class"): an abstract
+`CacheHarnessBase` holds ALL shared logic ONCE — `WorkloadDriver`
+(sequential/zipfian/uniform via a ported header-only `KeyGenerator`), the timed
+`runSweep` loop, the multi-threaded `sweepConcurrent` driver (`--num_threads`),
+and tier accounting. Three THIN subclasses override only `buildCache()` +
+`readBatch()` + `fillTiers()`: `DbiHarness` (direct read), `CbiHarness`
+(native `AsyncDataCache`+`SsdCache`), `FcbiHarness` (our `ch::FileCache`).
+`KeyGenerator`/`WorkloadDriver` were ported into the harness header (kept inside
+the declared `velox/ch/benchmarks/**` scope) since the reference's
+`velox/common/caching/filecache/benchmarks/KeyGenerator.h` does not exist on
+`filecache2`.
+
+### Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| CMake reconfigure (new target) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_015_perf_configure.log` |
+| Build `velox_ch_filecache_wrapper_benchmark` | 0 | `.../cmake-build-debug-gcc13/build_015_perf_wrapper.log` |
+| Run `--wrappers=all --workloads=sequential,zipfian --target_ws_gb=1 --measure_passes=1` | 0 | `.../run_015_perf_all.log` |
+| Run concurrency `--wrappers=fcbi --num_threads=4 --target_ws_gb=1 --measure_passes=1` | 0 | `.../run_015_perf_concurrent.log` |
+| Build hardened `velox_ch_filecache_seek_benchmark` | 0 | `.../build_015_perf_seek.log` |
+| Run hardened seek benchmark (green) | 0 | `.../run_015_perf_seek_green.log` |
+| RED test: force hit to read source (assertion must fire) | 134 (aborted, expected) | `.../run_015_perf_seek_red.log` |
+| Build 4 pre-existing gate tests | 0 | `.../build_015_perf_pregates.log` |
+| ctest e2e / buffered_input / manager / core_scc | 0 each | `.../run_015_perf_ctest_*.log` |
+
+### Three-engine back-to-back numbers (`--target_ws_gb=1 --measure_passes=1`, delta vs fcbi)
+
+| pattern | read | wrapper | wall_ms | MB/s | ram_MB | ssd_MB | src_MB | delta vs fcbi |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| seq  | 1024K | fcbi | 382.7 | 2676   | 0    | 0 | 0    | — |
+| seq  | 1024K | cbi  | 2.3   | 442794 | 1024 | 0 | 0    | -99.4% |
+| seq  | 1024K | dbi  | 117.3 | 8731   | 0    | 0 | 1024 | -69.3% |
+| zipf | 1024K | fcbi | 364.5 | 2809   | 0    | 0 | 0    | — |
+| zipf | 1024K | cbi  | 2.0   | 507633 | 1024 | 0 | 0    | -99.4% |
+| zipf | 1024K | dbi  | 98.4  | 10410  | 0    | 0 | 734  | -73.0% |
+
+All three engines construct, complete, print throughput + relative delta,
+exit 0. (Absolute numbers are indicative on a warm-tier debug build; cbi's RAM
+tier serving fully-resident hits explains its speed, fcbi is disk-segment only,
+dbi is no-cache — intended tier differences, identical driving.)
+
+### `--num_threads=4` concurrency result (fcbi)
+
+| pattern | read | wrapper | wall_ms | MB/s |
+|---|---|---|---:|---:|
+| seq  | 1024K | fcbi | 569.8 | 7188 |
+| zipf | 1024K | fcbi | 519.8 | 7880 |
+
+Exit 0, no crash/deadlock. Each thread uses its own `WorkloadDriver` +
+`IoStatistics`; aggregate wall = slowest thread, bytes summed.
+
+### FcbiHarness uses Manager (grep-proof: NO bare `new FileCache`)
+
+```text
+$ grep -nE "new +FileCache\b|new +ch::FileCache\b" \
+    velox/ch/benchmarks/CacheReadHarness.cpp velox/ch/benchmarks/CacheReadHarness.h
+CacheReadHarness.h:25://            FileCacheFactory (never bare `new FileCache`).
+CacheReadHarness.h:354:// through a real FileCacheManager (NEVER bare `new FileCache`).
+# (only comments; no actual bare construction)
+
+$ grep -n "FileCacheManager::create\|manager_->getDefault" velox/ch/benchmarks/CacheReadHarness.cpp
+536:  manager_ = FileCacheManager::create(o);
+537:  cache_ = manager_->getDefault();
+```
+
+### Seek-benchmark hardening + RED evidence (hit "no source read" assertion is load-bearing)
+
+Hardening: (a) `FileCacheSeekCacheMiss`/`Bypass` are now `BENCHMARK_RELATIVE`
+(relative to the `FileCacheSeekCacheHit` baseline); (b) all `makeInput` object
+construction moved into `BENCHMARK_SUSPEND` so only enqueue+drain is timed;
+(c) the hit path wraps its source in a `CountingReadFile` and asserts
+`preadAfter == preadBefore` (a warm hit must serve from the local segment, never
+the source).
+
+RED proof — temporarily forcing the hit onto a cold cache (`freshMissCache`)
+made the assertion fire and abort:
+
+```text
+Exceptions.h:87 Line: .../FileCacheSeekBenchmark.cpp:329, Function:FileCacheSeekCacheHit,
+Expression: preadAfter == preadBefore (100 vs. 0)
+cache hit read the source (100 extra preads): hit path degraded to a source read
+... ErrorCode: INVALID_STATE   (process Aborted, exit 134)
+```
+
+The RED patch was reverted; the reverted benchmark rebuilds and runs green
+(exit 0). Green relative output:
+
+```text
+FileCacheSeekCacheHit                6.46ms  154.87 iters/s
+FileCacheSeekCacheMiss    58.492%   11.04ms   90.59 iters/s
+FileCacheSeekBypass       97.996%    6.59ms  151.77 iters/s
+```
+
+### Pre-existing gates — no regression
+
+| Gate | test cases (`--gtest_list_tests`) | ctest result |
+|---|---:|---|
+| `velox_ch_filecache_e2e_test` | 17 | 100% passed, 0 failed |
+| `velox_ch_filecache_buffered_input_test` | 19 | 100% passed, 0 failed |
+| `velox_ch_filecache_manager_test` | 19 | 100% passed, 0 failed |
+| `velox_ch_filecache_core_scc_test` | 47 | 100% passed, 0 failed |
+
+Counts match the required 17/19/19/47 exactly; 0 failed, 0 skipped.
+
+### Production-diff-empty confirmation
+
+```text
+$ git status --porcelain | awk '{print $2}' | grep -v "^velox/ch/benchmarks/"
+NONE (production diff empty)
+$ git diff --check
+clean
+```
+
+No `FileCacheInputStream`/`BufferedInput`/`FileCache`/`FileCacheManager` `.cpp`
+(or any file outside `velox/ch/benchmarks/`) was modified. No production
+integration/perf bug requiring a production fix was found.
+
+### Worker review
+
+```text
+review subagent: 1 read-only general-purpose reviewer over the full benchmark diff
+findings: no BLOCKER / no SHOULD-FIX. All 7 contract points confirmed PASS:
+  (1) single CacheHarnessBase, thin subclasses, no duplicated sweep logic;
+  (2) FcbiHarness via FileCacheManager::create/getDefault, 12-arg
+      FileCacheBufferedInput signature matches, no bare new FileCache;
+  (3) fair driving (same working set/layout/batch/warm-measure, timing wraps
+      only enqueue+load+drain); tier differences (cbi RAM vs fcbi disk vs dbi
+      none) are intended;
+  (4) concurrency: per-thread driver + IoStatistics, no race, correct
+      max-wall/byte-sum aggregation, no deadlock;
+  (5) seek hardening + load-bearing hit assertion (right file, runs
+      unconditionally, no false-pass path);
+  (6) destruction order safe (cache_.reset before manager_->shutdown; cbi
+      teardown order correct);
+  (7) production diff empty.
+  NITs only: duplicated-name comment on DirectBufferedInput ioStats args
+  (harmless, distinct params); shared 2-thread fcbi executor bounds async
+  parallelism at high --num_threads (realism caveat, not a bug).
+resolutions: NITs left as-is (non-actionable / intended); no code change needed.
+unresolved findings: none
+```
+
+### Blockers
+
+```text
+None.
+```
+
+### Worker declaration
+
+```text
+Only Task 015's Post-MVP performance-benchmark extension was attempted.
+The accepted Task 015 E2E test files were not modified.
+Changes are unstaged and uncommitted, confined to velox/ch/benchmarks/.
+The worker stopped after writing this receipt.
+```
+
+## Controller review — Perf 扩展 (changes_requested)
+
+```text
+controller_status: changes_requested
+environment_profile: home-chang
+task: 015-perf
+```
+
+## Review evidence
+
+```text
+scope: PASS — only velox/ch/benchmarks/ (3 new + CMake + seek benchmark); production
+  diff empty (git diff --stat over velox/ch/Disks, velox/ch/Interpreters = empty);
+  git diff --check clean.
+fcbi via Manager: PASS — CacheReadHarness.cpp:536 FileCacheManager::create + :537
+  getDefault; grep shows NO bare `new FileCache` (only two comment mentions). Good.
+seek-benchmark hardening: PASS — hit "no source read" assertion is load-bearing;
+  worker's RED (force cold hit -> preadAfter==preadBefore 100 vs 0 -> abort) is real
+  and I accept it. miss/bypass are BENCHMARK_RELATIVE; makeInput moved to SUSPEND.
+pre-existing gates: PASS — e2e 17 / buffered_input 19 / manager 19 / core_scc 47,
+  0 failed/skipped (re-confirmed).
+
+FINDINGS (Controller independent run exposed what the worker did not test):
+
+F-PERF-1 (CONFIRMED defect, must fix) — the wrapper benchmark CORE-DUMPS on a
+  RELATIVE --filecache_root. Running the contract's own acceptance command with a
+  relative root:
+    --wrappers=all ... --filecache_root=cmake-build-debug-gcc13/perf_fc
+  aborts (exit 134) with:
+    getFileSystem: No registered file system matched with file path
+    'cmake-build-debug-gcc13/perf_fc/fa3/.../0_4194304'
+    (FileCacheInputStream::getCacheReadBuffer -> filesystems::getFileSystem).
+  Root cause: the local FS scheme only matches absolute paths; the cache segment
+  path is built from the relative root. This is the SAME trap Task 015's seek
+  benchmark already hit and fixed ("forces cacheRoot absolute"); the wrapper
+  benchmark did not apply it. The worker ran only with an ABSOLUTE root (its receipt
+  413 shows exit 0, which I reproduced), so it never exercised the relative case —
+  a real hole, not a false claim, but the crash-vs-clean-error behavior is
+  unacceptable. Fix: normalize --filecache_root / --ssd_path / --data_dir with
+  std::filesystem::absolute() at startup (mirror the seek benchmark). With an
+  ABSOLUTE root the three engines run green (Controller-verified exit 0):
+    seq 1024K fcbi 3253 MB/s | cbi 584808 MB/s (ram_MB=1024) | dbi 10258 MB/s (src_MB=1024)
+
+F-PERF-2 (CONFIRMED, must fix in reporting) — the cbi-vs-fcbi number is a
+  DIFFERENT-TIER comparison and is misleading as printed. With target_ws_gb=1 and a
+  4 GiB RAM cache, cbi serves the whole 1 GiB working set from RAM (ram_MB=1024,
+  584808 MB/s), while fcbi serves from on-disk cache segment files (3253 MB/s). The
+  "delta vs fcbi -99.4%" reads as "fcbi is 180x slower than cbi" which is a
+  RAM-hit vs disk-hit artifact, not a like-for-like result. Must be labeled: the
+  table (and receipt) must state the tier each hit came from (ram_MB/ssd_MB/src_MB
+  columns already exist — add an explicit note that cbi here is a RAM-cache hit and
+  is NOT comparable to fcbi's disk-cache hit; for a fair disk-vs-disk comparison the
+  cbi RAM cache must be sized below the working set so it spills to SSD). Do not ship
+  a headline "fcbi slower than cbi" conclusion drawn from a RAM-vs-disk cell.
+```
+
+## Required changes
+
+```text
+1. F-PERF-1: absolutize --filecache_root / --ssd_path / --data_dir (std::filesystem::
+   absolute) at startup so a relative path yields a clean run (or a clean error),
+   never a core dump. Add a run with a RELATIVE root to the receipt proving exit 0.
+2. F-PERF-2: in both the printed table and the receipt, explicitly label the tier of
+   each engine's hit (RAM vs SSD vs disk-segment vs source) and add a one-line
+   caveat that the default cbi cell is a RAM-cache hit, hence not directly
+   comparable to fcbi's disk hit. Optionally add a --ram_cache_gb smaller than the
+   working set so cbi spills to SSD for a fair disk-vs-disk row; if added, show it.
+Re-run: --wrappers=all with BOTH an absolute and a relative root (both exit 0), and
+the --num_threads=4 concurrency run. Keep production diff empty. No -j.
+```
+
+## Perf 扩展 修复 1 (F-PERF-1/2)
+
+### Worker attempt (perf-fix)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 015 (Post-MVP perf extension — controller changes_requested: F-PERF-1, F-PERF-2)
+```
+
+Controller独立验收发现两个必修点。两者都只改
+`velox/ch/benchmarks/FileCacheWrapperBenchmark.cpp`；生产零改动保持。
+
+### F-PERF-1 (真缺陷): 相对 `--filecache_root`/`--ssd_path` 直接 CORE DUMP
+
+Reproduced on the pre-fix binary (exit 134):
+
+```text
+$ velox_ch_filecache_wrapper_benchmark --wrappers=all ... \
+    --filecache_root=cmake-build-debug-gcc13/perf_fc
+FileSystems.cpp:64 getFileSystem: No registered file system matched with file
+path 'cmake-build-debug-gcc13/perf_fc/fa3/.../0_4194304'  (Aborted, exit 134)
+log: /home/chang/OpenSource/velox/cmake-build-debug-gcc13/run_015_perf_relroot_repro.log
+```
+
+Root cause: the local file system matches only on absolute paths, but the cache
+segment path is assembled from the relative root. Same pit the seek benchmark
+already fixed (force `cacheRoot` absolute); the wrapper benchmark had not.
+
+Fix: normalize the on-disk cache roots at startup with
+`std::filesystem::absolute()` before building `HarnessConfig`
+(`FileCacheWrapperBenchmark.cpp`, the `config.ssdPath` / `config.filecacheRoot`
+assignments), mirroring `FileCacheSeekBenchmark`'s `setupFixture`. (The
+synthetic source blob is already an absolute `/tmp` path; there is no
+`--data_dir` flag in this benchmark.)
+
+Post-fix evidence — relative root now exits 0:
+
+```text
+$ velox_ch_filecache_wrapper_benchmark --wrappers=all \
+    --workloads=sequential,zipfian --target_ws_gb=1 --measure_passes=1 \
+    --filecache_root=cmake-build-debug-gcc13/perf_fc \
+    --ssd_path=cmake-build-debug-gcc13/perf_ssd
+relative-root exit: 0
+log: .../cmake-build-debug-gcc13/run_015_perffix_relroot.log
+```
+
+### F-PERF-2 (报告误导): cbi(RAM 命中) vs fcbi(磁盘命中) 非同层, 不能直接比
+
+Fix: added a `hit_layer` column (derived from the per-tier byte counters:
+`RAM` / `SSD` / `disk` / `page-cache` / `source(!)`) and an explicit footnote
+after every table warning that a cbi `RAM` row and an fcbi `disk` row are NOT a
+like-for-like comparison, so the `delta vs fcbi` between them is a RAM-vs-disk
+artifact — it does not mean fcbi is slower same-for-same. The footnote also
+tells the reader how to get a fair disk-vs-disk row (`--ram_cache_gb` below
+`--target_ws_gb` so cbi's hit_layer becomes `SSD`).
+
+Layer-annotated three-engine table (absolute root, `--target_ws_gb=1
+--measure_passes=1`; log `.../run_015_perffix_absroot.log`):
+
+| pattern | read | wrapper | hit_layer | wall_ms | MB/s | ram_MB | ssd_MB | src_MB | delta vs fcbi |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|
+| seq  | 1024K | fcbi | disk       | 372.5 | 2749   | 0    | 0 | 0    | — |
+| seq  | 1024K | cbi  | RAM        | 1.7   | 595257 | 1024 | 0 | 0    | -99.5% |
+| seq  | 1024K | dbi  | page-cache | 96.3  | 10629  | 0    | 0 | 1024 | -74.1% |
+| zipf | 1024K | fcbi | disk       | 293.4 | 3490   | 0    | 0 | 0    | — |
+| zipf | 1024K | cbi  | RAM        | 1.9   | 544923 | 1024 | 0 | 0    | -99.4% |
+| zipf | 1024K | dbi  | page-cache | 87.4  | 11716  | 0    | 0 | 734  | -70.2% |
+
+The cbi `RAM` hit_layer makes the -99% delta explicit as a RAM-vs-disk artifact,
+NOT a "fcbi is 180x slower" conclusion.
+
+Fair local-cache comparison row (cbi RAM tier forced below the working set with
+`--wrappers=both --ram_cache_gb=0.125 --ssd_cache_gb=4`; log
+`.../run_015_perffix_fair.log`, exit 0):
+
+| pattern | read | wrapper | hit_layer | wall_ms | MB/s | ram_MB | ssd_MB | src_MB | delta vs fcbi |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|
+| seq | 1024K | fcbi | disk      | 301.5 | 3396 | 0 | 0   | 0   | — |
+| seq | 1024K | cbi  | source(!) | 6695.2 | 153 | 0 | 590 | 546 | +2120.6% |
+
+Honest read: with a 128 MiB RAM tier and single-shot warm, cbi cannot hold the
+1 GiB target SSD-resident, so it re-downloads (`src_MB=546`) — the `source(!)`
+hit_layer flags exactly that the number is NOT a clean SSD-hit and must not be
+read as a same-layer result. (A clean disk-vs-disk cbi row needs a chunked-warm
+RAM->SSD flush protocol, which this MVP microbench does not implement; the
+annotation prevents the misread rather than fabricating a fair number.)
+
+### Re-run gates (both roots + concurrency)
+
+| Command | Exit code | Log |
+|---|---:|---|
+| Rebuild `velox_ch_filecache_wrapper_benchmark` | 0 | `.../build_015_perffix_wrapper.log` |
+| `--wrappers=all` RELATIVE root | 0 | `.../run_015_perffix_relroot.log` |
+| `--wrappers=all` ABSOLUTE root | 0 | `.../run_015_perffix_absroot.log` |
+| `--wrappers=both` fair disk-vs-disk row | 0 | `.../run_015_perffix_fair.log` |
+| `--wrappers=fcbi --num_threads=4` concurrency | 0 | `.../run_015_perffix_concurrent.log` |
+
+### Production-diff-empty confirmation (unchanged)
+
+```text
+$ git status --porcelain | awk '{print $2}' | grep -v "^velox/ch/benchmarks/"
+NONE (production diff empty)
+$ git diff --check
+clean
+```
+
+Only `velox/ch/benchmarks/FileCacheWrapperBenchmark.cpp` changed in this fix
+round; the accepted E2E tests, the seek benchmark, the harness, and all
+production sources are untouched. The four pre-existing gates (e2e 17 /
+buffered_input 19 / manager 19 / core_scc 47) are unaffected by this change
+(no shared file touched) and remain green from the prior attempt.
+
+### Worker declaration (perf-fix)
+
+```text
+F-PERF-1 and F-PERF-2 were addressed within velox/ch/benchmarks/ only.
+Changes are unstaged and uncommitted.
+The worker stopped after writing this receipt.
+```
+
+## Controller review 2 — Perf 扩展 (accepted)
+
+```text
+controller_status: accepted
+environment_profile: home-chang
+task: 015-perf
+```
+
+## Review evidence
+
+```text
+F-PERF-1 fix — INDEPENDENTLY VERIFIED: with a RELATIVE --filecache_root (which
+  core-dumped before, exit 134) the wrapper benchmark now runs exit 0. Fix is
+  std::filesystem::absolute() normalization of --filecache_root/--ssd_path at
+  startup, mirroring the seek benchmark.
+F-PERF-2 fix — VERIFIED: output now has a `hit_layer` column (fcbi=disk / cbi=RAM /
+  dbi=page-cache) and a footnote stating the engines serve from different tiers, that
+  a cbi-RAM vs fcbi-disk `delta` is a RAM-vs-disk artifact (not a same-tier slowdown),
+  and how to force a fair disk-vs-disk row (--ram_cache_gb below the working set).
+  Honest labeling, not a fabricated fair number.
+Controller-run numbers (relative root, exit 0):
+  seq 1024K fcbi=disk 3403 MB/s | cbi=RAM 577167 MB/s (ram_MB=1024) | dbi=page-cache 10302 MB/s
+Concurrency: --wrappers=fcbi --num_threads=4 exit 0 (no crash/deadlock).
+scope: only velox/ch/benchmarks/ (this round only FileCacheWrapperBenchmark.cpp);
+  production diff empty; git diff --check clean.
+carried-forward PASS (review 1): fcbi via FileCacheManager (no bare new FileCache);
+  seek-benchmark hit "no source read" assertion load-bearing (worker RED real);
+  pre-existing gates e2e 17 / buffered_input 19 / manager 19 / core_scc 47 no regression.
+unresolved findings: none.
+```
+
+## Required changes
+
+```text
+None. Task 015 perf extension accepted.
+```
+
+## Commits
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | (this acceptance — see Velox `Task 015:` perf commit) |
+| `/home/chang/SourceCode/ClickHouse` | receipt = this commit |

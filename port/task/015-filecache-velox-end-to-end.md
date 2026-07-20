@@ -630,3 +630,86 @@ Gluten builder and lifecycle integration — deferred to Tasks 018-019.
 format-cpp-code.sh global run — do not run the formatter globally; apply
   clang-format-15 only to the new files created by this task if needed.
 ```
+
+## Post-MVP 性能测试扩展 (whole-port review 2 后, user 2026-07-20)
+
+Task 015 的 `FileCacheSeekBenchmark` 只是冒烟级微基准 (本地源、无对照、无并发)。
+本扩展补一套真正的性能测试，回答:(1) 缓存层自身开销;(2) 多线程并发;(3) 我们的
+FileCache (fcbi) vs Velox 原生 AsyncDataCache (cbi) vs 直读 (dbi) 的对比。
+
+参考规程 (只读，脚本内硬编码路径跑前须改):
+`/home/chang/SourceCode/.ai/share_data/local-cache/benchmark/HANDOFF-how-to-benchmark-filecache.md`
+参考实现 (只读, ch-filecache 分支):
+`velox/dwio/common/benchmarks/{CacheReadHarness.{h,cpp},BufferedInputWrapperBenchmark.cpp}`
+
+### 关键背景:两条移植线不同
+
+- 参考的 benchmark 是为 **ch-filecache 分支** (fcbi, 移植到 `velox/common/caching/filecache/`)
+  写的。那套 fcbi **不 exactly 对齐 CH** — 它让 `FileCache` 裸构造 (`new FileCache(name, settings)`)。
+- 我们的 **filecache2 分支** (`velox/ch/`) 严格对齐 CH:`FileCache` 不能裸构造, 必须经
+  `FileCacheManager::create(Options)` / `FileCacheFactory::getOrCreate(name, FileCacheConfig,
+  config_path)` 拿 `FileCachePtr` (注入 workerPool/scheduler/openedFileCache/localFileSystem/
+  commonUserId)。这是 fcbi harness 移植时唯一的实质改动点。
+
+### 结构 (user 定:嫌重复→共享基类)
+
+单个可执行 bin，`--wrappers=fcbi/cbi/dbi/all` 切引擎。**一个共享抽象基类** `CacheHarnessBase`
+承载全部共用逻辑 (WorkloadDriver: sequential/zipfian/uniform + 随机偏移;sweep: 循环+计时+
+统计+PassResult;多线程并发驱动;结果打印+相对 delta;取中位数)。**三个薄子类**只重写
+`buildCache()` + `readBatch()` 两个虚函数:
+- `DbiHarness` — 直读无缓存, 下限基线 (从参考移植 buildCache/readBatch, 不依赖我们的 FileCache)。
+- `CbiHarness` — 原生 `cache::AsyncDataCache` + 可选 SSD, 正面对手 (从参考移植, 不依赖我们的 FileCache)。
+- `FcbiHarness` — 我们的 filecache2。**buildCache 经 FileCacheManager/Factory 拿 FileCachePtr,
+  禁止裸 `new FileCache`** (复用本 task 已跑通的 `FileCacheSeekBenchmark.cpp` 的 Manager 建法)。
+  readBatch 用我们的 `FileCacheBufferedInput` 签名 (`FileCacheReadOptions`/`FileCacheRequestContext`/
+  双 IoStats、实例 `getCommonOrigin()`);include `velox/ch/Disks/IO/FileCacheBufferedInput.h`。
+
+相对参考实现的改进:参考版三个 harness 各自复制了 sweep/driver/统计;我们**去重**上提到基类。
+
+### 文件范围 (只在 velox/ch/benchmarks/, 不污染 velox 主干)
+
+创建:
+```text
+velox/ch/benchmarks/CacheReadHarness.h
+velox/ch/benchmarks/CacheReadHarness.cpp
+velox/ch/benchmarks/FileCacheWrapperBenchmark.cpp
+```
+修改:
+```text
+velox/ch/benchmarks/CMakeLists.txt   (+ velox_ch_filecache_wrapper_benchmark target, guard VELOX_ENABLE_BENCHMARKS)
+velox/ch/benchmarks/FileCacheSeekBenchmark.cpp   (微基准打牢, 见下)
+```
+每个新 C++ 文件加 Apache 2.0 头。链接实际存在的 target (mono build:`velox_ch_filecache`,
+不是 `_dwio`/`_manager`/`_core` 分库);cbi 需 `velox_common_caching`/AsyncDataCache 相关库。
+
+### gflags (对齐参考 + 补并发)
+
+保留参考的关键开关:`--wrappers`、`--workloads=sequential,zipfian,uniform`、`--read_sizes_kib`、
+`--target_ws_gb`、`--batch`、`--measure_passes` (取中位数)、`--cold_each_pass`、`--fcbi_segment_mb`、
+`--filecache_root`、`--ram_cache_gb`/`--ssd_cache_gb`/`--ram_num_shards` (cbi)、`--out`。
+**补 `--num_threads`** (并发变体, 参照原生 AsyncDataCacheTest 的多线程负载;线程预算 ≤16 避免超订)。
+
+### FileCacheSeekBenchmark 微基准打牢
+
+- miss/bypass 改 `BENCHMARK_RELATIVE` 相对 hit 基线 (直接读出相对倍率)。
+- 把 `makeInput` 建对象开销移出计时段 (只计 enqueue+drain)。
+- hit 变体加「不读源」断言:用 pread 计数的 ReadFile 包装, 命中路径 preadCount 不增 —
+  hit 若退化成读源即失败 (防性能假绿)。
+
+### 验收 gate
+
+- `velox_ch_filecache_wrapper_benchmark --wrappers=all --workloads=sequential,zipfian --target_ws_gb=1
+  --measure_passes=1`:三引擎 (fcbi/cbi/dbi) 都构造成功、跑完输出吞吐+相对 delta, exit 0。
+- 多线程变体 (`--num_threads=4`) 跑不崩, exit 0。
+- fcbi harness grep 确认**无裸 `new FileCache`** — 经 Manager/Factory 构造。
+- 强化后的 `FileCacheSeekBenchmark` 构建+短跑 exit 0, hit 的不读源断言生效 (可 RED 验证:
+  故意让 hit 读源则断言失败)。
+- 三个既有 gate (buffered_input 19 / manager 19 / core_scc 47) + e2e 17 **不回归**。
+- **生产文件 diff 为空** (除非发现真集成 bug — 须先在 receipt 描述再改)。
+- 不 push;无 -j;日志入 build 目录。
+
+### receipt
+
+追加到 `port/task/result/015-filecache-velox-e2e-result.md` (保留原 attempt + review):
+一节 "## Perf 扩展 (wrapper benchmark)", 含 baselines、文件、命令+exit+日志、三引擎背靠背
+数字表 (吞吐+delta)、多线程结果、fcbi-经-Manager 证据、微基准打牢的 RED 证据、生产零改动确认。
