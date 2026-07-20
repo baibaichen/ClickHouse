@@ -281,12 +281,43 @@ environment_profile: home-chang
   core_scc 47). Controller independently re-ran the E2E binary (17/17) and verified
   the anti-false-green pread-counter.
 
-- **CURRENT STATE: Velox MVP done. No task is in progress.** The next tasks are all
-  optional/deferred and require an explicit user decision to start:
+- **CURRENT STATE: Velox MVP done. Task 018a (connector integration) accepted.**
+  - **Task 018a is accepted** (Velox `dac50ae27` "Task 018a: Route Hive connector
+    reads through FileCache via BufferedInputBuilder"; ClickHouse receipt+handoff =
+    this commit). Pure-Velox connector integration: a
+    `FileCacheBufferedInputBuilder` registered through the official
+    `BufferedInputBuilder::registerBuilder` extension point routes the Hive
+    connector read path to `FileCacheBufferedInput`. **Velox trunk unchanged**
+    (all code under `velox/ch/`; Controller confirmed zero diff outside
+    `velox/ch/`). Routing model (resolved worker-attempt-1 blocker B1, user
+    decision 2026-07-21 "validate at install, take at create"):
+    `registerFileCacheBufferedInputBuilder` calls `getDefault` once as fail-fast
+    install-time validation (throw propagates, never caught); the builder holds a
+    `FileCacheManager&` and resolves `getDefault` per call in `create` (cannot
+    throw for missing default post-validation); "not installed" deployments never
+    register the builder and keep the native `DefaultBufferInputBuilder` (that
+    registration boundary is the fallback — no internal `create` fallback branch);
+    the FileCache/AsyncDataCache mutual-exclusion guard stays per-call. This does
+    NOT weaken design 02's "missing default = error / no fall back" contract (the
+    Manager lookup is never made non-throwing and its error is never swallowed).
+    Gate `velox_ch_filecache_connector_test` 4/4; Controller INDEPENDENTLY
+    reproduced the RED (neutralized create() -> case-1 fails at
+    FileCacheBufferedInputBuilderTest.cpp:323, restored -> green) and reran all
+    six regression gates (e2e 17 / buffered_input 19 / manager 19 / core_scc 47 /
+    observability 14 / cancellation 5, all 0 failed / 0 skipped) plus both
+    benchmarks (build OK). **This unblocks the parked TPCH wrapper filecache
+    engine** (Task 015 extension); a full SF100x22x3 run stays a manual,
+    user-driven step (split hard-requirement: `--num_splits_per_file=1`).
+  - **NEXT** tasks are all optional/deferred and require an explicit user
+    decision to start:
+
   - Task 016 (optional post-MVP): `WriteBufferToFileSegment` for Ephemeral segments.
   - Task 017 (optional post-MVP): observability + cancellation hardening (also the
     home for several deferred items below).
-  - Tasks 018-019 (future): Gluten host integration + builder/lifecycle E2E.
+  - Task 018 (future, second phase): Gluten host config/assembly — install
+    `FileCacheManager` into `VeloxBackend`, config switches + lifecycle, reusing
+    the Task-018a `registerFileCacheBufferedInputBuilder`. Task 019 (future):
+    Gluten builder/lifecycle E2E.
   - Deferred / backlog (do NOT lose): F-011-T priority-eviction white-box tests
     (optional hardening); Task 006 F-CALLERID diagnostic; SD8 scheduler
     recursive_mutex; Task 004 StatusFile crash-recovery diagnostics R3 (pre-release);
