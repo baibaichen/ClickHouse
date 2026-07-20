@@ -2,183 +2,162 @@
 
 ## Status
 
-Round 2 of the whole-port source-contract review, run at the mandatory
-post-Task-014 checkpoint. Scope: Tasks 003-014, with emphasis on the code that did
-not exist in round 1 (the center SCC 011/012, Factory/Manager/OpenedFileCache 013,
-the DWIO reader/handoff 014). Per the user's directive this round reviews BOTH
-consumer-observable semantics AND internal implementation structure (guide §3).
+```text
+environment_profile: home-chang
+review_round: 2
+decision_status: pending_user_review
+task_015_allowed: false   （需用户明确批准）
+```
 
-Method: guide A (consumer contract ledger) then guide D (four parallel read-only
-subsystem sweeps), each re-deriving contracts from real CH callers (file:line) and
-diffing the actual Velox implementation. Controller then independently verified the
-load-bearing findings and deduplicated against round 1.
+冻结的实现基线（本轮审查针对的代码）：
 
-Artifacts:
-- Ledger: `port/task/fullview/home-chang/2/011-014-consumer-contract-ledger.md`
-- Sweeps: `port/task/fullview/home-chang/2/evidence/{011-priority-eviction,012-center-scc,013-factory-manager,014-reader-handoff}-review.md`
-- Round-1 baseline (authoritative, carried forward): `port/task/fullreview/root-oss/1/003-010-review-decisions.md`
+```text
+ClickHouse: ch-filecache2 分支
+Velox:      bc78ef541（Task 014 已接受时的 HEAD）
+```
 
-## 0. Verdict summary
+本文件记录第二轮整体复审的结论。第二轮的范围是 **Tasks 003-014**，重点在第一轮
+（只审 003-010）时还不存在的代码：中心 SCC（011/012）、Factory/Manager/OpenedFileCache
+（013）、DWIO reader（014）。按用户要求，这一轮**不仅审对外语义是否对齐 CH，也审内部
+实现结构是否对齐**（结构直译原则）。
 
-| Shard | Verdict | Confirmed | Plausible |
-|---|---|---|---|
-| Task 011 priority/eviction | ACCEPT | 1 test-coverage hole (F-011-T) | 1 (F-011-O reachability — resolved accept) |
-| Task 012 center SCC | ACCEPT (zero unresolved) | 0 | 4 advisory (benign/already-signed) |
-| Task 013 Factory/Manager/OpenedFileCache | ACCEPT | 0 reopen | 2 minor (benign) |
-| Task 014 reader/handoff | **REOPEN** | F-014-1 (real hole) [F-014-2 WITHDRAWN — misdiagnosis, not a deviation] | 2 (non-blocking) |
+方法：先派 1 个只读 agent 产出「消费者合同台账」，再派 4 个只读 agent 分子系统清扫
+（011 优先级/淘汰、012 中心 SCC、013 工厂/管理器/句柄缓存、014 reader）。Controller
+独立复核关键发现，并与第一轮已签字决策去重。
 
-Net: **one task reopens (014)** for one genuine behavior hole (F-014-1). F-014-2 was
-WITHDRAWN after code verification (reading the local cache segment is segment-relative
-in BOTH CH and Velox — a match, not a deviation). Everything else accepts. §3 structural fidelity of the
-center SCC is confirmed in code, not merely asserted.
+第一轮基线（继续沿用，不重审）：`port/task/fullreview/root-oss/1/003-010-review-decisions.md`
 
-## 1. Dedup against round 1 (overlapping items — NOT re-litigated)
+产物：
+```text
+port/task/fullview/home-chang/2/011-014-consumer-contract-ledger.md   （台账）
+port/task/fullview/home-chang/2/evidence/011-priority-eviction-review.md
+port/task/fullview/home-chang/2/evidence/012-center-scc-review.md
+port/task/fullview/home-chang/2/evidence/013-factory-manager-review.md
+port/task/fullview/home-chang/2/evidence/014-reader-handoff-review.md
+```
 
-These round-2 structural findings map to already-signed round-1 decisions; recorded
-as **already-signed, still holds** (or condition now discharged), not as new work:
+## 0. 一句话总览
 
-| Round-2 label | Round-1 decision | Status |
+四个子系统里，**011 / 012 / 013 三个直接通过**（对外语义和内部结构都对齐 CH），
+**只有 014 发现一个真 bug**，已修复并验收。另有一个我一开始误判的「偏离」经复核**撤销**，
+一个测试加固项**降级为不阻塞的待办**。
+
+| 子系统 | 判定 | 一句话 |
 |---|---|---|
-| SD-012-1 `MetadataBucket`→`F14FastMap` ("SD4") | Round-1 **SD4** (decisions §5) authorized an F14 metadata bucket *only if review proves no iterator/ref/address survives a mutation* | **Condition discharged.** Shard 012 read every bucket consumer in `Metadata.cpp` and confirmed `getKeyMetadata` copies `it->second` into a `KeyMetadataPtr` under the bucket lock before any rehash-inducing insert; remove/iterate hold the lock across the batch and mutate only via terminal `erase(it)->next`. No SD1-class escape. **Accept, no new sign-off needed.** |
-| SD-011-2 absl→F14 in eviction containers | Round-1 **SD2** (decisions §4) | Already-signed. `original_queue_types` correctly stays `std::unordered_map` (SD-011-1). |
-| SD1 no-escape invariant (009 `ShardedMap`) | Round-1 **SD1/M1** (decisions §4) | Already-signed; round-2 re-verified the invariant holds in the 012 code paths that use the sharded metadata. |
-| SD3 `KeyMetadata`=std::map, SD5 std::list queues | Round-1 **§5 "must remain unchanged"** | Confirmed preserved in code (node-stability load-bearing; not swapped). |
-| errno reconcile (physical<=downloaded<=reserved) | Round-1 **§3 errno contract** (012 consumes; producer is a pre-release gate) | Already-signed; 012 matches. Pre-release producer gate still open (unchanged). |
-| D-011-1..7 infra mappings, B2 overcommit-metric drop | Task-011 "Approved dependency mappings" + round-1 **B2/O2** | Applied exactly as signed. |
-| SD6/SD7/SD9, D3/D9/D11, R2/R7 | Round-1 §4 + Task-012 amendments | Already-signed; no code divergence found. |
+| Task 011 优先级/淘汰 | **通过** | 忠实直译；淘汰算法、锁、容器都对齐 CH |
+| Task 012 中心 SCC | **通过** | 近逐行直译；关键并发不变量已在代码里证明成立 |
+| Task 013 工厂/管理器/句柄缓存 | **通过** | 无过度移植；句柄缓存没被误加淘汰策略 |
+| Task 014 reader | **重开→已修** | 一个真 bug：缓存文件被外部截断时没有自愈重取 |
 
-## 2. New decisions required (this round)
+## 1. 需要修的（唯一一条）
 
-### F-014-1 — REOPEN Task 014: self-heal-on-external-truncation is dropped (CONFIRMED)
+### 缓存文件被外部截断时，应自愈重取——原来漏了
 
-**Controller-verified against source.** CH `getCacheReadBuffer`
-(`src/Disks/IO/CachedOnDiskReadBufferFromFile.cpp:448-477`): for a size-in-filename
-segment in `DOWNLOADED`/`DETACHED` state, it reads the actual on-disk cache-file
-size and, if `cache_file_size < file_segment.getDownloadedSize()`, resets the reader
-and returns `nullptr` — telling the caller to bypass the cache and re-fetch from the
-source (self-heal), plus an empty-file `LOGICAL_ERROR` guard at `:474`. CH's own
-comment (`:465-469`) states throwing `CANNOT_READ_ALL_DATA` here would be
-misinterpreted as a broken `MergeTree` part and wrongly detach it.
+大白话：ClickHouse 读一个缓存文件前，会先看这个文件在磁盘上的实际大小。如果比记录的
+小（说明被 ClickHouse 之外的东西截断了，比如备份出错），它就**不信这份缓存，改从源头
+重新下载**，而且故意**不报错**——因为这个缓存文件可能正垫着数据表的 mark 文件，报错会
+让 ClickHouse 误以为数据分区坏了、把整个分区摘掉。我们的移植原来直接打开就读，文件被
+截断就**静默读到错数据**。
 
-Velox `getCacheReadBuffer` (`FileCacheInputStream.cpp:123-146`) opens the local
-cache file and returns it **unconditionally** — no size check, no empty-file guard.
+- **Owner**：Task 014（重开）。
+- **CH 出处**：`CachedOnDiskReadBufferFromFile.cpp:448-477`。
+- **为什么之前漏了**：Task 014 是照「CH 函数→Velox 函数」的映射表移植的，映射表只说
+  「这个函数负责打开本地缓存文件」，没把 CH 函数体里那段截断自愈的防御分支列成一条
+  独立要求。worker 把主干实现对了，防御分支漏了；当时逐 task 的复审和 worker 看同一张
+  映射表，盲区相同。这正是整体清扫存在的意义——它按预期抓到了逐 task 复审抓不到的洞。
+- **决定**：移植 CH 的自愈分支——打开缓存文件后读实际大小，若「文件名带 size 的
+  已下载/已分离段」且实际大小 < 记录大小，则改走 bypass 从源头重取（不报错）；空文件则
+  报 LOGICAL_ERROR 类异常。段内相对坐标不动（见第 3 节）。加两个测试：截断文件、空文件
+  都能自愈返回正确数据；把自愈分支去掉时测试必须变红。
+- **状态**：**已完成并验收**。Velox 提交 `e142429ef`。Controller 独立复现了「去掉自愈
+  分支→两测试变红→还原→三套测试全绿（19/19/19/47）」。
 
-Why this is a hole and NOT covered by the two accepted exclusions: the accepted
-exclusions were *remote-object* truncation (`CANNOT_READ_ALL_DATA`, needs
-`getRemoteFileMetadata`, genuinely absent in Velox) and `readBigAt` (deliberately
-not ported). F-014-1 is a *different mechanism* — the **local cache-file** size —
-and every input CH uses is present in Velox: `FileSegment::hasSizeInFileName`,
-`getDownloadedSize`, `state`, and `ReadBufferFromVeloxReadFile::size()/tryGetFileSize()`.
-So it is an omitted behavior, not a platform limitation.
+## 2. 通过的三个子系统（内部结构逐条核实）
 
-Failure scenario: a cache-segment file truncated outside ClickHouse (or a
-zero-length cache file) yields a silent short read instead of a transparent
-re-fetch; when that file backs a MergeTree mark/metadata file the read is corrupt.
+### Task 011 优先级/淘汰 — 通过
 
-Fix (Task 014 reopen, implementation + test):
-- In `getCacheReadBuffer`, after opening the local file, when
-  `hasSizeInFileName() && state ∈ {DOWNLOADED, DETACHED}` and the opened file's size
-  `< getDownloadedSize()`: reset the cache reader and signal CACHED->BYPASS (return a
-  null/empty sentinel that the caller routes to `REMOTE_FS_READ_BYPASS_CACHE`),
-  mirroring CH `:456-471`. Add the empty-file guard (`cache_file_size == 0`).
-- RED test + false-green probe: pre-populate a DOWNLOADED size-in-filename segment,
-  externally truncate its cache file, then read — assert the stream returns the
-  correct full bytes (re-fetched from source) and did NOT short-read/throw. The test
-  must go RED against the current unconditional-open code.
+大白话：管「缓存满了先删谁」的那套逻辑（LRU、SLRU 冷热两级、Split 分区）。
 
-### F-014-2 — WITHDRAWN (misdiagnosis; NOT a deviation, no sign-off needed)
+- 淘汰算法、锁结构、容器类型都和 CH 一致：链表用 `std::list`（保证 splice 和迭代器
+  稳定）、两个淘汰游标独立、SLRU 冷热两队列不合并、Split 四个限额分别算并支持回滚。
+- 代码本身正确（逐行核实）。
+- **判定：通过，不重开。**
 
-**This finding is retracted after code-level verification (user-driven, 2026-07-20).**
-The original claim — "CH sets CACHED read-until in absolute coords, Velox uses
-segment-relative, therefore a §3 deviation" — was a **misidentification of the CH
-line**. The cited `CachedOnDiskReadBufferFromFile.cpp:796`
-`setReadUntilPosition(min(range.right+1, file_size))` is the read-until on
-`state->buf`, which for the CACHED read type IS the cache-file reader working in the
-segment file's own space — not evidence of an absolute cache-file coordinate.
+### Task 012 中心 SCC — 通过
 
-The load-bearing comparison is how each side SEEKS the local cache-file reader:
-- CH CACHED (`CachedOnDiskReadBufferFromFile.cpp:820-829`):
-  `seek_offset = offset - range.left; state->buf->seek(seek_offset, SEEK_SET);`
-- Velox CACHED (`FileCacheInputStream.cpp:451-452`):
-  `seekOffset = offset - range.left; state->reader->seek(seekOffset, SEEK_SET);`
+大白话：FileCache 的心脏——段、元数据、缓存主体、查询限额这几个互相依赖的核心类。
 
-**Byte-for-byte identical: both use segment-relative `offset - range.left`.** The
-real cache-reading class on our side is `ReadBufferFromVeloxReadFile` wrapping the
-per-segment 0-based file; CH's is the `pread` `ReadBufferFromFile` over the same
-per-segment file. Reading the local cache segment is segment-relative in BOTH — this
-is a MATCH, not a deviation. No structural deviation, no §3 sign-off, no code change.
-The user was correct that this layer is (and should be) relative and that CH is the
-same.
+- 近逐行忠实直译 CH。
+- 一个关键并发点核实过：元数据用了 folly 的 F14 哈希表（rehash 会搬移值），第一轮
+  **有条件地**批准过（SD4：只有证明「加锁回调返回前不残留任何指向表内值的引用/迭代器」
+  才允许）。这一轮**在代码里逐个使用点证明了这条成立**（取值时先在锁内拷出智能指针，
+  再做可能触发 rehash 的插入）。条件已满足。
+- **判定：通过，零未决。**
 
-### F-011-T — test-coverage note, DOWNGRADED to non-blocking backlog (not a reopen)
+### Task 013 工厂/管理器/句柄缓存 — 通过
 
-`PriorityEvictionTest.cpp` white-box-includes the internal priority headers and
-directly constructs `LRUFileCachePriority`/`SLRUFileCachePriority` (so the internals
-ARE unit-drivable — it is not black-box-limited), but its 7 existing cases only
-exercise post-`add` empty-state getters and hold accounting; none fills a queue,
-triggers eviction, drives an SLRU promote/downgrade, or the hold-space split.
+大白话：管缓存实例注册、运行期资源所有权、以及缓存已打开文件句柄的那层。
 
-**Decision (user-corrected 2026-07-20): DOWNGRADE to non-blocking backlog. Do NOT
-reopen 011, do NOT force into Task 015 as a gate.** Rationale:
-1. The eviction IMPLEMENTATION is already §3-verified as a faithful literal
-   translation of CH (shard 011 = ACCEPT); the code is correct, this is only
-   regression-net thinness.
-2. Eviction ORDER / SLRU transitions are `FileCache`-internal and NOT
-   consumer-observable through the public get/getOrSet/tryReserve API, so they fail
-   the A-ledger "consumer-observable behavior" bar. A white-box assertion on internal
-   eviction order would weld the test to the current implementation structure — a
-   brittle test that mis-fires on legitimate refactors, poor risk/reward.
-3. Therefore it is NOT a correctness gate for Task 015.
-Parked as an optional standalone hardening test task; not part of the zero-unresolved
-gate.
+- **重点核实并排除一个陷阱**：CH 的 `OpenedFileCache` 是「1024 分桶、弱引用自清」的
+  句柄表，**没有任何淘汰/容量上限**。移植时很容易误加一个 LRU 上限——核实确认**没加**，
+  是纯弱引用自清，和 CH 一致。
+- 工厂注册、资源所有权移交、关停顺序都对齐设计。
+- **判定：通过，不重开。**
 
-## 3. Resolved-on-verification (no action)
+## 3. 我一开始误判、经复核撤销的一条
 
-- **F-011-O / O-011** (CacheUsage `CacheUsagePerUser` over-port): **NOT over-port.**
-  `collectIdleClients` is reached on a real path (`FileCache.cpp:1983`), not only via
-  the excluded overcommit policy. Keep as-is. Accept.
-- **SD-012-3** (QueryLimit `query_map`/`records` = F14): benign, same class as the
-  signed SD1 (shared_ptr values, dedicated `query_map_mutex`, no ref/iterator escape;
-  `removeQueryContext` moves+erases under the mutex, returns by value). Accept; add a
-  bookkeeping ledger row (N1). Not a reopen.
-- **013 minor PLAUSIBLE**: error-text punctuation (no CH-text oracle → benign);
-  single-key `remove(path,flags)` unused by seams (legitimate CH-mirror API, not
-  over-port). No action.
-- **013 O-013b LRU-trap**: **CLEARED** — `OpenedFileCache.h` has zero
-  LRU/capacity/eviction (grep-confirmed); pure weak_ptr self-clearing 1024-shard
-  table mirroring CH `src/IO/OpenedFileCache.h`.
+### 「读缓存段用相对坐标 vs CH 用绝对坐标」——撤销，其实两边一样
 
-## 4. Zero-unresolved gate
+大白话：我一开始以为「读单个缓存段文件时，我们用段内偏移、CH 用整文件绝对偏移，是个
+结构偏离，得登记签字」。用户质疑后逐行核对代码，发现**我比错了对象**：
 
-**NOT met — one blocker.** Task 014 reopens for **F-014-1 only** (fix + RED test).
-F-014-2 is signed-accepted (no code change; ledger row §5). F-011-T is downgraded to
-non-blocking backlog (not a gate). Task 015 must not start until F-014-1 is
-fixed+tested and the user explicitly approves.
+- CH 读缓存段文件：`seek_offset = offset - range.left; seek(seek_offset)`
+  （`CachedOnDiskReadBufferFromFile.cpp:820-829`）——**段内相对**。
+- 我们读缓存段文件：`seekOffset = offset - range.left; seek(seekOffset)`
+  （`FileCacheInputStream.cpp:451-452`）——**逐字一致**。
 
-Carried-forward pre-release items (unchanged, not part of this gate): Task 004
-StatusFile R3; Task 006 F-CALLERID; Task 008 sipHash R4/R5; SD8 recursive_mutex;
-the errno-producer pre-release gate.
+两边读缓存段都用段内相对坐标，本来就对齐。我之前把外层给整个 buffer 设的 read-until
+上界那一行错当成了缓存 reader 的坐标。**这里没有偏离，撤销，不需签字也不改码。** 用户
+判断正确。
 
-## 5. Structure-deviation ledger — new signed rows (this round)
+## 4. 降级为「不阻塞待办」的一条
 
-| CH 结构 | Velox 替代 | 保证差异 | 硬约束出处 | E 探针证据 | 人工签字 |
-|---|---|---|---|---|---|
-| `FileCacheQueryLimit` `query_map`/`records` = node-based | `folly::F14FastMap` (值为 shared_ptr) | flat rehash 搬移 value（同 SD1 类） | 与已签字 SD1 同类；`query_map_mutex` 保护，`removeQueryContext` move+erase 后按值返回，无 ref/iterator 逃逸 | 代码核验无逃逸（shard 012） | **SIGNED** (SD-012-3/N1, review 2) |
+### 优先级/淘汰的测试偏薄
 
-`MetadataBucket`→`F14FastMap`（SD-012-1）不新开行：它是 round-1 **SD4** 的条件授权，
-本轮已在代码中证明 no-escape 不变量成立，条件解除，沿用 SD4 签字。
+大白话：011 的淘汰**代码是对的**，但它的**测试**只测了空队列的取值，没真正填队列、触发
+淘汰、驱动 SLRU 升降级。
 
-## 6. F-014-1 root cause (user asked: 不是要求 exactly 移植吗？)
+- 用户指出关键点：淘汰顺序是 FileCache 的**内部行为**，从对外 API 根本观测不到，所以
+  按「消费者可观测行为」的标准**没法给它写干净的对外测试**；硬写一个白盒的淘汰顺序断言
+  会把测试焊死在当前实现结构上，以后重构容易误报，得不偿失。
+- **决定：降为不阻塞的待办**（可选的独立加固测试任务），不重开 011，也不塞进 Task 015
+  当门槛。淘汰代码已在本轮结构核实中确认正确。
 
-§3 铁律确实要求 exactly 移植内部结构；但 §3 只盯**内部结构**（锁/容器/状态机形状），
-**行为漏一条它不覆盖**——那是 A 台账 + D 清扫的职责。F-014-1 正是行为漏移植：
+## 5. 与第一轮的去重（重叠项，不重复处理）
 
-- Task 014 从 CH `CachedOnDiskReadBufferFromFile` 移植时走「函数→函数映射表」
-  （task 文件的 mapping table），映射表只说 `getCacheReadBuffer` 负责「打开本地缓存
-  文件」，没把 CH 函数体内那段**截断自愈分支**（`cpp:448-477`）列成独立合同行。
-- worker 实现了主干（打开并返回本地文件），主干对；防御性分支不在映射表里就漏了。
-- 逐 task 的 controller review 和 worker 共享同一张映射表，盲区相同（guide 第 1 节
-  根因 3：逐 task review 共享盲区）。只有本轮拿 CH 源码逐行 diff 的整体清扫 diff 出来。
+这一轮审到的结构项，凡是和第一轮已签字决策重叠的，都标为「已签字、仍成立」，不重复立项：
 
-教训：移植粒度是「函数」而非「函数体每条分支」时，防御性/边界分支最易漏。
-这正是 checkpoint 整体清扫存在的意义——它按预期抓到了一条 per-task review 抓不到的洞。
+| 本轮审到的 | 对应第一轮决策 | 状态 |
+|---|---|---|
+| 元数据桶用 F14 哈希表 | 第一轮 **SD4**（有条件批准） | **条件已在代码中满足**，沿用签字 |
+| 淘汰容器 absl→F14 | 第一轮 **SD2** | 已签字 |
+| ShardedMap 用 F14 | 第一轮 **SD1** | 已签字，本轮再确认不变量在 012 里成立 |
+| KeyMetadata=std::map、队列=std::list | 第一轮 **§5 不可改** | 确认代码里保留了 |
+| errno 对账（物理≤已下载≤已预留） | 第一轮 **§3 errno 合同** | 已签字，012 一致；errno 生产者仍是上线前的活 |
+| 线程池/调度器/内存映射（SD6/SD7/SD9）等平台映射 | 第一轮 **§4** | 已签字，无代码分歧 |
+
+新签字一条：查询限额（QueryLimit）的两张表也用了 F14——和 SD1 同类、同样安全（值是
+智能指针、有专门的锁、无引用逃逸），登记接受。
+
+## 6. 结论与门槛
+
+**本轮零未决。** Tasks 003-014 全部接受：三个子系统直接通过，014 的唯一真 bug 已修复
+验收，误判项撤销，测试加固降级为待办，其余与第一轮去重。
+
+**下一步 = Task 015**（纯 Velox 的端到端测试 + 随机 seek 基准，MVP 验收关口）。
+按协议，Task 015 **需要用户明确批准才能开始**（这是 Task 014 后的强制检查点门槛）。
+
+沿用不丢的待办：优先级/淘汰白盒测试（可选加固）；缓存诊断文本恢复（F-CALLERID）；
+调度器 recursive_mutex 收尾；StatusFile 崩溃诊断（上线前）；sipHash 向量测试（019 后）；
+errno 生产者（上线前）。Task 014 记录在案的两个豁免（远端对象截断、readBigAt）仍成立，
+整机覆盖归 Task 015。
