@@ -7,10 +7,10 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Task 012 center SCC accepted
+Current state:        Task 013 Factory/Manager accepted
 Repair before resume: none
-Then dispatch:         Task 013 Factory/Manager Worker
-The complete Tasks 011-012 SCC is green in mono and non-mono.
+Then dispatch:         Task 014 buffered-input Worker
+Manager-owned runtime services and shared worker budgeting are accepted.
 Tasks 011-014 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, and false-green
   probe requirements.
