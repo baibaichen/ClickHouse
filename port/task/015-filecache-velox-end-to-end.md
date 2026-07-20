@@ -713,3 +713,74 @@ velox/ch/benchmarks/FileCacheSeekBenchmark.cpp   (微基准打牢, 见下)
 追加到 `port/task/result/015-filecache-velox-e2e-result.md` (保留原 attempt + review):
 一节 "## Perf 扩展 (wrapper benchmark)", 含 baselines、文件、命令+exit+日志、三引擎背靠背
 数字表 (吞吐+delta)、多线程结果、fcbi-经-Manager 证据、微基准打牢的 RED 证据、生产零改动确认。
+
+## Post-MVP 性能测试扩展 2:TPCH 端到端三引擎对比 (user 2026-07-20)
+
+微基准 (seek + wrapper) 只能测缓存层裸开销, 且 fcbi vs cbi 强行同层比无意义 —
+cbi (原生 AsyncDataCache) 是驱逐式 RAM+SSD, fcbi (我们) 是磁盘持久缓存, 两种缓存
+哲学不同, 微基准里 cbi 永远 `source(!)` (回源混命中), 测不出干净对比。**真正能回答
+"fcbi vs cbi 谁快"的是 TPCH 端到端** — 让两种缓存各按自己算法在真实查询里发挥。这也是
+参考 HANDOFF 的主力测法。
+
+### 要移植的:AbBenchmark 框架 (ch-filecache -> filecache2)
+
+ch-filecache 分支有一套小巧的 A/B 对比 benchmark (共 ~563 行), 加了 `--input_source=
+cbi/filecache/direct` 选引擎, 端到端跑真实 TPCH SF100 parquet:
+```text
+velox/benchmarks/AbBenchmarkBase.h   (73)   velox/benchmarks/AbBenchmarkBase.cpp   (310)
+velox/benchmarks/AbBenchmarkMain.h   (34)   velox/benchmarks/AbBenchmarkMain.cpp   (146)
+```
+设计文档 (只读参考):ch-filecache `docs/superpowers/specs/2026-05-31-direct-read-baseline-design.md`。
+数据集 (已确认在):`/home/chang/test/tpch-double/tpch-generated-100.0-parquet-decimal_as_double` (34G)。
+
+### 三处适配 (同 wrapper benchmark 那类, 但挂在 TPCH 查询引擎上)
+
+- (a) **include 路径**:`AbBenchmarkBase.cpp:20` 用的是 ch-filecache 线的
+  `velox/common/caching/filecache/FileCache.h`。换成我们的
+  `velox/ch/Interpreters/FileCache/` + `velox/ch/Disks/IO/FileCacheBufferedInput.h`。
+- (b) **FileCache 获取/stats 经 Manager**:`AbBenchmarkBase.cpp:142` `ch::FileCache::getInstance()`
+  + `:143` `fileCache->stats()` 假设 FileCache 是全局单例可裸取。我们的 FileCache 由
+  FileCacheManager 管理, **不能裸 getInstance/裸构造** — 改成经 `FileCacheManager::getInstance()`
+  / `FileCacheManager::create(Options)` 拿 FileCachePtr 和 stats (复用 wrapper benchmark 的
+  `FcbiHarness` 已跑通的 Manager 建法)。
+- (c) **BufferedInput 构造签名**:`--input_source=filecache` 那条路构造 FileCacheBufferedInput
+  用我们的签名 (`FileCacheReadOptions`/`FileCacheRequestContext`/双 IoStats、实例 getCommonOrigin())。
+- cbi (`--input_source=cbi`) 和 direct 两条路不依赖我们的 FileCache, 近原样移植。
+
+### 文件范围
+
+放 `velox/ch/benchmarks/` (与其它 benchmark 一起, 不污染 velox 主干 `velox/benchmarks/`):
+```text
+创建: velox/ch/benchmarks/AbBenchmarkBase.{h,cpp}  velox/ch/benchmarks/AbBenchmarkMain.{h,cpp}
+      (或合并成 velox/ch/benchmarks/TpchAbBenchmark.cpp, worker 择优)
+修改: velox/ch/benchmarks/CMakeLists.txt  (+ velox_ch_filecache_tpch_ab_benchmark target,
+      需链 velox_tpch_connector / velox_exec / parquet reader 等, 照原生 velox_tpch_benchmark 的链)
+```
+每新文件 Apache 2.0 头。fcbi 经 Manager 构造 — **禁止裸 `new FileCache` / 裸 getInstance**。
+
+### split=1 已知前提 (关键, 别忘)
+
+`num_splits_per_file` 是 gflags 参数 (`QueryBenchmarkBase.cpp:58 DEFINE_int32(..., 10, ...)`),
+**默认 10, 不是写死**。但参考 HANDOFF §6 历史结论:**split=10 会让小表被反复读、制造假的
+读放大, 使 fcbi 虚低;必须传 `--num_splits_per_file=1` 才公平** (那时 fcbi 与 cbi 端到端持平)。
+所以:跑 TPCH 对比的命令**必须带 `--num_splits_per_file=1`** — 这是 checklist 项, 不改上游
+默认值 (改默认会动 velox 主干、影响面大)。worker 跑验收和 receipt 里的所有 TPCH 命令都要带它。
+
+### 验收 gate
+
+- 构建 `velox_ch_filecache_tpch_ab_benchmark` exit 0。
+- 冒烟跑 (小范围, 别跑满 SF100×22×3 轮 — 太慢):挑 1-2 个 query、1 轮, 三引擎
+  (`--input_source=direct/cbi/filecache`) 各 exit 0、出端到端时间。命令**必带 `--num_splits_per_file=1`**,
+  `--input_source=filecache` 时 fcbi 经 Manager 构造。
+- fcbi 路径 grep 确认无裸 `new FileCache` / 无裸 `ch::FileCache::getInstance` (经 Manager)。
+- 既有 gate (e2e 17 / buffered_input 19 / manager 19 / core_scc 47) + 两个已接受的 benchmark
+  仍构建通过、不回归。
+- 生产文件 diff 为空 (除非发现真集成 bug — 先在 receipt 描述再改)。
+- 不 push;无 -j;日志入 build 目录。数据集大 (34G), 冒烟用 `--query_id` 限定少量 query。
+
+### receipt
+
+追加 "## Perf 扩展 2 (TPCH AbBenchmark)" 到 015 receipt:baselines、文件、命令 (含
+`--num_splits_per_file=1`)+exit+日志、三引擎冒烟端到端时间、fcbi-经-Manager 证据 (grep)、
+split=1 已应用证据、生产零改动确认。**注**:完整 SF100×22×3 轮的正式跑数由用户按需手动执行
+(太耗时, 不在 worker 冒烟范围);worker 只需证明框架能三引擎端到端跑通。
