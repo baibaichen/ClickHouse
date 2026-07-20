@@ -243,16 +243,41 @@ environment_profile: home-chang
   Two CH reader cases (remote-object truncation, `readBigAt` source failure)
   excluded with recorded API-limitation justification, deferred to Task 015.
 
-- **NEXT = MANDATORY Tasks 003-014 whole-port source-contract review (STOP POINT).**
-  Per EXECUTION_PROTOCOL "After Task 014" and ENVIRONMENT.md: dispatch NO Task 015
-  Worker. Review the accumulated Tasks 003-014 (center SCC, Factory/Manager,
-  OpenedFileCache, the DWIO reader/handoff, cache miss/hit/seek/bypass, exception
-  cleanup, shutdown order) against CH source, real callers, approved designs,
-  implementation, tests, failure paths, and cross-task dependencies. Any finding
-  reopens the affected task and stops. Continue to Task 015 (Velox-only E2E +
-  random-seek benchmark) ONLY with zero unresolved findings AND explicit user
-  approval. This checkpoint is the current stop condition — do not proceed past it
-  autonomously.
+- **NEXT = MANDATORY Tasks 003-014 whole-port review — COMPLETED (round 2).**
+  Ran at the post-Task-014 checkpoint per EXECUTION_PROTOCOL. Method: guide A
+  (consumer contract ledger for the 011-014 dependency set) + guide D (four parallel
+  read-only subsystem sweeps: 011 priority/eviction, 012 center SCC, 013
+  Factory/Manager/OpenedFileCache, 014 reader/handoff), reviewing BOTH consumer
+  semantics AND §3 internal structure, deduplicated against round 1. Artifacts:
+  `port/task/fullview/home-chang/2/011-014-review-decisions.md` (+ ledger + 4
+  evidence sweeps).
+  Verdicts: **011/012/013 ACCEPT** (§3 confirmed in code — center-SCC F14 no-escape
+  invariant proven, OpenedFileCache has no LRU, all structural deviations map to
+  already-signed round-1 decisions). **014 REOPENED** for one CONFIRMED behavior hole
+  **F-014-1** (CH's self-heal-on-external-truncation in `getCacheReadBuffer` was
+  omitted). F-014-1 fixed + RED-verified + committed (Velox `e142429ef`).
+  **F-014-2 WITHDRAWN** — misdiagnosis: reading the local cache segment is
+  segment-relative in BOTH CH (`CachedOnDiskReadBufferFromFile.cpp:820-829`
+  `seek(offset-range.left)`) and Velox (`FileCacheInputStream.cpp:451-452`, identical);
+  no deviation, no sign-off, no code change. **F-011-T** (priority-eviction white-box
+  test thinness) downgraded to non-blocking backlog (impl §3-verified correct;
+  internal eviction order is not consumer-observable and a white-box order assertion
+  would be a brittle structure-welded test). Newly signed: SD-012-3/N1 (QueryLimit F14,
+  benign, same class as SD1).
+  **Zero-unresolved gate: MET.** Whole-port review 2 has no open finding.
+
+- **Task 015 is next** (Velox-only FileCache E2E + random-seek benchmark) — the
+  current MVP acceptance gate. It requires **explicit user approval** to start (the
+  post-Task-014 checkpoint gate). Do NOT dispatch a Task-015 worker without it.
+  - Backlog / deferred (do NOT lose): F-011-T priority-eviction white-box tests
+    (optional standalone hardening); Task 006 F-CALLERID; SD8 scheduler
+    recursive_mutex; Task 004 StatusFile R3 (pre-release); Task 008 sipHash R4/R5
+    (post-019); the errno-producer pre-release gate. Task-014 documented exclusions
+    (remote-object `CANNOT_READ_ALL_DATA`, `readBigAt`) remain legitimate; whole-system
+    coverage is Task 015.
+  - Execution rules unchanged: worker/controller file-only protocol; only the
+    Controller commits (local only, NEVER push); no -j; per-task logs under the velox
+    build dir; big .cpp authored incrementally.
   - Deferred / parked (do NOT lose these): Task 006 F-CALLERID (post/pre-release
     diagnostic); SD8 scheduler recursive_mutex (later task, controller suggests
     off-lock continuation); Task 004 StatusFile crash diagnostics R3 (pre-release

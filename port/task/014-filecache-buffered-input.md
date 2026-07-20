@@ -1094,3 +1094,91 @@ Prometheus / custom metrics (keep no-op shims)
 DWRF stripe-metadata CacheInputStream hard-cast path
   (already prevented by shouldPrefetchStripes = false)
 ```
+
+## Post-Task-014 review reopen (2026-07-20, whole-port review 2)
+
+`reopened_by_contract_audit` — one CONFIRMED behavior hole (F-014-1). Full-review
+decision doc: `port/task/fullview/home-chang/2/011-014-review-decisions.md`.
+
+### F-014-1 — port CH's self-heal-on-external-truncation in `getCacheReadBuffer`
+
+CH `getCacheReadBuffer` (`src/Disks/IO/CachedOnDiskReadBufferFromFile.cpp:448-477`)
+does, AFTER opening the local cache file:
+
+```text
+download_state = file_segment.state()
+trust_size_from_filename =
+    file_segment.hasSizeInFileName()
+    && (download_state == DOWNLOADED || download_state == DETACHED)
+
+cache_file_size = <actual on-disk size of the opened cache file>
+
+if trust_size_from_filename && cache_file_size < file_segment.getDownloadedSize():
+    LOG_WARNING("... truncated outside ClickHouse ... bypassing the cache; re-fetch")
+    info.cache_file_reader.reset()
+    return nullptr        // caller routes CACHED -> REMOTE_FS_READ_BYPASS_CACHE
+
+if cache_file_size == 0:
+    throw LOGICAL_ERROR("Attempt to read from an empty cache file: {}", path)
+
+return info.cache_file_reader
+```
+
+CH's `:465-469` comment: returning `nullptr` (bypass + re-fetch) instead of throwing
+`CANNOT_READ_ALL_DATA` is deliberate — throwing here would be misread as a broken
+`MergeTree` part during part loading and wrongly detach the part; self-heal must win.
+
+The Velox port's `getCacheReadBuffer` (`FileCacheInputStream.cpp:123-146`) opens the
+local cache file and returns it **unconditionally** — no size check, no empty-file
+guard. This is an omitted behavior, not a platform limit: `FileSegment::hasSizeInFileName`,
+`getDownloadedSize`, `state`, and `ReadBufferFromVeloxReadFile::size()/tryGetFileSize()`
+all exist. (Distinct from the two accepted exclusions, which were *remote*-object
+truncation needing the absent `getRemoteFileMetadata`.)
+
+Required implementation (Velox `FileCacheInputStream.cpp` `getCacheReadBuffer` +
+whatever caller routing is needed to turn a CACHED miss into
+`REMOTE_FS_READ_BYPASS_CACHE`):
+- After opening the local cache file, read its actual size (via the opened
+  `velox::ReadFile`'s size / the reader's `tryGetFileSize`).
+- If `fileSegment.hasSizeInFileName()` AND state ∈ {DOWNLOADED, DETACHED} AND
+  `actual_size < fileSegment.getDownloadedSize()`: reset the cache reader and signal
+  the caller to bypass the cache (route to `REMOTE_FS_READ_BYPASS_CACHE` so the data
+  is re-fetched from source). Do NOT throw. A log-warning is optional (Task-003
+  logger is a name-only no-op; a WARNING is fine but not required for the gate).
+- If `actual_size == 0`: throw a LOGICAL_ERROR-class exception ("Attempt to read from
+  an empty cache file: {path}"), mirroring CH `:474-475`.
+- Non-truncated case: unchanged.
+
+Structural fidelity: keep the existing rename-reopen branch
+(`FileCacheInputStream.cpp:128-136`) and the per-segment 0-based reader (do NOT change
+the segment-relative coordinate system — that is F-014-2, signed-accepted separately).
+
+### RED test (mandatory) + false-green probe
+
+Add to `FileCacheBufferedInputTest.cpp` (or the SCC test if the FileCache-level API is
+easier there — must run in an existing green gate):
+- Pre-populate a fully-DOWNLOADED size-in-filename segment for a key (real FileCache
+  API + a source file), so its cache file exists at `<offset>_<size>` with
+  `getDownloadedSize()` bytes.
+- Externally truncate that on-disk cache file to fewer bytes (e.g. `ftruncate` /
+  rewrite shorter) WITHOUT going through FileCache.
+- Read the range through `FileCacheInputStream`. ASSERT: the stream returns the
+  CORRECT full original bytes (transparently re-fetched from the source), and does
+  NOT short-read and does NOT throw `CANNOT_READ_ALL_DATA`/detach-class.
+- Optionally: an empty-cache-file case asserts the LOGICAL_ERROR-class throw.
+- RED requirement: the truncation test MUST fail against the current
+  unconditional-open code (which would short-read the truncated file). Verify RED by
+  running it before the fix (or by neutralizing the new self-heal branch), then GREEN.
+
+### Gates
+
+Rebuild + run green: `velox_ch_filecache_buffered_input_test` (with the new test),
+`velox_ch_filecache_manager_test`, `velox_ch_filecache_core_scc_test` — all 0 failed /
+0 skipped. No `-j`; unique logs under the build dir.
+
+### Out of scope for this reopen (do NOT touch)
+
+- F-014-2 (CACHED segment-relative read-until) — SIGNED-ACCEPTED, keep as-is.
+- The two documented exclusions (remote-object `CANNOT_READ_ALL_DATA`, `readBigAt`) —
+  still legitimate; do not attempt.
+- F-011-T priority/eviction tests — downgraded to non-blocking backlog; not here.

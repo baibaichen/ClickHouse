@@ -635,3 +635,204 @@ None. Task 014 accepted.
 |---|---|
 | `/home/chang/OpenSource/velox` | `bc78ef541` |
 | `/home/chang/SourceCode/ClickHouse` | receipt+handoff = this commit |
+
+## Worker attempt 4 (F-014-1 reopen fix)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 014 (reopen — F-014-1 only)
+```
+
+### Reopen contract
+
+`reopened_by_contract_audit` for exactly one behavior hole, F-014-1: port CH's
+self-heal-on-external-truncation in `getCacheReadBuffer`
+(`src/Disks/IO/CachedOnDiskReadBufferFromFile.cpp:448-477`). No other change; the
+segment-relative coordinate system (F-014-2, signed-accepted) is untouched.
+
+### Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `bc78ef541` | clean (Task 014 accepted) |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache2` | (receipt repo) | receipt-only |
+
+Branch is `filecache2` (per dispatch note, proceed; the `filecache`-vs-name
+mismatch is expected and not a blocker).
+
+### Files changed
+
+```text
+/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheInputStream.cpp
+/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp
+```
+
+Only the two allowed files. No header signature change was needed
+(`getCacheReadBuffer` already returns `ReaderPtr`; a null return signals bypass).
+No CMake, no Gluten, no other scope.
+
+### Implementation summary
+
+In `getCacheReadBuffer` (`FileCacheInputStream.cpp`), AFTER opening the local
+cache file and BEFORE returning it:
+- Observe the terminal state first (`fileSegment.state()`), then read the actual
+  on-disk size via `readInfo_.cacheReader->tryGetFileSize()` (set from
+  `readFile_->size()` at reader construction). Ordering mirrors CH's concurrency
+  reasoning.
+- `trustSizeFromFilename = hasSizeInFileName() && state ∈ {DOWNLOADED, DETACHED}`.
+- If `trustSizeFromFilename && cacheFileSize < getDownloadedSize()`: reset the
+  cache reader and `return nullptr` (do NOT throw) — the caller bypasses the
+  cache and re-fetches from source. Covers the empty-file case for the gated
+  segment type too.
+- Else if `cacheFileSize == 0`: `VELOX_FAIL("Attempt to read from an empty cache
+  file: {}", path)` — LOGICAL_ERROR-class, mirroring CH `:474-475`.
+- Non-truncated case unchanged.
+
+Routing: the `create` lambda in `createReadFromFileSegmentState` now treats a
+null CACHED buffer as a switch to `REMOTE_FS_READ_BYPASS_CACHE` (flips `type`,
+rebuilds the reader via `getRemoteReadBuffer`, and sets `s->readType = type` so
+`prepareReadFromFileSegmentState` uses the absolute-offset bypass branch). This
+mirrors CH's "null cache reader => bypass". The rename-reopen branch and the
+per-segment 0-based CACHED coordinate system are unchanged.
+
+### Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| build (GREEN, initial) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_014_reopen_1.log` |
+| test buffered_input (GREEN, initial) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_014_reopen_1.log` |
+| build (RED, self-heal neutralized to `if (false)`) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_014_reopen_red.log` |
+| test new tests (RED, neutralized) | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_014_reopen_red.log` |
+| build all 3 gates (fix restored) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/build_task_014_reopen_2.log` |
+| ctest all 3 gates | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/test_task_014_reopen_all.log` |
+
+No `-j` was used on any ninja invocation.
+
+### Acceptance evidence
+
+```text
+Gate test counts (all 0 failed / 0 skipped):
+  velox_ch_filecache_buffered_input_test : 19 tests (17 original + 2 new), 19 passed, 0 failed, 0 skipped
+  velox_ch_filecache_manager_test        : 19 tests, passed, 0 failed, 0 skipped
+  velox_ch_filecache_core_scc_test       : 47 tests, passed, 0 failed, 0 skipped
+  ctest aggregate: 100% tests passed, 0 tests failed out of 3
+
+New tests:
+  FileCacheBufferedInputTest.ExternalTruncationSelfHealsFromSource  OK
+  FileCacheBufferedInputTest.EmptyCacheFileSelfHealsFromSource      OK
+
+RED-on-neutralize evidence (self-heal branch replaced with `if (false)`):
+  Both new tests FAIL (TEST_EXIT=1, 2 FAILED TESTS).
+  - ExternalTruncationSelfHealsFromSource: the CACHED reader is bounded to the
+    segment's downloadedSize (64) but the on-disk file is 32 bytes, so
+    LocalReadFile::PReadInternal throws "bytesRead == length (32 vs. 64)" — a hard
+    read failure with no self-heal (the exact behavioral hole).
+  - EmptyCacheFileSelfHealsFromSource: with the bypass branch disabled, the
+    `cacheFileSize == 0` guard fires VELOX_FAIL "Attempt to read from an empty
+    cache file", so the read fails instead of self-healing.
+  With the fix restored, both re-fetch the full 64 original bytes and pass.
+
+git diff --check: clean (no whitespace errors)
+git diff --stat: 2 files changed, 155 insertions(+)
+```
+
+### Behavioral invariants (F-014-1)
+
+```text
+[x] size-in-filename DOWNLOADED/DETACHED + actual_size < downloadedSize -> bypass + re-fetch, no throw
+[x] actual_size == 0 (non-gated CACHED) -> LOGICAL_ERROR-class throw (VELOX_FAIL "Attempt to read from an empty cache file")
+[x] non-truncated case unchanged
+[x] state observed before size (CH concurrency ordering preserved)
+[x] rename-reopen branch unchanged
+[x] segment-relative CACHED coordinate system unchanged (F-014-2 out of scope)
+[x] RED verified by neutralizing the self-heal branch
+```
+
+### Worker review
+
+```text
+review subagent: one read-only general-purpose reviewer over the full git diff.
+findings:
+  - No actionable issues. Routing correct: null CACHED buffer flips to
+    REMOTE_FS_READ_BYPASS_CACHE, prepareReadFromFileSegmentState uses absolute
+    offsets; segment-relative CACHED math never reached on the heal path.
+  - state-before-size ordering preserved.
+  - Empty-file VELOX_FAIL guard is correct; for the gated size-in-filename case
+    the bypass branch pre-empts it, so the throw only fires for a genuinely
+    0-byte non-size-in-filename CACHED segment (mirrors CH).
+  - Both new tests genuinely exercise the changed path and were confirmed RED
+    when the branch is neutralized; no trivial-pass path (64 distinct bytes,
+    full-buffer EXPECT_EQ).
+non-blocking observation:
+  - EmptyCacheFileSelfHealsFromSource covers the bypass branch (its documented
+    intent), not the VELOX_FAIL throw path; directly testing the throw would need
+    a non-size-in-filename empty segment, judged out of scope for this reopen.
+resolutions: no code change required; gates already green.
+unresolved findings: none.
+```
+
+### Blockers
+
+```text
+None.
+```
+
+### Worker declaration
+
+```text
+Only Task 014 F-014-1 (reopen) was attempted.
+Changes are unstaged and uncommitted (velox only; two files).
+The worker stopped after writing this receipt.
+```
+
+## Controller review 3 (F-014-1 reopen)
+
+```text
+controller_status: accepted
+environment_profile: home-chang
+task: 014 (reopen: F-014-1)
+```
+
+## Review evidence
+
+```text
+scope review: PASS. Only FileCacheInputStream.cpp (+45, the self-heal branch) and
+  tests/FileCacheBufferedInputTest.cpp (+110, two RED tests) changed vs accepted
+  HEAD bc78ef541. No other file touched; git diff --check clean.
+implementation review: the self-heal branch (FileCacheInputStream.cpp:146-182)
+  mirrors CH getCacheReadBuffer (CachedOnDiskReadBufferFromFile.cpp:448-477):
+  observes terminal state first, reads actual on-disk size via tryGetFileSize;
+  when hasSizeInFileName() && state ∈ {DOWNLOADED,DETACHED} && cacheFileSize <
+  getDownloadedSize() -> reset reader + return nullptr (caller routes CACHED ->
+  REMOTE_FS_READ_BYPASS_CACHE, re-fetch, no throw, MergeTree part not wrongly
+  detached); empty-file (cacheFileSize==0) -> VELOX_FAIL, matching CH :474-475.
+  Segment-relative CACHED seek (offset-range.left) unchanged (F-014-2 confirmed a
+  match, withdrawn).
+F-014-1 RED — INDEPENDENTLY VERIFIED by Controller: neutralized BOTH new branches
+  (if(false) on the truncation check and the empty-file guard), rebuilt, and the two
+  new tests FAILED:
+    ExternalTruncationSelfHealsFromSource -> FAILED
+    EmptyCacheFileSelfHealsFromSource     -> FAILED
+  Restored byte-identical (grep 0 probe remnants), rebuilt, all three gates GREEN.
+log/test review: Controller re-ran the three binaries directly after restore —
+  velox_ch_filecache_buffered_input_test 19/19, velox_ch_filecache_manager_test
+  19/19, velox_ch_filecache_core_scc_test 47/47; 0 failed / 0 skipped.
+unresolved findings: none. F-014-2 WITHDRAWN (misdiagnosis; reading the local cache
+  segment is segment-relative in BOTH CH and Velox — byte-identical seek(offset-
+  range.left); no deviation, no code change). F-011-T downgraded to non-blocking
+  backlog.
+```
+
+## Required changes
+
+```text
+None. Task 014 F-014-1 reopen accepted; whole-port review 2 zero-unresolved gate met.
+```
+
+## Commits
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | (this acceptance — see Velox `Task 014:` reopen commit) |
+| `/home/chang/SourceCode/ClickHouse` | receipt+review-docs+handoff = this commit |
