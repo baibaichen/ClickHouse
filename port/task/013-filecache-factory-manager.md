@@ -46,6 +46,37 @@ Controller acceptance requires reading every test body and mapping each promised
 contract to at least one assertion. A green executable containing empty/comment-only
 tests is an automatic `changes_requested`.
 
+### Post-Task-012 amendment: SCC-phase state Task 013 must reconcile (2026-07-20)
+
+Task 012 landed the center SCC as a green build. To do so without the Manager
+(which is this task), `FileCache` **temporarily owns**, in the SCC phase, the
+runtime resources this task's design assigns to the Manager. Task 013 must take
+these over so the Manager becomes the real owner and `FileCache` receives them by
+injection:
+
+- `FileCacheWorkerPool` — currently a `FileCache` member (`FileCache.h`), injected
+  into `CacheMetadata` by reference. Move ownership to the Manager (design 04);
+  `FileCache`/`CacheMetadata` receive it by reference from the Manager.
+- `folly::Timekeeper` + `FileCacheScheduler` — currently `FileCache` members
+  (B6). Design 05/02 puts the shared timer/worker resources under the Manager;
+  reconcile ownership per the Manager design without changing the observable
+  scheduling semantics.
+- `commonUserId` — currently a `FileCache` ctor-injected member (B5). The Manager
+  supplies the stable `commonUserId` (design 10:164, `FileCacheManager::Options
+  .commonUserId`); host provides it to the Manager.
+- **Opened-file-handle invalidation (B7 seam).** Task 012 left two `no-op +
+  TODO(Task 013)` seams where CH invalidates cached open handles after a physical
+  file change (`fs::remove` in `Metadata.cpp` `removeFileSegmentImpl`, and
+  `fs::rename` in `FileSegment.cpp` `renameToIncludeSizeInNameUnlocked`). Task 013
+  owns `OpenedFileCache` (design 02:35,89,244; this task's `openedFileCache_`
+  member). Wire the REAL Manager-backed invalidation into those two seams
+  (replacing the no-ops), and add a test that a removed/renamed path's cached
+  handle is dropped. `fs::remove`/`fs::rename` already run in the SCC phase;
+  Task 013 adds the handle invalidation that was correctly deferred.
+
+Where this amendment and the original Step text below disagree, this amendment
+and the CH source win.
+
 ## Goal
 
 Implement the real `FileCacheFactory` (sole registry/name/path aliasing) and
