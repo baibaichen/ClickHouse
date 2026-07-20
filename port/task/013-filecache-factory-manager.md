@@ -879,3 +879,88 @@ Prometheus / custom metrics (keep no-op shims)
 ```
 
 These belong to Task 014 and the subsequent Gluten integration task.
+
+---
+
+## Post-acceptance amendment 1 — `FileCacheManager::hasDefault` (reopened 2026-07-21)
+
+```text
+state: reopened_by_contract_audit
+owner_task: 013
+environment_profile: home-chang
+```
+
+### Why
+
+Task 018a needs to decide, at builder-install time, whether a `FileCacheManager`
+is configured with a default cache — **without throwing**. The Manager's only
+default accessor `getDefault()` (`FileCacheManager.cpp:148-153`) throws when
+`defaultCacheName_` is empty, and there is no non-throwing predicate. Using a
+`try/catch` around `getDefault()` at the install boundary is a generic-catch
+fallback the project rules forbid (it would also swallow a genuine
+"default name set but its cache missing" error).
+
+The `default` concept lives in `FileCacheManager` (introduced by Task 013;
+ClickHouse has no default-cache concept — this is a port-side addition). The
+non-throwing predicate therefore belongs to Task 013, not Task 018a. Task 018a
+only consumes it (separate amendment on the 018a task). A later Task 020 will
+remove the default-cache concept entirely and switch consumers to
+name-based cache selection to match CH; this amendment is the minimal
+non-throwing predicate needed until then.
+
+### Scope (this amendment only)
+
+Modify in the Velox checkout:
+
+```text
+velox/ch/Interpreters/FileCache/FileCacheManager.h    (declare hasDefault)
+velox/ch/Interpreters/FileCache/FileCacheManager.cpp  (define hasDefault; optional getDefault reuse)
+velox/ch/Interpreters/FileCache/tests/FileCacheFactoryManagerTest.cpp  (RED test)
+```
+
+Do not change any other file. Do not touch `FileCacheFactory`, the `default`
+semantics of `getDefault()` (it must still throw on a missing default — design 02
+"missing default = error / never fall back"), or Task 018a files.
+
+### Contract
+
+Add a `const`, non-throwing, thread-consistent predicate:
+
+```cpp
+/// True iff a default cache name is configured. Non-throwing companion to
+/// `getDefault` (which throws when no default is configured). Does NOT verify
+/// the named cache still exists in the factory — it reflects configuration, the
+/// same field `getDefault` guards on.
+bool hasDefault() const;   // returns !defaultCacheName_.empty()
+```
+
+- `hasDefault()` must be a pure read of `defaultCacheName_` (the same field
+  `getDefault()` guards on): returns `false` when the Manager was built with an
+  empty `defaultCacheName`, `true` otherwise. It must not call `factory_.get`,
+  must not throw, and must not depend on initialize/shutdown state.
+- `getDefault()` behavior is unchanged (still throws "no default cache
+  configured" when empty). The two must agree: `hasDefault()` is `false` exactly
+  when `getDefault()` would throw the "no default cache configured" exception.
+
+### Acceptance
+
+Extend `velox_ch_filecache_manager_test` (currently 19) with a real RED test:
+
+1. A Manager built with a non-empty `defaultCacheName` → `hasDefault()` is
+   `true` **and** `getDefault()` returns that cache (no throw).
+2. A Manager built with an empty `defaultCacheName` → `hasDefault()` is `false`
+   **and** `getDefault()` throws.
+3. **RED requirement.** The test must fail against the pre-change implementation
+   for the expected reason (i.e. before `hasDefault` exists it does not compile /
+   with a stubbed `return true;` the empty-default case turns red). Prove
+   falsifiability: a `hasDefault()` that always returns `true` must fail case 2.
+
+Regression: `velox_ch_filecache_manager_test` and
+`velox_ch_filecache_core_scc_test` stay green (0 failed / 0 skipped) with the new
+test included. No `-j`. Nothing staged/committed. Logs under `<velox_build_dir>`.
+
+### Result receipt
+
+Append `## Worker attempt` sections to
+`port/task/result/013-filecache-factory-manager-result.md` (do not erase the
+original accepted result), in the EXECUTION_PROTOCOL worker-receipt format.

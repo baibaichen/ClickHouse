@@ -707,3 +707,169 @@ None. Task 013 accepted.
 |---|---|
 | `/home/chang/OpenSource/velox` | `5e3ee1ac9` |
 | `/home/chang/SourceCode/ClickHouse` | receipt+handoff = this commit |
+
+## Worker attempt 4 (Post-acceptance amendment 1 — `FileCacheManager::hasDefault`)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 013 (amendment 1)
+```
+
+Implements Post-acceptance amendment 1: a `const`, non-throwing predicate
+`FileCacheManager::hasDefault()` companion to the throwing `getDefault()`.
+Scope = exactly the three amendment files. `getDefault()` behavior is unchanged
+(still throws "no default cache configured" when empty). Both mandatory gates
+green with the new test included: `velox_ch_filecache_manager_test` 20/20 and
+`velox_ch_filecache_core_scc_test` 47/47 (both 0 failed / 0 skipped).
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `dac50ae27` | clean (0 files); `filecache2...baibaichen/filecache [ahead 13]` |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache2` | `7c745d64772` | receipt append only |
+
+`HEAD dac50ae27` (velox) = "Task 018a: Route Hive connector reads through
+FileCache via BufferedInputBuilder" — later than the attempt-1/2/3 baseline
+`13b2dc63d`; Task 013 (`5e3ee1ac9`) and Task 018a are both committed at HEAD and
+were left untouched. The dispatch note named the ClickHouse HEAD as
+`da28e83e8b3`; the actual checkout is `7c745d64772` (append-only). No
+pre-existing dirty files in velox before this amendment. No
+staging/commit/amend/rebase/push.
+
+## Files changed
+
+```text
+velox/ch/Interpreters/FileCache/FileCacheManager.h    (declare `bool hasDefault() const;` + doc comment, after getDefault)
+velox/ch/Interpreters/FileCache/FileCacheManager.cpp  (define `hasDefault` as `return !defaultCacheName_.empty();`, after getDefault)
+velox/ch/Interpreters/FileCache/tests/FileCacheFactoryManagerTest.cpp  (add RED test `ManagerTest.HasDefaultAgreesWithGetDefault`)
+```
+
+`getDefault()` was NOT modified: it still throws "no default cache configured"
+when `defaultCacheName_` is empty (`FileCacheManager.cpp` ~L148-153). `hasDefault`
+is a pure read of the same field, does not call `factory_.get`, does not throw,
+and does not depend on initialize/shutdown state — it returns `false` exactly
+when `getDefault()` would throw the "no default cache configured" exception.
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| configure (home-chang recipe + `-DVELOX_BUILD_TESTING=ON`) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task013_hasdefault_configure.log` |
+| build `velox_ch_filecache_manager_test` (initial GREEN impl) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task013_hasdefault_build.log` |
+| build with RED stub `return true;` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task013_hasdefault_red_build.log` |
+| run RED stub (case 2 must fail) | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task013_hasdefault_red_test.log` |
+| build both targets after restore (final GREEN) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task013_hasdefault_green_build.log` |
+| ctest `velox_ch_filecache_manager_test` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task013_hasdefault_test.log` |
+| ctest `velox_ch_filecache_core_scc_test` | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task013_hasdefault_scc_test.log` |
+
+No `-j` was passed to ninja.
+
+## RED / falsifiability evidence (hard requirement met)
+
+```text
+With `hasDefault()` temporarily stubbed to `return true;` and rebuilt, the
+empty-default case turns RED for the expected reason:
+
+  FileCacheFactoryManagerTest.cpp:323: Failure
+    Value of: manager->hasDefault()
+      Expected: false
+  [  FAILED  ] ManagerTest.HasDefaultAgreesWithGetDefault (11 ms)
+  1 FAILED TEST
+
+The implementation was then restored byte-identical to
+`return !defaultCacheName_.empty();`, rebuilt, and both gates re-run GREEN.
+This proves the test genuinely exercises production behavior and would catch a
+wrong (always-true) implementation.
+```
+
+## Acceptance evidence
+
+```text
+Gate 1 velox_ch_filecache_manager_test:
+  test count: 20 (was 19; +1 ManagerTest.HasDefaultAgreesWithGetDefault)
+  failed tests: 0
+  skipped/disabled tests: 0
+Gate 2 velox_ch_filecache_core_scc_test (re-run, unchanged):
+  test count: 47
+  failed tests: 0
+  skipped/disabled tests: 0
+git diff --check: clean (exit 0, no whitespace errors)
+git status: only the three amendment files (FileCacheManager.h, FileCacheManager.cpp,
+  tests/FileCacheFactoryManagerTest.cpp); unstaged/uncommitted; velox otherwise at
+  baseline dac50ae27 (Task 018a files at HEAD left untouched).
+```
+
+## Worker review
+
+```text
+review subagent: one read-only code reviewer (pr-review-toolkit:code-reviewer)
+  over the complete amendment diff (the three files), given the contract and the
+  four review foci (correctness/agreement, non-throwing guarantee, getDefault
+  agreement, false-green).
+findings:
+  No actionable in-scope findings. Reviewer confirmed: hasDefault's
+  `!defaultCacheName_.empty()` exactly negates getDefault's `empty()` guard (same
+  field), the body is genuinely non-throwing (pure read, no allocation, no
+  factory_.get, no lifecycle access), and case 2's EXPECT_FALSE would catch a
+  stubbed `return true;`.
+  Optional/out-of-scope (below reporting threshold, not required): the declaration
+  could be `noexcept`; omitting it is acceptable and consistent with the codebase's
+  un-annotated trivial accessors. The contract requires non-throwing behavior,
+  which is satisfied; no change made.
+resolutions: none required.
+unresolved findings: none.
+```
+
+## Blockers
+
+```text
+None. Both gates are green; RED/falsifiability proven and reverted.
+```
+
+## Worker declaration
+
+```text
+Only Task 013 amendment 1 (`FileCacheManager::hasDefault`) was attempted.
+Changes are unstaged and uncommitted; exactly three files changed
+(FileCacheManager.h, FileCacheManager.cpp, tests/FileCacheFactoryManagerTest.cpp).
+`getDefault()` and all other Task-013 / Task-018a files were left unchanged;
+Task 018a files committed at HEAD dac50ae27 were preserved. No
+staging/commit/amend/rebase/push. The worker stopped after writing this receipt.
+```
+
+## Controller review — Post-acceptance amendment 1 (hasDefault)
+
+```text
+controller_status: accepted
+environment_profile: home-chang
+task: 013 (amendment 1)
+```
+
+## Review evidence
+
+```text
+scope review: Only the three amendment files dirty in velox
+  (FileCacheManager.{h,cpp}, tests/FileCacheFactoryManagerTest.cpp). Task 018a
+  files at HEAD dac50ae27 untouched. No other file changed.
+implementation review: hasDefault() is `return !defaultCacheName_.empty();` —
+  const, non-throwing, pure read of the same field getDefault guards on; does
+  not call factory_.get; getDefault unchanged (still throws on empty). Header
+  comment accurate (reflects config, not existence). Agrees with getDefault by
+  construction: false exactly when getDefault would throw "no default cache
+  configured".
+log and test review: Controller INDEPENDENTLY reproduced the RED — stubbed
+  hasDefault() to `return true;`, rebuilt, ran: case 2 FAILED at
+  FileCacheFactoryManagerTest.cpp:323 ("Expected: false"). Restored; grep
+  confirms no residual probe; rebuilt; manager 20/20 and core_scc 47/47 (both
+  0 failed / 0 skipped). Counts match (was 19, now 20 with the new case).
+unresolved findings: none.
+```
+
+## Commits
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `35b160c79` |
+| `/home/chang/SourceCode/ClickHouse` | (this amendment's ClickHouse commit) |
