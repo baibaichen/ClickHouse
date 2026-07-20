@@ -266,18 +266,36 @@ environment_profile: home-chang
   benign, same class as SD1).
   **Zero-unresolved gate: MET.** Whole-port review 2 has no open finding.
 
-- **Task 015 is next** (Velox-only FileCache E2E + random-seek benchmark) — the
-  current MVP acceptance gate. It requires **explicit user approval** to start (the
-  post-Task-014 checkpoint gate). Do NOT dispatch a Task-015 worker without it.
-  - Backlog / deferred (do NOT lose): F-011-T priority-eviction white-box tests
-    (optional standalone hardening); Task 006 F-CALLERID; SD8 scheduler
-    recursive_mutex; Task 004 StatusFile R3 (pre-release); Task 008 sipHash R4/R5
-    (post-019); the errno-producer pre-release gate. Task-014 documented exclusions
-    (remote-object `CANNOT_READ_ALL_DATA`, `readBigAt`) remain legitimate; whole-system
-    coverage is Task 015.
+- **Task 015 is accepted — the Velox MVP path (Tasks 003-015) is COMPLETE.**
+  (Velox `4f764737f` "Task 015: FileCache Velox end-to-end tests + random-seek
+  benchmark"; ClickHouse receipt+handoff = this commit.) The MVP acceptance gate:
+  `velox_ch_filecache_e2e_test` (17 tests) drives the assembled public read path
+  (`FileCacheBufferedInput` -> `FileCacheInputStream` -> `FileCache`) end-to-end
+  through a real `FileCacheManager` — miss/fill/hit (pread-counting source proves no
+  source I/O on a hit), cache-only-miss, bypass, BackUp, cross-segment Skip,
+  region-relative seek, non-zero-offset absolute mapping, discarded-enqueue/no-op-load
+  UAF safety, DWRF flags false, etag key derivation, shutdown-with-live-stream, plus
+  four ported CH-integration scenarios. `velox_ch_filecache_seek_benchmark` builds and
+  runs (hit/miss/bypass timing rows; miss slowest, as expected). No production code
+  changed. The three pre-existing gates stay green (buffered_input 19, manager 19,
+  core_scc 47). Controller independently re-ran the E2E binary (17/17) and verified
+  the anti-false-green pread-counter.
+
+- **CURRENT STATE: Velox MVP done. No task is in progress.** The next tasks are all
+  optional/deferred and require an explicit user decision to start:
+  - Task 016 (optional post-MVP): `WriteBufferToFileSegment` for Ephemeral segments.
+  - Task 017 (optional post-MVP): observability + cancellation hardening (also the
+    home for several deferred items below).
+  - Tasks 018-019 (future): Gluten host integration + builder/lifecycle E2E.
+  - Deferred / backlog (do NOT lose): F-011-T priority-eviction white-box tests
+    (optional hardening); Task 006 F-CALLERID diagnostic; SD8 scheduler
+    recursive_mutex; Task 004 StatusFile crash-recovery diagnostics R3 (pre-release);
+    Task 008 sipHash CH-oracle + key-parser R4/R5 (post-019); the structured-errno
+    producer pre-release gate; Task-014 documented exclusions (remote-object
+    `CANNOT_READ_ALL_DATA`, `readBigAt`).
   - Execution rules unchanged: worker/controller file-only protocol; only the
-    Controller commits (local only, NEVER push); no -j; per-task logs under the velox
-    build dir; big .cpp authored incrementally.
+    Controller commits (local only, NEVER push — nothing has been pushed this whole
+    run); no -j; per-task logs under the velox build dir.
   - Deferred / parked (do NOT lose these): Task 006 F-CALLERID (post/pre-release
     diagnostic); SD8 scheduler recursive_mutex (later task, controller suggests
     off-lock continuation); Task 004 StatusFile crash diagnostics R3 (pre-release
