@@ -188,30 +188,41 @@ environment_profile: home-chang
   no-op+TODO seams left by B7, and take over ownership of the worker pool /
   timekeeper / scheduler / commonUserId that FileCache holds in the SCC phase.
 
-- **PAUSE POINT (2026-07-20, user-requested before session compaction).**
-  State is clean: both repos have no dirty files; Velox HEAD `13b2dc63d`
-  (Task 012 S4), ClickHouse HEAD is the latest `Task 013:` amendment commit
-  (`f2e4f82a27c` "Task 013: Fix D1/D2/D3 contracts CH-aligned", resolve exact
-  with `git log -1 --oneline`). Nothing is pushed (by user instruction — all
-  work stays on the local `ch-filecache2` / `filecache2` branches).
-  - Task 013 IMPLEMENTATION HAS NOT STARTED. Only its task file is fully
-    amended and ready: `port/task/013-filecache-factory-manager.md` carries
-    "### Post-Task-012 amendment: SCC-phase state Task 013 must reconcile" and
-    "### D1/D2/D3 CH-aligned contracts (2026-07-20, ...)". The receipt
-    `port/task/result/013-filecache-factory-manager-result.md` has the worker's
-    first (blocked) attempt and "## Controller unblock response 1 (D1/D2/D3
-    CH-aligned)". The D1/D2/D3 contracts are fixed; the next worker just executes.
-  - The Task-013 worker was dispatched then STOPPED for the pause; it wrote no
-    Velox source (working tree verified clean at `13b2dc63d`).
-  - RESUME = dispatch one fresh Task-013 Worker against the amended task
-    (D1 OpenedFileCache port of CH src/IO/OpenedFileCache.h with a
-    shared_ptr<velox::ReadFile> handle, Manager-owned; D2 inject OpenedFileCache&
-    and wire the two B7 seams; D3 move worker_pool/timekeeper/scheduler/
-    commonUserId ownership FileCache->Manager by reference; both
-    velox_ch_filecache_manager_test and velox_ch_filecache_core_scc_test must be
-    green). Then Controller-verify + commit, then Task 014, then the mandatory
-    Tasks 003-014 whole-port review (STOP for explicit user approval before
-    Task 015).
+- **Task 013 is accepted** (Velox `5e3ee1ac9` "Task 013: FileCacheFactory +
+  FileCacheManager + OpenedFileCache"; ClickHouse receipt+handoff = this commit).
+  Implemented the three CH-aligned contracts:
+    D1 `OpenedFileCache` — faithful port of CH `src/IO/OpenedFileCache.h` (1024
+       shards, each `{mutex; map<(path,int flags), weak_ptr<ReadFile>>}`), handle
+       substituted to `shared_ptr<velox::ReadFile>` opened via injected
+       `FileSystem::openFileForRead` with an erase-on-last-release deleter;
+       Manager-owned (not a singleton, not the Hive `FileHandleCache`). Shard state
+       in `shared_ptr<Shard>` + weak_ptr deleter (outliving-handle-safe); deleter
+       erases only a still-`expired()` slot (resurrection-safe). CH `memoryPool`
+       param dropped.
+    D2 B7 seams wired — inject `OpenedFileCache&` (Manager -> FileCache ctor ->
+       `CacheMetadata` member -> `FileSegment` via `KeyMetadata`). Both Task-012
+       no-op+TODO seams now invalidate: `Metadata.cpp` `removeFileSegmentImpl`
+       (after `fs::remove`, removed path) and `FileSegment.cpp`
+       `renameToIncludeSizeInNameUnlocked` (after `fs::rename`, old path).
+    D3 ownership move — `FileCacheWorkerPool`, `folly::Timekeeper`+
+       `FileCacheScheduler`, and `commonUserId` moved from `FileCache` to the
+       Manager; `FileCache` takes them by reference. Manager declares owned
+       resources BEFORE `factory_` so the factory (and every `FileCache`) destroys
+       first. SCC test fixtures adapted via `FileCacheTestResources` injection helper.
+  Gates: `velox_ch_filecache_manager_test` 19/19 and `velox_ch_filecache_core_scc_test`
+  47/47 (both 0 failed / 0 skipped). Note: `velox_ch_filecache_manager` was NOT a
+  separate library — the mono build (`VELOX_MONO_LIBRARY=ON`) compiles Factory/
+  Manager into `velox_ch_filecache` (a second lib would ODR-double-define the SCC).
+  Controller found and required fixing one **false-green gap** (the two B7 seams were
+  wired correctly but no test drove them end-to-end; a seam revert left all tests
+  green); the worker added two seam-reaching E2E tests, and the Controller
+  INDEPENDENTLY verified RED-on-revert (neutralized both seams -> both tests FAILED,
+  restored -> green).
+
+- **Task 014 is next** (`FileCacheBufferedInput` / `FileCacheInputStream`, Velox
+  only, no Gluten edits). Gate: `velox_ch_filecache_buffered_input_test`. After
+  Task 014 is accepted and repos are clean, STOP for the mandatory Tasks 003-014
+  whole-port review and explicit user approval before Task 015.
   - Deferred / parked (do NOT lose these): Task 006 F-CALLERID (post/pre-release
     diagnostic); SD8 scheduler recursive_mutex (later task, controller suggests
     off-lock continuation); Task 004 StatusFile crash diagnostics R3 (pre-release
