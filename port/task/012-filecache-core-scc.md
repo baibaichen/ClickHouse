@@ -192,6 +192,25 @@ scope is expanded exactly as follows (nothing more):
   the SCC phase intentionally throws-not-implemented here, and the mandatory S4
   tests do NOT exercise the rename/remove opened-handle-invalidation paths.
 
+  **B2b CORRECTION (B7, 2026-07-20).** The initial B2b throw was too broad and
+  broke eviction. In CH the removal site does TWO adjacent but INDEPENDENT things
+  (`Metadata.cpp:1261,1267`): (1) `fs::remove(path)` — the actual file deletion,
+  which is the core of eviction and MUST run; and (2)
+  `OpenedFileCache::instance().remove(path, flags)` — invalidating cached open
+  handles, a Task-013 Manager concept. The throw must apply ONLY to (2), not (1).
+  Corrected rule: perform `fs::remove` normally (eviction works); replace ONLY the
+  opened-handle invalidation with a **no-op + `TODO(Task 013)`** (NOT a throw).
+  This is semantically safe in the SCC phase: no `OpenedFileCache` exists yet
+  (it is manager-owned, introduced in Task 013 per `3-consumers/02-filecache-
+  manager-design.md:35,89,244` and `013-...:117,249,426,453`), so there are no
+  cached handles to go stale — invalidation has nothing to do until Task 013
+  introduces the handle cache and wires the real invalidation into the SAME seam.
+  The rename site (`FileSegment.cpp` `renameToIncludeSizeInNameUnlocked`) is
+  corrected the same way: perform the rename; the opened-handle drop becomes a
+  no-op + TODO(Task 013). The S4 "releasable reserve eviction" test now runs the
+  real eviction+`fs::remove` path (no throw) and must pass. Task 013 replaces the
+  two no-ops with real Manager-backed opened-file invalidation.
+
 ### S2 unblock 2 — B3 CacheMetadata worker pool injection (2026-07-20, authorized)
 
 The S2 redispatch completed 6 of 7 TUs; `Metadata.cpp` blocked on B3: the Velox

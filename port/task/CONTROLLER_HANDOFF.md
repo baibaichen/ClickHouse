@@ -166,6 +166,27 @@ environment_profile: home-chang
   must restore the full compile/link/test closure** using the Task-012
   amendments already recorded (D3/D9/D11 mappings, FileCacheErrnoException
   contract, R2 value-comparison, R7 typed-subtype, SD1/SD3/SD4/SD5).
+
+- **Task 012 is accepted** (Velox sub-attempts S1 `853840ae5`, S2 `dd7eaf43f`,
+  S3 `16b4fc155`, S4 `13b2dc63d`; ClickHouse receipt+handoff = this commit). The
+  atomic 011+012 center SCC compiles, LINKS, and passes 47/47 tests (0 failed /
+  0 skipped) via `velox_ch_filecache_core_scc_test`. Task 012 was executed as
+  four bounded sub-attempts (S1 headers, S2 FileSegment/Metadata + finish the
+  Task-011 .cpp, S3 FileCache/QueryLimit, S4 CMake+tests+green) because a single
+  pass could not port ~9k lines truthfully. Structural gaps resolved during 012,
+  all recorded in the Task-012 amendment + receipt unblock responses 1-5:
+    B1 EvictionCandidates.h C++23/merge portability fix
+    B2a reserve timeout injected from FileCacheConfig into CacheMetadata (design 08)
+    B2b + B7 opened-file-handle invalidation is a no-op + TODO(Task 013) at the
+       removal + rename sites (fs::remove/fs::rename still run); Task 013 owns the
+       real Manager-backed invalidation (design 02/013)
+    B3 CacheMetadata takes the FileCache/Manager-owned FileCacheWorkerPool by ref (design 04)
+    B5 host-injected stable commonUserId replaces ServerUUID (design 10)
+    B6 FileCache owns folly::Timekeeper + FileCacheScheduler for createTask (design 05)
+  **Task 013 is next** (FileCacheFactory + FileCacheManager). Task 013 must,
+  among its own scope, wire the real OpenedFileCache invalidation into the two
+  no-op+TODO seams left by B7, and take over ownership of the worker pool /
+  timekeeper / scheduler / commonUserId that FileCache holds in the SCC phase.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;

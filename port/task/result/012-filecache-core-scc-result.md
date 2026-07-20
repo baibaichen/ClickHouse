@@ -1642,3 +1642,498 @@ unresolved findings: None for S3.
 | Repository | Commit |
 |---|---|
 | `/home/chang/OpenSource/velox` | `16b4fc155 Task 012: Port FileCache.cpp + QueryLimit.cpp (sub-attempt S3)` |
+
+## Worker attempt (S4 CMake + tests + green build)
+
+```text
+worker_status: blocked
+environment_profile: home-chang
+task: 012 (sub-attempt S4 — CMake registration + 6 behavioral tests + final compile/link/test gate)
+```
+
+S4 registered the center-SCC test target, authored all six behavioral test files, and drove the
+whole SCC through a real compile + LINK + test run. The SCC compiles and links cleanly, and
+**46 of 47 tests pass** (all mandatory contracts EXCEPT releasable reserve eviction). The stage
+gate is not green because of ONE structural blocker: the mandatory "releasable reserve eviction"
+contract cannot be satisfied while the approved **B2b** decision makes SCC-phase file removal
+throw `VELOX_NYI`. This is the same class of blocker as B2a/B2b/B3/B5/B6 (a manager-owned concept
+absent in the SCC phase) and needs a Controller/user decision, not a code fix I am authorized to make.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `16b4fc155` | clean (0 files); `filecache2...baibaichen/filecache [ahead 5]` |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache2` | `7bbb2350a69` | receipt append only |
+
+`HEAD 16b4fc155` = "Task 012: Port FileCache.cpp + QueryLimit.cpp (sub-attempt S3)". No
+pre-existing dirty files. No staging/commit/amend/rebase/push.
+
+## Files changed (this attempt)
+
+```text
+MODIFIED (minimal production seam required by the mandatory partial-physical-append-failure test):
+  velox/ch/Interpreters/FileCache/FileSegment.h    (+13: static WriteFileFactory injection seam +
+                                                    setWriteFileFactoryForTesting/createWriteFile;
+                                                    <functional> include)
+  velox/ch/Interpreters/FileCache/FileSegment.cpp  (write() now creates the local cache writer's
+                                                    velox::WriteFile via createWriteFile(); the
+                                                    DEFAULT factory reproduces the exact original
+                                                    LocalWriteFile(path,false,false,true) — production
+                                                    behavior is byte-identical unless a test installs
+                                                    a fault-injecting file)
+MODIFIED (test registration):
+  velox/ch/Interpreters/FileCache/tests/CMakeLists.txt (adds velox_ch_filecache_core_scc_test +
+                                                    add_test; links velox_ch_filecache — which
+                                                    already contains the 9 SCC .cpp from S2/S3 — so
+                                                    the whole SCC links once. A separate
+                                                    velox_ch_filecache_core library is NOT created:
+                                                    that would double-define every SCC symbol (ODR).)
+NEW (6 behavioral tests, 1369 lines):
+  velox/ch/Interpreters/FileCache/tests/FileSegmentInfoTest.cpp   (88)
+  velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp       (447)
+  velox/ch/Interpreters/FileCache/tests/MetadataTest.cpp          (140)
+  velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp         (305)
+  velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp        (209)
+  velox/ch/Interpreters/FileCache/tests/PriorityEvictionTest.cpp  (180)
+```
+
+## Minimal production seam (recorded)
+
+```text
+The mandatory partial-physical-append-failure test (task table + S4 confirmed approach) requires
+driving the PRODUCTION FileSegment::write reconcile over "an injected production velox::WriteFile
+that physically commits a strict prefix then throws FileCacheErrnoException", with reconciliation
+inside production FileSegment, never the test double. The committed S2 FileSegment::write
+constructed its own velox::LocalWriteFile inline (FileSegment.cpp) with NO injection seam, so the
+authorized test approach was not expressible. S4 added the smallest possible seam that keeps CH
+semantics identical:
+  - FileSegment::WriteFileFactory = std::function<unique_ptr<velox::WriteFile>(const std::string&)>.
+  - FileSegment::createWriteFile(path) calls a file-static factory whose DEFAULT reproduces the
+    exact prior construction: LocalWriteFile(path, /*createParentDirs*/false,
+    /*throwOnExists*/false, /*bufferIo*/true). Production behavior is unchanged when no override
+    is installed.
+  - FileSegment::setWriteFileFactoryForTesting(factory) installs an override; the test uses a RAII
+    ScopedWriteFileFactory that restores the default on scope exit.
+Reconciliation stays entirely in production FileSegment::write (reads fs::file_size, enforces
+downloaded<=physical<=reserved, sets downloaded=physical, marks failed, rethrows original). The
+injected PartialCommitThenThrowWriteFile ONLY commits a strict prefix then throws
+FileCacheErrnoException(ENOSPC) — it performs no reconciliation. This is recorded as a
+testability seam (not a link-time defect); flagged for Controller review since it edits accepted
+S2 production code, though it changes no runtime behavior on the default path.
+```
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| configure (home-chang recipe + `-DVELOX_BUILD_TESTING=ON`) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s4_configure.log` |
+| build `velox_ch_filecache_core_scc_test` (whole SCC compile+LINK) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s4_build.log` |
+| run suite excluding the blocked eviction test (`--gtest_filter=-FileCacheTest.TryReserveEvictsReleasable`) | 0 (46/46 pass) | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s4_test_nonevict.log` |
+| full gate `ctest -R ^velox_ch_filecache_core_scc_test$` | 8 (1 test RED: eviction) | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s4_test.log` |
+| isolate eviction RED | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task012_s4_eviction_red.log` |
+
+No `-j` was passed. The SCC compiled and LINKED cleanly (exit 0) — the center strongly-connected
+component (priority/eviction + FileSegment/Metadata/FileCache/QueryLimit) is a complete
+compile/link closure.
+
+## Acceptance evidence
+
+```text
+build/link: exit 0. The whole center SCC compiles and LINKS into velox_ch_filecache and the
+  velox_ch_filecache_core_scc_test executable. Two real LINK-surfaced items were handled:
+    - initial PriorityEvictionTest used protected getHoldSize/getHoldElements -> rewrote to assert
+      held space via the public canFit (compile fix, not a production change).
+    - initial PriorityEvictionTest constructed CacheUsage (ctor undefined in the SCC library, it
+      belongs to the excluded overcommit path) -> replaced with an empty-source
+      takeKeptAliveCacheUsage exercise (still runs the B1 insert-range+clear path). No production
+      symbol was missing for the SCC itself; the SCC links.
+
+test count: 47 registered; 46 PASS, 1 FAIL (0 skipped/disabled).
+failed tests: FileCacheTest.TryReserveEvictsReleasable — genuine behavioral RED against the
+  approved B2b VELOX_NYI (see Blockers). It throws (catchable), does not abort the binary.
+skipped/disabled tests: 0.
+git diff --check: clean (no whitespace errors).
+
+Behavioral RED / production-path evidence per material contract:
+  missing key + THROW            -> FileCacheTest.MissingKeyThrows: cache.removeFileSegment on a
+                                    random key throws (lockKeyMetadata THROW); removeFileSegmentIfExists
+                                    does not. PASS.
+  releasable reserve eviction    -> FileCacheTest.TryReserveEvictsReleasable: RED — reserving on a
+                                    2nd segment evicts the releasable downloaded candidate, whose
+                                    file removal hits the B2b VELOX_NYI (Metadata.cpp:1250). BLOCKED.
+  empty query id                 -> QueryLimitTest.EmptyQueryIdCreatesNoContext: holder present but
+                                    context null, no map entry. PASS.
+  same query id                  -> QueryLimitTest.SameQueryIdSharesContext: both holders share one
+                                    QueryContext pointer, use_count==3 (map+2 holders). PASS.
+  last holder release            -> QueryLimitTest.LastHolderReleaseRemovesEntry: weak_ptr expires
+                                    only after the last holder dies; a fresh holder gets a new context.
+                                    PASS.
+  doomed context destruction     -> QueryLimitTest.DoomedContextDestroyedAfterLockRelease: after the
+                                    last holder dtor (removeQueryContext under lockCache, doomed
+                                    destroyed after the lock scope), the cache write lock is
+                                    re-acquirable and the context weak_ptr is expired. PASS.
+  max download size              -> QueryLimitTest.MaxDownloadSizeRejectsExcessReservation: per-query
+                                    LRU getSizeLimitApprox()==maxDownloadSizePerQuery; a reserve of
+                                    seg>max under an active FileCacheQueryIdScope("q1") is rejected
+                                    through the real reserve->doTryReserve->query_priority->canFit
+                                    path. PASS.
+  queue pipeline                 -> FileCacheTest.BoundedQueuePipeline: real timed tryPush(v,10)
+                                    fills to capacity, a full-queue timed tryPush returns false,
+                                    non-blocking tryPop drains FIFO, finish() then rejects push and
+                                    drains. PASS.
+  remote reader handoff          -> FileSegmentDownloadTest.RemoteReaderHandoffDetachesAndPreservesOffsets:
+                                    real ReadBufferFromVeloxReadFile over a LocalReadFile, read a
+                                    prefix (getFileOffsetOfBufferEnd==prefix, available==prefix,
+                                    getPosition==0), downloader setRemoteFileReader/getRemoteFileReader,
+                                    second install rejected, resetRemoteFileReader detaches (segment
+                                    reader null) while the externally held reader keeps its offsets.
+                                    PASS.
+  partial-file resume            -> FileSegmentDownloadTest.PartialFileResumeAppendsWithoutTruncation:
+                                    production FileSegment writes a 3000-byte prefix, releases via the
+                                    real completePartAndResetDownloader (state PARTIALLY_DOWNLOADED),
+                                    re-acquires the downloader, verifies physical size == downloaded,
+                                    appends a 2000-byte suffix, and a byte-for-byte fread proves the
+                                    prefix was NOT truncated. PASS.
+  partial physical append failure-> FileSegmentDownloadTest.PartialPhysicalAppendFailureReconciles-
+                                    DownloadedToPhysical: an injected production velox::WriteFile
+                                    (PartialCommitThenThrowWriteFile) commits a strict 1000-byte
+                                    prefix of the failing chunk then throws FileCacheErrnoException
+                                    (ENOSPC). PRODUCTION FileSegment::write reads fs::file_size,
+                                    enforces downloaded<=physical<=reserved, sets downloaded=physical
+                                    (4000), marks failed, and rethrows the ORIGINAL exception
+                                    (getErrno()==28). Reconciliation is entirely in production; the
+                                    double only injects the fault. PASS.
+  priority/eviction bookkeeping  -> PriorityEvictionTest: LRU limits/canFit/HoldSpace accounting,
+                                    SLRU protected/probationary split ratio (0.6 -> 600/400), Split
+                                    Data/System partitioning + aggregate limit, EvictionCandidates
+                                    empty bookkeeping + getOriginalQueueType None, EvictionInfo
+                                    per-queue aggregation + takeKeptAliveCacheUsage (B1 path). PASS.
+
+To reach the S4 mandatory contracts without tripping the B2b rename/remove throw for the OTHER
+tests (which the S4 prompt explicitly forbids exercising), the populate/resume tests set
+boundaryAlignment == segment size and download strict prefixes so a completed segment shrinks to a
+target that rounds up to the full range and stays PARTIALLY_DOWNLOADED (no <offset>-><offset>_<size>
+rename). This is faithful (real production complete/shrink path) and keeps those tests off the B2b
+throw. The eviction contract has no such workaround (see Blockers).
+```
+
+## Worker review
+
+```text
+review subagent: one read-only general-purpose reviewer over the complete S4 diff (FileSegment
+  seam + CMake + 6 tests), given the mandatory-tests table, the diff, and the test outcomes. Asked
+  for false-green tests, whether the two FileSegment tests drive production reconcile (not mock),
+  test-oracle correctness vs CH, flake/abort risk, seam fidelity, and eviction-blocker accuracy.
+findings:
+  1. No false-green tests: all 6 files have real assertions on the production path; no
+     disabled/assertion-free bodies.
+  2. partial-physical-append-failure DOES drive production FileSegment::write reconcile
+     (FileSegment.cpp catch block reads fs::file_size, sets downloaded=physical, rethrows original);
+     the injected WriteFile only commits a prefix + throws (no reconciliation). Confirmed.
+  3. The production seam's DEFAULT factory is byte-identical to the original LocalWriteFile
+     construction; ScopedWriteFileFactory is RAII and restores an equivalent default.
+  4. Oracles correct (path filenames, caller-id, enum values, Range size, use_count, reserve
+     rejection).
+  5. Eviction blocker confirmed UNAVOIDABLE: removeFileSegmentImpl sets
+     opened_handle_invalidation_required for any candidate with downloaded>0 && file exists, then
+     unconditionally VELOX_NYI; evicting a releasable DOWNLOADED candidate always hits it.
+  Non-blocking nit: ScopedWriteFileFactory dtor comment referenced a nonexistent nullptr sentinel.
+resolutions:
+  - Fixed the ScopedWriteFileFactory dtor comment (cosmetic; no behavior change).
+  - All other findings were confirmations (no action needed).
+unresolved findings: none from the review. The only unresolved item is the external B2b-vs-eviction
+  blocker below (needs a Controller/user decision).
+```
+
+## Blockers
+
+```text
+BLOCKER B7 — the mandatory "releasable reserve eviction" contract conflicts with the approved B2b
+throw. Evicting a releasable DOWNLOADED candidate physically removes its file, which the SCC-phase
+B2b decision makes throw VELOX_NYI, so the mandatory eviction test cannot pass.
+
+First actionable error (task012_s4_eviction_red.log / task012_s4_test.log):
+  Metadata.cpp:1250, removeFileSegmentImpl: "Opened-file-handle invalidation on file removal is not
+  implemented in the SCC phase (Task 013 Manager); path: <cache>/<key3>/<key>/0" (ErrorCode
+  NOT_IMPLEMENTED), then FileCache "Failed to evict 1 file segments".
+
+Root cause (structural, an approved-decision conflict — NOT a test-authoring mistake and NOT a
+missing dependency I may map):
+  - The mandatory-tests table requires "releasable reserve eviction: reserve succeeds only after
+    the real candidate is removed; cache size and segment state agree." A cache-resident, evictable,
+    releasable candidate must have been completed with downloaded>0 (it occupies cache space and has
+    a file on disk).
+  - Production eviction runs EvictionCandidates::evict() -> LockedKey::removeFileSegment(...) ->
+    LockedKey::removeFileSegmentImpl (Metadata.cpp). For any candidate with getDownloadedSize()>0 &&
+    fs::exists(path), removeFileSegmentImpl does fs::remove(path) and sets
+    opened_handle_invalidation_required = true, then UNCONDITIONALLY throws VELOX_NYI
+    (Metadata.cpp:1250) — the approved B2b decision (2026-07-20): replace OpenedFileCache::remove
+    with a loud not-implemented throw so any path reaching opened-handle invalidation fails loudly.
+  - Therefore evicting ANY downloaded releasable candidate hits the B2b throw. There is NO faithful
+    production path that evicts a downloaded segment without reaching removeFileSegmentImpl (a
+    downloaded==0 segment occupies no space and is removed as EMPTY on complete, so it can never be
+    the space-forcing eviction candidate). The reviewer independently confirmed this is unavoidable.
+  - The S4 prompt itself says "Do NOT exercise the opened-file-handle rename/remove invalidation
+    paths (B2b decision: those throw VELOX_NYI)". That instruction and the mandatory eviction
+    contract are in direct conflict: the B2b decision (made 2026-07-20) assumed the S4 tests would
+    not reach removal, but eviction is removal.
+
+I worked the rename half of this tension inside my scope (populate/resume tests set
+boundaryAlignment == segment size and download strict prefixes so completion stays
+PARTIALLY_DOWNLOADED and never renames <offset> -> <offset>_<size>), which kept 46/47 tests off the
+B2b throw. The eviction half has no such workaround: eviction deletes the candidate's file.
+
+Per EXECUTION_PROTOCOL worker rules 4 and 8 and the no-weaken-semantics rule, I did NOT:
+  - remove/relax the B2b throw (an approved user decision; changing it would weaken semantics and
+    override a decision outside my authority);
+  - rewrite the eviction test to assert a non-eviction path or the current stub (that would be the
+    false-green the protocol forbids).
+So the eviction test stays as a genuine behavioral RED and the stage gate remains red.
+
+Exact decision needed from the Controller/user (either unblocks a redispatch of the eviction test):
+  1. Refine B2b so the SCC-phase file-removal throw fires only when an opened handle actually
+     exists to invalidate (e.g. gate on an injected opened-file-cache reference that is empty in the
+     SCC phase), so normal eviction/removal proceeds and only a real stale-handle case throws; OR
+  2. Explicitly exempt SCC-phase eviction file-removal from the B2b throw (record as an amendment,
+     analogous to the B2b relaxation itself), with Task 013 restoring real Manager-backed
+     invalidation. In both cases the mandatory eviction test then evicts a releasable downloaded
+     candidate and asserts cache size/segment state as required.
+
+Reference anchors: Metadata.cpp:1215-1257 (removeFileSegmentImpl; opened_handle_invalidation_required
++ VELOX_NYI @1250); EvictionCandidates.cpp EvictionCandidates::evict -> removeFileSegment;
+FileCache.cpp doTryReserve/doEviction; Task-012 amendment "S2 unblock ... B2b" (2026-07-20);
+FileSegment.cpp setDownloadedUnlocked -> renameToIncludeSizeInNameUnlocked (:696) VELOX_NYI @ the
+rename site (worked around by the partial-download alignment trick for the non-eviction tests).
+```
+
+## Worker declaration
+
+```text
+Only Task 012 sub-attempt S4 was attempted.
+The center SCC compiles and LINKS cleanly; velox_ch_filecache_core_scc_test builds (exit 0). Six
+new behavioral test files were created and one minimal production seam (FileSegment WriteFileFactory,
+default byte-identical to prior behavior) was added to make the authorized partial-physical-append-
+failure test expressible; the tests CMake registers the SCC test target. 46 of 47 tests pass with
+0 skipped; the sole failure is a genuine behavioral RED for the "releasable reserve eviction"
+mandatory contract, blocked by the approved B2b VELOX_NYI on SCC-phase file removal (BLOCKER B7,
+needs a Controller/user decision). Changes are unstaged and uncommitted; all prior working-tree
+changes preserved. The worker stopped after writing this receipt.
+```
+
+## Controller unblock response 5 (B7 — B2b correction)
+
+```text
+controller_status: blocker_resolved
+task: 012 S4
+resolved: 2026-07-20
+```
+
+## Resolution
+
+```text
+root cause (Controller's own prior mis-call, now corrected):
+  The S2 B2b decision made SCC-phase file removal THROW VELOX_NYI. But in CH the
+  removal site does two adjacent INDEPENDENT things (Metadata.cpp:1261,1267):
+  (1) fs::remove(path) — core of eviction, must run; (2)
+  OpenedFileCache::instance().remove(...) — invalidate cached open handles, a
+  Task-013 Manager concept. The worker faithfully placed the throw so that ANY
+  eviction of a downloaded segment hits it -> the mandatory "releasable reserve
+  eviction" test (FileCacheTest.TryReserveEvictsReleasable) is a genuine RED.
+  Confirmed: Velox Metadata.cpp:1247-1254 throws unconditionally when
+  opened_handle_invalidation_required; CH:1261 fs::remove then :1267 OpenedFileCache.
+
+decision (user-approved 2026-07-20 — corrects B2b):
+  Perform fs::remove normally (eviction works). Replace ONLY the opened-handle
+  invalidation with a no-op + TODO(Task 013), NOT a throw, at BOTH sites (removal
+  in Metadata.cpp; rename in FileSegment.cpp). Semantically safe: no
+  OpenedFileCache exists in the SCC phase (grep velox/ch -> none), so no cached
+  handles can go stale; invalidation has nothing to do until Task 013 introduces
+  the handle cache and wires the real invalidation into the same seam. Task 013
+  (which owns OpenedFileCache per design 02:35,89,244 and 013:117,249,426,453)
+  replaces the two no-ops with the real Manager-backed invalidation.
+
+task update:
+  Recorded in the amendment "### S2 unblock — three structural resolutions" B2b
+  block as "B2b CORRECTION (B7, 2026-07-20)".
+
+evidence:
+  46/47 tests already pass; only TryReserveEvictsReleasable RED, caused solely by
+  the B2b throw. No other blocker. SCC compiles AND LINKS (S4 build exit 0).
+
+redispatch: yes — on the existing S4 working tree: change the two throws to
+  no-op + TODO(013), rerun the full green gate (velox_ch_filecache_core_scc_test,
+  0 failed / 0 skipped).
+```
+
+## Worker attempt (S4 finish — B7 fix + green gate)
+
+```text
+worker_status: ready_for_controller
+sub_attempt: S4 finish (B7 fix)
+environment: home-chang
+date: 2026-07-20
+```
+
+### B7 delta (opened-file-handle invalidation: throw -> no-op + TODO(Task 013))
+
+```text
+Corrects the earlier B2b over-broad throw. In CH the removal/rename sites do two
+adjacent but INDEPENDENT things: (1) the actual filesystem op (`fs::remove` /
+`fs::rename`) — core of eviction/rename, MUST run; (2) opened-file-handle
+invalidation (`OpenedFileCache::instance().remove(...)`) — a Task-013 Manager
+concept absent in the SCC phase. Fix: keep (1); replace ONLY (2) with a no-op +
+`TODO(Task 013)`, NOT a throw. Semantically safe: no OpenedFileCache exists yet,
+so no cached handles can go stale.
+
+Metadata.cpp removeFileSegmentImpl (~L1207-1256):
+  - `fs::remove(path)` still runs (L1225).
+  - Removed the unconditional `VELOX_NYI` that fired whenever
+    `opened_handle_invalidation_required`; the branch now does the CH-faithful
+    erase-and-return-next-iterator only, with a `TODO(Task 013)` no-op
+    (`(void)removed_path`). Both branches `return key_metadata->erase(it)`,
+    matching CH's terminal erase.
+
+FileSegment.cpp renameToIncludeSizeInNameUnlocked (~L720-750):
+  - `fs::rename(old_path, new_path)` still runs (L729); `size_in_filename`
+    published on success.
+  - Removed the `if (renamed) VELOX_NYI(...)`; the opened-handle drop is now a
+    `TODO(Task 013)` no-op (`(void)renamed`), no throw.
+
+Eviction test (FileCacheTest.TryReserveEvictsReleasable):
+  Already exercised the REAL production reserve+evict+`fs::remove` path and
+  asserted the real eviction OUTCOME (cache size stays at capacity, count stays
+  1, key2 present), never a throw. One assertion was corrected: after eviction
+  key1's metadata is fully removed, so the per-key `getFileSegmentInfos(key1,..)`
+  throws THROW_LOGICAL (CH-faithful: no such key) instead of returning empty. The
+  "key1 gone" check now uses the non-throwing whole-cache enumeration
+  `getFileSegmentInfos(user_id)`: exactly one segment survives and it belongs to
+  key2 — proving the releasable key1 segment was evicted via the real production
+  path. Oracle = CH behavior. No test weakened; no skip/disable.
+```
+
+### Eviction behavioral RED evidence
+
+```text
+Before the B7 fix (VELOX_NYI still in place), the build linked (exit 0) and
+46/47 tests passed; FileCacheTest.TryReserveEvictsReleasable was RED because the
+second populateSegment's reserve triggered real eviction of the releasable key1
+segment, which reached removeFileSegmentImpl and threw VELOX_NYI
+("Opened-file-handle invalidation on file removal is not implemented ...").
+This is a genuine RED against the intentionally-broken (throw-on-eviction) path.
+After the fix, eviction completes: fs::remove deletes key1's file, key1 metadata
+is erased, cache size stays at capacity (4096), segment count stays 1, and the
+sole surviving segment is key2. Test GREEN.
+```
+
+### Commands + exit codes
+
+```text
+configure: /usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DVELOX_ENABLE_BENCHMARKS=ON \
+  -DVELOX_BUILD_TESTING=ON -G Ninja -S <velox_repo> -B <velox_build_dir>
+  exit 0    log: <velox_build_dir>/task012_s4b_configure.log
+build:  ninja -C <velox_build_dir> velox_ch_filecache_core_scc_test
+  exit 0 (compiles AND LINKS)    log: <velox_build_dir>/task012_s4b_build.log
+test:   ctest --test-dir <velox_build_dir> -R '^velox_ch_filecache_core_scc_test$' --output-on-failure
+  exit 0    log: <velox_build_dir>/task012_s4b_test.log
+
+<velox_repo>       = /home/chang/OpenSource/velox
+<velox_build_dir>  = /home/chang/OpenSource/velox/cmake-build-debug-gcc13
+```
+
+### Final test count
+
+```text
+[==========] 47 tests from 10 test suites ran.
+[  PASSED  ] 47 tests.
+0 failed / 0 skipped / 0 disabled.
+ctest exit code: 0
+```
+
+### Velox working-tree state (unstaged, uncommitted — preserved)
+
+```text
+branch: filecache2   HEAD: 16b4fc155
+ M velox/ch/Interpreters/FileCache/FileSegment.cpp
+ M velox/ch/Interpreters/FileCache/FileSegment.h
+ M velox/ch/Interpreters/FileCache/Metadata.cpp
+ M velox/ch/Interpreters/FileCache/tests/CMakeLists.txt
+?? velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp
+?? velox/ch/Interpreters/FileCache/tests/FileSegmentInfoTest.cpp
+?? velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp
+?? velox/ch/Interpreters/FileCache/tests/MetadataTest.cpp
+?? velox/ch/Interpreters/FileCache/tests/PriorityEvictionTest.cpp
+?? velox/ch/Interpreters/FileCache/tests/QueryLimitTest.cpp
+git diff --check: clean (exit 0)
+```
+
+### Read-only review (B7 delta + eviction test)
+
+```text
+Independent read-only reviewer: no must-fix findings. Confirmed fs::remove and
+fs::rename still run; opened-handle invalidation is now a no-op + TODO(Task 013),
+not a throw; erase-then-return-next-iterator matches CH; TryReserveEvictsReleasable
+asserts the real eviction outcome via non-throwing whole-cache enumeration, no
+false-green; the other 46 tests are genuine (real setup, real production-path
+calls, real asserts); no DISABLED_/GTEST_SKIP. Two cosmetic nits only (an intended
+documented Task-013 seam branch; a redundant EXPECT_NE) — left as-is.
+```
+
+## Controller review (S4 green gate, accepted) — TASK 012 COMPLETE
+
+```text
+controller_status: accepted (S4 stage gate GREEN; Task 012 fully accepted)
+environment_profile: home-chang
+task: 012 S4 / whole Task 012
+reviewed: 2026-07-20
+```
+
+## Review evidence (S4 — final stage gate)
+
+```text
+scope: 6 new behavioral test files + modified tests/CMakeLists.txt (registers
+  velox_ch_filecache_core_scc_test) + B7 fix in FileSegment.cpp/Metadata.cpp.
+  diff --check clean.
+
+build/link/test (independently verified, not from receipt):
+  configure exit 0; build LINKS velox_ch_filecache_core_scc_test (build log:
+  "Linking CXX executable ..."), exit 0 — the whole SCC (priority/eviction +
+  FileSegment/Metadata/FileCache/QueryLimit) is a complete compile/link closure.
+  Ran the 73MB binary directly: "[==========] 47 tests from 10 test suites ran.
+  [ PASSED ] 47 tests." 0 failed, 0 skipped. --gtest_list_tests = 47.
+
+B7 correction verified: Metadata.cpp:1245-1252 opened-handle block is
+  no-op + TODO(Task 013) with fs::remove still running at :1225; FileSegment.cpp
+  :740-749 handle block is no-op + TODO with fs::rename still at :729. No
+  VELOX_NYI at either site. Eviction (fs::remove) works.
+
+false-green audit (independent Controller review subagent) — SOUND, 0 findings:
+  - Partial-file resume (FileSegmentTest.cpp:164): real production path
+    (getOrSetDownloader/reserve/write prefix -> completePartAndResetDownloader ->
+    re-acquire -> append suffix), reads back on-disk bytes, prefix not truncated.
+  - Partial physical append failure (FileSegmentTest.cpp:304): injected WriteFile
+    ONLY commits prefix + throws FileCacheErrnoException(ENOSPC); reconciliation is
+    in PRODUCTION FileSegment.cpp:486-514 (downloaded<=physical<=reserved, mark
+    failed, rethrow original) — NOT in the test double.
+  - B7 eviction (FileCacheTest.cpp:179): asserts real eviction outcome (capacity
+    held, 1 survivor = key2), not a throw.
+  - missing-key THROW, query-id holders + doomed-context-after-lock, max download
+    size, queue pipeline, remote reader handoff: all real assertions.
+  - Oracles derive from CH behavior. No false-green / weak-oracle / mock-reconcile.
+
+cross-task architecture review:
+  Atomic 011+012 stage restored to a full green compile/link/test closure. The
+  four sub-attempts (S1 headers, S2 FileSegment/Metadata + finish 011 cpp, S3
+  FileCache/QueryLimit, S4 CMake+tests) delivered the SCC without false-green;
+  every structural gap (B1/B2a/B2b+B7/B3/B5/B6) was resolved by approved design or
+  explicit user decision. Opened-file-handle invalidation is deferred to Task 013
+  (which owns OpenedFileCache) with the seam in place (no-op+TODO).
+
+unresolved findings: None. TASK 012 ACCEPTED.
+```
+
+## Commits (S4)
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `13b2dc63d Task 012: Center-SCC green build + behavioral tests (sub-attempt S4)` |
