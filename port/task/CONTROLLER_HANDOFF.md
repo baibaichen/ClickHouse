@@ -219,10 +219,40 @@ environment_profile: home-chang
   INDEPENDENTLY verified RED-on-revert (neutralized both seams -> both tests FAILED,
   restored -> green).
 
-- **Task 014 is next** (`FileCacheBufferedInput` / `FileCacheInputStream`, Velox
-  only, no Gluten edits). Gate: `velox_ch_filecache_buffered_input_test`. After
-  Task 014 is accepted and repos are clean, STOP for the mandatory Tasks 003-014
-  whole-port review and explicit user approval before Task 015.
+- **Task 014 is accepted** (Velox `bc78ef541` "Task 014: FileCacheBufferedInput +
+  FileCacheInputStream"; ClickHouse receipt+handoff = this commit). Implemented the
+  Velox DWIO scan read path: `FileCacheRequestContext`, `FileCacheFileIdentity`
+  (key derivation empty-etag->fromPath / non-empty->SipHash128(path+etag)),
+  `FileCacheBufferedInput` (lazy load; no-create `isBuffered`; shouldPrefetchStripes/
+  preloaded/shouldPreload/hasCache all false; injected executor), and
+  `FileCacheInputStream` (SeekableInputStream state machine ported from CH
+  `CachedOnDiskReadBufferFromFile`: region-relative stream coords vs absolute
+  FileCache/ReadFile offsets, QueryContextHolder held ctor->dtor and never reset by
+  seek, downloader released on advance/seek/exception without returning the canceled
+  reader, Q1/Q2 handoff from currentWriteOffset, predownload buffer re-install).
+  Sources compiled into `velox_ch_filecache` (mono build; no separate
+  `velox_ch_filecache_dwio`/`_manager` lib — ODR). Gate
+  `velox_ch_filecache_buffered_input_test` 17/17; shared-file regressions
+  `velox_ch_filecache_manager_test` 19/19 and `velox_ch_filecache_core_scc_test`
+  47/47 stay green. Controller required strengthening two false-green tests: F1
+  (`ReserveFailureBypassesCacheButReturnsData` now proves the bypass path via a
+  tempCacheOnly re-read that throws — Controller INDEPENDENTLY reproduced the RED
+  on a large cache) and F3 (mid-download exception-cleanup catch block proven
+  reached with a downloader held; the isolated catch-only RED needs a live-stream
+  state probe the MVP reader does not expose — documented, deferred to Task 015).
+  Two CH reader cases (remote-object truncation, `readBigAt` source failure)
+  excluded with recorded API-limitation justification, deferred to Task 015.
+
+- **NEXT = MANDATORY Tasks 003-014 whole-port source-contract review (STOP POINT).**
+  Per EXECUTION_PROTOCOL "After Task 014" and ENVIRONMENT.md: dispatch NO Task 015
+  Worker. Review the accumulated Tasks 003-014 (center SCC, Factory/Manager,
+  OpenedFileCache, the DWIO reader/handoff, cache miss/hit/seek/bypass, exception
+  cleanup, shutdown order) against CH source, real callers, approved designs,
+  implementation, tests, failure paths, and cross-task dependencies. Any finding
+  reopens the affected task and stops. Continue to Task 015 (Velox-only E2E +
+  random-seek benchmark) ONLY with zero unresolved findings AND explicit user
+  approval. This checkpoint is the current stop condition — do not proceed past it
+  autonomously.
   - Deferred / parked (do NOT lose these): Task 006 F-CALLERID (post/pre-release
     diagnostic); SD8 scheduler recursive_mutex (later task, controller suggests
     off-lock continuation); Task 004 StatusFile crash diagnostics R3 (pre-release
