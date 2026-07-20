@@ -70,13 +70,18 @@ Task 013 implemented and the Controller accepted.
 The resolution moves the "is the config correct?" check to **install time**,
 leaving `create()` clean:
 
-- **Install-time validation (fail-fast).** `registerFileCacheBufferedInputBuilder`
-  calls `manager.getDefault()` **once** at registration purely to validate the
-  Manager is configured for FileCache. If `getDefault()` throws (no default
-  cache configured), the throw propagates — **this is the wanted early failure**:
-  calling the install function *declares* "I am installing FileCache", so a
-  Manager without a default cache is a caller configuration error that must
-  surface immediately, not silently degrade. Do **not** catch it.
+- **Install-time validation (fail-fast, via the non-throwing predicate).**
+  `registerFileCacheBufferedInputBuilder` checks `manager.hasDefault()` **once**
+  at registration to confirm the Manager is configured for FileCache. `hasDefault`
+  is the const, non-throwing predicate added in Task 013 (`FileCacheManager.h`),
+  true exactly when a default cache name is configured (i.e. exactly when
+  `getDefault` would NOT throw). If `hasDefault()` is false, raise a clear error
+  (`VELOX_CHECK(manager.hasDefault(), "...")`) — **this is the wanted early
+  failure**: calling the install function *declares* "I am installing FileCache",
+  so a Manager without a default cache is a caller configuration error that must
+  surface immediately, not silently degrade. Do **not** call `getDefault()` at
+  install time (that would use a throwing accessor as a validator); use the
+  non-throwing `hasDefault()` predicate.
 - **Manager still by reference.** The builder **holds a `FileCacheManager&`**
   captured at registration (as originally planned — ownership unchanged). The
   Manager must **outlive** the builder. Do **not** cache the `FileCachePtr` in
@@ -119,8 +124,9 @@ never needs to forward to `createBufferedInput` itself.
 
 Provide `void registerFileCacheBufferedInputBuilder(FileCacheManager& manager);`
 that:
-1. calls `manager.getDefault()` once to validate the Manager has a default cache
-   (throw propagates on misconfiguration — fail-fast, do not catch);
+1. checks `manager.hasDefault()` (the Task-013 non-throwing predicate) and raises
+   a clear error via `VELOX_CHECK` when it is false — fail-fast; do NOT call the
+   throwing `getDefault()` as a validator;
 2. calls `BufferedInputBuilder::registerBuilder(std::make_shared<FileCacheBufferedInputBuilder>(manager))`.
 
 The host (benchmark / future Gluten Task 018 / pure-Velox tests) calls it once
@@ -243,10 +249,10 @@ New test binary `velox_ch_filecache_connector_test`
    "fallback" lives at the registration boundary. (If a prior test registered our
    builder in the same process, restore the default first.)
 3. **Install-time validation (fail-fast).** Build a `FileCacheManager` with an
-   **empty** `defaultCacheName` (allowed at create). Assert
-   `registerFileCacheBufferedInputBuilder(manager)` **throws** (`getDefault()`
-   propagates "no default cache configured"); assert it is NOT caught/swallowed
-   and no builder is registered as a side effect.
+   **empty** `defaultCacheName` (allowed at create, so `hasDefault()` is false).
+   Assert `registerFileCacheBufferedInputBuilder(manager)` **throws** (the
+   `VELOX_CHECK(manager.hasDefault(), ...)` fires); assert it is NOT
+   caught/swallowed and no builder is registered as a side effect.
 4. **Mutual-exclusion guard.** With our builder installed (valid Manager) and
    `connectorQueryCtx->cache()` non-null, `create(...)` throws with
    `"cannot both be installed"`.

@@ -466,3 +466,167 @@ None.
 |---|---|
 | `/home/chang/OpenSource/velox` | `dac50ae27` |
 | `/home/chang/SourceCode/ClickHouse` | this acceptance commit (task file + receipt + handoff) |
+
+## Worker attempt 3
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 018a (install-time validation correction)
+```
+
+Correction dispatched after the amendment to the "Install-time validation"
+bullet: the install-time check must use the non-throwing `hasDefault()`
+predicate (Task 013), NOT the throwing `getDefault()` accessor as a validator.
+Scope was exactly the install line in `FileCacheBufferedInputBuilder.cpp`;
+`create()` is unchanged and still calls `manager_.getDefault()` per call.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `35b160c79cfe0a7c92d332ab7ff0e89df8405275` | clean (0 tracked/untracked) |
+| `/home/chang/SourceCode/ClickHouse` | `filecache2` | `35b160c79cfe0a7c92d332ab7ff0e89df8405275` | clean |
+
+`velox` HEAD `35b160c79` = "Task 013: hasDefault"; this HEAD already includes
+Task 018a `dac50ae27`. No staging/commit/amend/rebase/push. Only this receipt
+appended on the ClickHouse side.
+
+## Files changed
+
+```text
+MOD  /home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheBufferedInputBuilder.cpp
+     (install-time validator only: `(void)manager.getDefault();`
+      -> `VELOX_CHECK(manager.hasDefault(), "...has no default cache configured");`)
+MOD  /home/chang/SourceCode/ClickHouse/port/task/result/018a-filecache-connector-integration-result.md (this attempt)
+```
+
+`FileCacheBufferedInputBuilderTest.cpp` needed NO change: case 3
+(`InstallTimeFailFastOnEmptyDefault`) already asserts
+`EXPECT_THROW(..., VeloxRuntimeError)`, and `VELOX_CHECK` throws
+`VeloxRuntimeError` (verified in `Exceptions.h`: `_VELOX_CHECK_IMPL` ->
+`VeloxRuntimeError`, RUNTIME source), so the exception type/message assertion
+still matches. Not weakened.
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| Build `velox_ch_filecache_connector_test` (after edit) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task018a_hasdefault_build.log` |
+| Run connector test (GREEN 4/4) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task018a_hasdefault_test.log` |
+| RED build (install check neutralized) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task018a_hasdefault_red_build.log` |
+| RED run (case 3 FAILS as required) | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task018a_hasdefault_red_test.log` |
+| Build 6 gates + 2 benchmarks (restored) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task018a_hasdefault_regression_build.log` |
+| Run e2e/buffered_input/manager/core_scc/observability/cancellation | 0 | `.../cmake-build-debug-gcc13/task018a_hasdefault_velox_ch_*_test.log` |
+
+## Acceptance evidence
+
+```text
+velox_ch_filecache_connector_test (FileCacheBufferedInputBuilderTest)
+  test count: 4, failed: 0, skipped/disabled: 0
+    1 FileCacheSelectedAndCacheHit       PASSED
+    2 NotInstalledKeepsNative            PASSED
+    3 InstallTimeFailFastOnEmptyDefault  PASSED (VELOX_CHECK(hasDefault()) fires,
+                                          VeloxRuntimeError, no side-effect registration)
+    4 MutualExclusionGuardThrows         PASSED
+
+RED requirement for the amended line (falsifiability):
+  Neutralized the install-time check (commented out VELOX_CHECK, `(void)manager;`),
+  rebuilt, ran case 3 -> FAILED at FileCacheBufferedInputBuilderTest.cpp:397
+    "Expected: registerFileCacheBufferedInputBuilder(*manager_) throws an
+     exception of type VeloxRuntimeError. Actual: it throws nothing."
+    (also cpp:401 — no builder registered) (exit 1)
+  Restored the VELOX_CHECK, rebuilt, reran -> 4/4 PASSED (exit 0).
+  Proves an empty-default Manager no longer fails fast when the check is removed,
+  and the restored check truly gates install.
+
+Regression gates (all green, 0 failed / 0 skipped), counts exact:
+  velox_ch_filecache_e2e_test              17
+  velox_ch_filecache_buffered_input_test   19
+  velox_ch_filecache_manager_test          20   (now 20 with the hasDefault case)
+  velox_ch_filecache_core_scc_test         47
+  velox_ch_observability_test              14
+  velox_ch_cancellation_test                5
+
+Benchmarks still build (no run required):
+  velox_ch_filecache_seek_benchmark        linked OK
+  velox_ch_filecache_wrapper_benchmark     linked OK
+
+Trunk-diff proof:
+  `git diff --stat -- . ':(exclude)velox/ch/**'` -> empty (zero trunk diff)
+  `git diff --stat` -> only velox/ch/Disks/IO/FileCacheBufferedInputBuilder.cpp (+5/-2)
+  git diff --check: clean
+Nothing staged/committed. No -j used.
+```
+
+## Worker review
+
+```text
+review subagent: pr-review-toolkit:code-reviewer (read-only), single launch over
+  the correction diff (FileCacheBufferedInputBuilder.cpp) + test case 3.
+findings:
+  - PASS on all four verification points: install now uses the non-throwing
+    hasDefault() predicate and still fails fast (throws VeloxRuntimeError, not
+    swallowed); registration happens only after the check so an empty default
+    aborts before registerBuilder; create() UNCHANGED, still getDefault() per
+    call; the VELOX_CHECK is a real assertion (no false-green / no-op); case 3's
+    EXPECT_THROW(..., VeloxRuntimeError) still matches. No concurrency/lifetime
+    issues (hasDefault is a const non-throwing read; manager by reference,
+    unchanged). No findings at confidence >= 80.
+resolutions: none required.
+unresolved findings: none.
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 018a (install-time validation correction) was attempted (attempt 3).
+Changes are unstaged and uncommitted. velox at 35b160c79 (branch filecache2);
+the only diff is velox/ch/Disks/IO/FileCacheBufferedInputBuilder.cpp (zero trunk
+diff). ClickHouse side: only this appended receipt. No staging/commit/amend/
+rebase/push. Unrelated changes preserved.
+The worker stopped after writing this receipt.
+```
+
+## Controller review 2 — install-time hasDefault correction (worker attempt 3)
+
+```text
+controller_status: accepted
+environment_profile: home-chang
+task: 018a (correction)
+```
+
+## Review evidence
+
+```text
+scope review: Only velox/ch/Disks/IO/FileCacheBufferedInputBuilder.cpp changed
+  (git diff --name-only: single file, under velox/ch/). Zero trunk diff. The test
+  file needed no change — case 3 asserts VeloxRuntimeError, which VELOX_CHECK also
+  throws.
+implementation review: install now uses VELOX_CHECK(manager.hasDefault(), "...no
+  default cache configured") — the Task-013 non-throwing predicate — instead of
+  the earlier (void)manager.getDefault(). This removes using a throwing accessor
+  as a validator while keeping the same fail-fast semantics. create() is
+  UNCHANGED: manager_.getDefault() is still resolved per call (line 47), correct.
+log and test review: Controller INDEPENDENTLY reproduced the RED — neutralized
+  the install check (removed VELOX_CHECK, (void)manager), rebuilt, ran: case 3
+  FAILED at FileCacheBufferedInputBuilderTest.cpp:397 ("throws nothing") and :401
+  ("a throwing install must not register a builder"). Restored VELOX_CHECK; grep
+  confirms no residual probe; rebuilt; connector test 4/4 PASSED. Manager gate
+  (20/20) and core_scc (47/47) confirmed green in the same session during the
+  hasDefault amendment; this change touches only the 018a builder.
+unresolved findings: none.
+```
+
+## Commits (correction)
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `18a81d77d` |
+| `/home/chang/SourceCode/ClickHouse` | (this correction's ClickHouse commit) |
