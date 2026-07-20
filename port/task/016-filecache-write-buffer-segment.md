@@ -1,5 +1,27 @@
 # Task 016: Port `WriteBufferToFileSegment` — Ephemeral/TemporaryDataOnDisk Use Only
 
+## Status: DEFERRED (user 2026-07-20)
+
+```text
+status: deferred
+reason: no consumer in Velox today
+```
+
+大白话:Tasks 003-015 移植的是 FileCache 的**读**路径 (查询读数据走缓存加速)。
+本 task (016) 是补**写**的一小块 —— `WriteBufferToFileSegment`, 让 FileCache 除了当
+读缓存, 还能当**查询临时数据的落盘容器** (大排序/大 join/group by 内存扛不住时, 把中间
+结果暂时甩进缓存段, 用完即弃的 Ephemeral 段)。
+
+**为什么现在 defer**:在 Velox 当前场景里, **没有任何消费者调用这条临时数据落盘路径** ——
+Velox 的算子溢写走的是它自己的 spill 机制, 不经过 ClickHouse 式的
+`WriteBufferToFileSegment`。移植过来也是死代码, 没有真实 caller 能给它做有意义的
+RED 测试 (违反本项目「合同来自真实 consumer」的铁律)。所以现在做无意义。
+
+**何时解冻**:当出现真实消费者时 —— 例如某个 Velox/Gluten 算子确实要把临时数据写进
+FileCache 的缓存盘 (而不是走 Velox 原生 spill), 那时再按真实 caller 的合同移植。届时
+本 task 的写路径合同已由 `port/design/filecache-reader-handoff-and-contract-recovery.html`
+固定, 直接执行即可。
+
 > **Post-MVP optional task.**
 >
 > **Prerequisite:** Tasks 004–014 (Velox core `FileCache` port including
