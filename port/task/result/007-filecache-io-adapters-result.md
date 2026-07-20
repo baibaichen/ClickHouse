@@ -2023,3 +2023,144 @@ None.
 | Repository | Commit |
 |---|---|
 | `/root/oss/velox` | `7e7f157fc50c0945067184dd2ac55be82213bc1b` |
+
+---
+
+## Post-acceptance corrective audit (Task-014 senior review)
+
+```text
+state: reopened_by_contract_audit
+task: 007
+trigger: Task-014 senior review of the reader handoff / background-download interaction
+scope: velox/ch/IO/ReadBufferFromVeloxReadFile.{h,cpp} + velox/ch/IO/tests/IoAdaptersTest.cpp
+changes are unstaged/uncommitted
+```
+
+### Finding
+
+```text
+The accepted Task-007 `ReadBufferFromFileBase::set(nullptr, 0)` called
+`state_.restoreOwnedWindow()`, which re-exposed the owned pool buffer as the
+internal buffer. So after a handoff detach `internalBuffer().empty()` was FALSE.
+This violated CH `BufferBase::set(nullptr, 0)` (which leaves the internal buffer
+empty) and, more importantly, broke the Task-012 background-download worker
+precondition `chassert(buf->internalBuffer().empty())` in
+`CacheMetadata::downloadImpl`. This blocked productizing background download with
+the Velox reader and forced Task 014 to run with `backgroundDownloadThreads = 0`.
+```
+
+### Corrective change
+
+```text
+1. set(nullptr, 0) now calls `state_.detach()`: internalBuffer().empty() == true
+   and available() == 0 (matching CH), while the owned BufferPtr is retained. The
+   current file offset (getFileOffsetOfBufferEnd) and the E3 handoff invariant are
+   preserved.
+2. nextImpl() lazily restores the owned window on a later NORMAL read when the
+   internal buffer is empty AND an owned buffer exists AND no external buffer is
+   attached (state_.hasOwnedBuffer() -> restoreOwnedWindow()). Direct-IO
+   alignment, right bound, terminal/cancel behavior, and the E3 buffer-end
+   invariant are untouched. A reader with an external buffer attached keeps a
+   non-empty internal buffer and never triggers the lazy restore.
+3. New releaseOwnedBuffer(): frees the owned pool allocation and detaches every
+   view (on the calling thread, pool still alive). Added because a remote reader
+   handed off to a FileSegment for background download can be destroyed later on a
+   worker thread that outlives the query-scoped MemoryPool the owned buffer was
+   charged to; velox Buffer holds a raw MemoryPool* and frees against it in its
+   destructor, so retaining it was a latent use-after-free. Task 014 calls this at
+   handoff. The owned buffer is never used for I/O by a handed-off reader (reads
+   always target an external buffer), so releasing it loses nothing.
+```
+
+### Tests updated/added (velox/ch/IO/tests/IoAdaptersTest.cpp)
+
+```text
+- ReaderSetNullDetaches: now asserts internalBuffer().empty() and begin()==nullptr
+  immediately after set(nullptr, 0).
+- ReaderHandoffSatisfiesFileSegmentInvariants: now asserts internalBuffer().empty()
+  after the handoff detach (the background-worker precondition).
+- ReaderLazilyReusesOwnedWindowAfterDetach (NEW): after detach leaves an empty
+  internal buffer, a subsequent normal next() lazily restores the SAME owned
+  storage and reads the next chunk from the preserved file offset.
+- ReaderReleaseOwnedBufferFreesPoolMemory (NEW): releaseOwnedBuffer frees the pool
+  allocation (usedBytes -> 0), leaves internalBuffer().empty(), and the reader
+  still reads into an external buffer without re-charging the pool.
+```
+
+### Evidence
+
+```text
+env: source /root/oss/velox-helper/env.sh (no -j / no nproc)
+mono build dir:     /root/oss/velox/_build/debug
+non-mono build dir: /root/oss/velox/_build/debug-task012-nonmono (VELOX_MONO_LIBRARY=OFF)
+
+velox_ch_io_test: 33/33 passed, 0 failed, 0 disabled, 0 skipped (mono AND non-mono).
+  (31 at acceptance; +2 new tests.)
+accumulated velox_ch_ mono regression: 13/13 CTest.
+
+false-green mutations (built + run + restored byte-for-byte):
+  M1 set(nullptr,0): detach -> restoreOwnedWindow  => *ReaderSetNullDetaches* FAILED (caught).
+  M6 drop releaseOwnedBuffer at Task-014 handoff    => *BackgroundHandoffReleasesQueryPoolMemory*
+     SIGSEGV/usedBytes!=0 (caught): confirms the owned buffer was the actual UAF.
+
+logs (build dir):
+  _build/debug/build_sr_fix1_io.log, test_sr_fix1_io.log
+  _build/debug/build_sr_pool_fix.log
+  _build/debug/mut2_M1-fix1-detach_{build,test}.log
+  _build/debug/mut2_M6-fix2-poolsafety_{build,test}.log
+  _build/debug/test_sr_final2_mono.log
+  _build/debug-task012-nonmono/build_sr_nonmono2.log
+
+git diff --check: clean. Gluten: untouched.
+```
+
+### Files changed (Task-007-owned, unstaged)
+
+```text
+velox/ch/IO/ReadBufferFromVeloxReadFile.h
+velox/ch/IO/ReadBufferFromVeloxReadFile.cpp
+velox/ch/IO/tests/IoAdaptersTest.cpp
+```
+
+## Controller review 7 — Task-014 handoff correction
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+```
+
+The Task-014 senior review proved that the accepted Task-007 detach behavior
+left the owned internal buffer visible, violating CH `set(nullptr, 0)` semantics
+and the Task-012 background-worker precondition. The correction:
+
+- leaves internal and working views empty after detach;
+- preserves offset and owned storage for lazy normal-read reuse;
+- releases query-pool-owned storage before a reader is handed to a background
+  worker; and
+- preserves direct-IO, right-bound, terminal, and E3 handoff behavior.
+
+Controller evidence:
+
+```text
+velox_ch_io_test:
+  mono 33/33 passed
+  non-mono 33/33 passed
+
+Task-014 integration:
+  backgroundDownloadThreads > 0 completes handed-off partial segments
+  query-pool memory reaches zero before asynchronous completion
+  removing releaseOwnedBuffer reproduces a real use-after-free
+
+git diff --check:
+  clean
+```
+
+Independent review reported no Blocker or Major finding.
+
+Accepted corrective Velox commit:
+
+```text
+1e3cc3209 Task 007: Preserve detached reader handoff
+```
+
+Task 007 is accepted again under the corrected reader-detach contract.

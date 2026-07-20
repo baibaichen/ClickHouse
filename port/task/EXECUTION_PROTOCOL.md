@@ -7,10 +7,11 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Task 013 Factory/Manager accepted
+Current state:        Task 014 buffered input accepted
 Repair before resume: none
-Then dispatch:         Task 014 buffered-input Worker
-Manager-owned runtime services and shared worker budgeting are accepted.
+Then dispatch:         mandatory Tasks 003-014 full review only
+Task 015 is prohibited until that review has zero unresolved findings and the
+  user explicitly approves.
 Tasks 011-014 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, and false-green
   probe requirements.
