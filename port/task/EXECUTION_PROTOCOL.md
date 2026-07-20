@@ -7,11 +7,10 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Task 011 priority/eviction migration accepted
+Current state:        Task 012 center SCC accepted
 Repair before resume: none
-Then dispatch:         Task 012 center-SCC Worker immediately
-Task 011 intentionally made no build claim; Task 012 owns the first compile,
-  link, and focused test closure for the atomic stage.
+Then dispatch:         Task 013 Factory/Manager Worker
+The complete Tasks 011-012 SCC is green in mono and non-mono.
 Tasks 011-014 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, and false-green
   probe requirements.

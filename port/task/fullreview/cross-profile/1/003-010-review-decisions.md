@@ -353,6 +353,23 @@ and is not open to reinterpretation:
 - `StatusFile` read-before-truncate unclean-restart diagnostics;
 - real `ENOSPC`/`EDQUOT` evidence.
 
+## Task-012 implementation discoveries
+
+The Controller accepted these integration-time decisions after full SCC review:
+
+- `std::call_once` is replaced by a mutex plus completed flag because the
+  statically linked toolchain aborts when the once callable throws through
+  `pthread_once`. The replacement must preserve one-at-a-time execution,
+  publication after success, and retry after exception.
+- Shared `FileCacheWorkerPool` sizing belongs exclusively to Task 013 Manager
+  budgeting. A `FileCache` instance must not grow or restore that shared pool;
+  metadata loading fails closed if injected capacity is insufficient.
+- The no-op compatibility surfaces may include `CurrentMetrics::get`,
+  `FileCacheWorkerPool::numThreads`, and release-inert `TestValue` failpoint
+  seams when required by real core consumers and focused failure-path tests.
+- The typed `FileCacheErrnoException` remains consumer-only until the
+  pre-release errno producer gate.
+
 ## Execution gate
 
 Task 011 remains prohibited until:

@@ -125,16 +125,19 @@ environment_profile: root-oss
     Task 011
       Velox:      72b77cc2f995c9a6e1d3bb82cd28bfc0beade9a4
       ClickHouse: this acceptance commit
-- Tasks 003, 004, 006, 007, and 008 corrected and accepted; Tasks 009, 010, and 011 accepted.
+    Task 012
+      Velox:      a46ff4716cf9656be6d89562ed4b8ba40b0bba18
+      ClickHouse: this acceptance commit
+- Tasks 003, 004, 006, 007, and 008 corrected and accepted; Tasks 009, 010, 011, and 012 accepted.
 - Task 005 remains accepted with no confirmed defect in its current consumer path.
-- Task 011 migration-only source is accepted; Task 012 owns its first build.
+- Tasks 011-012 center SCC is accepted and green in mono/non-mono.
 - The mandatory Tasks 003-010 full review completed with
   `controller_status: reopen_proposed`.
 - The user approved the final cross-profile decisions in
   `port/task/fullreview/cross-profile/1/003-010-review-decisions.md`.
 - Task 003 B1/B2 is corrected and accepted. Tasks 006 and 009 remain accepted
   under the approved defer/deviation decisions.
-- Task 011 is accepted and Task 012 must run immediately.
+- Tasks 011 and 012 are accepted.
 - The Task 003 accepted implementation preserves:
    exact CH timed/non-blocking queue and move-or-copy behavior;
    direct `VELOX_USER_FAIL` / `VELOX_FAIL` category mapping;
@@ -146,7 +149,7 @@ environment_profile: root-oss
 Current task:
 
 - Task 003 B1/B2 is corrected and accepted.
-- Velox is clean at `72b77cc2f995c9a6e1d3bb82cd28bfc0beade9a4`.
+- Velox is clean at `a46ff4716cf9656be6d89562ed4b8ba40b0bba18`.
 - Task 005 remains accepted.
 - User approved the Task-007/Task-012 boundary:
     Task 007 proves already-open adapter behavior;
@@ -182,8 +185,9 @@ Current task:
   removed or superseded in place.
 - The cross-profile review has zero unresolved findings.
 - The user explicitly approved continuous execution through Task 014.
-- Task 011 is accepted without a build claim.
-- Task 012 is the next Worker dispatch and must close the full SCC.
+- Task 012 closes the full SCC with 101/101 focused tests in both mono and
+  non-mono builds and 11/11 accumulated mono CTests.
+- Task 013 is the next Worker dispatch.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
@@ -192,14 +196,13 @@ Resume procedure:
 2. The approved Task-011/012/013/014 authoring amendments and structure
    deviation registrations are written in place (done by the Task-1
    authoring wave).
-3. Dispatch and review the Task-012 center-SCC Worker next.
-4. Continue directly through Tasks 013 and 014 after each Controller
-   acceptance.
+3. Dispatch and review the Task-013 Factory/Manager Worker next.
+4. Continue directly to Task 014 after Task-013 Controller acceptance.
 5. After Task 014, stop for the mandatory Tasks 003-014 whole-port review.
 
 Continuous execution target:
 
-- Current stop condition: none before the next Worker; Task 012 must proceed.
+- Current stop condition: none before the next Worker; Task 013 may proceed.
 - Task 015 remains prohibited until the post-Task-014 full review.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
