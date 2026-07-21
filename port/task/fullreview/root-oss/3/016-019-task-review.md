@@ -28,6 +28,10 @@ worktree.
 Task 016 is deferred. Tasks 017 and 018 are selected for one joint design wave.
 No later implementation is authorized.
 
+The Task-017/018 design wave must also place a real kernel `O_DIRECT`
+integration test before performance claims or Gluten rollout. The existing
+strict direct-IO mocks are logic coverage only.
+
 ## Task 016 follow-up resolution
 
 Task 016 was rewritten after this review and independently re-reviewed as

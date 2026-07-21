@@ -243,6 +243,30 @@ The accumulated gate must first build every registered `velox_ch_*` target and
 only then run `ctest -R '^velox_ch_'`; running CTest alone is not accepted
 evidence after a shared-library/source change.
 
+### Forward gate: real kernel `O_DIRECT`
+
+The `DirectIoReadFile` fixture validates alignment logic but does not open a
+real file with `O_DIRECT`. It is necessary unit/E2E evidence, but it is not
+sufficient direct-I/O acceptance.
+
+Before treating B1 as production-validated, run an integration test on a local
+filesystem that actually supports `O_DIRECT`:
+
+```text
+create and open a real file with O_DIRECT;
+exercise the real Velox/local ReadFile implementation;
+prove aligned foreground and background reads succeed;
+prove an unaligned logical EOF tail uses an aligned physical kernel request and
+  exposes only logical bytes;
+prove the background pure-tail path performs no kernel read and introduces no
+  buffered fallback;
+record the real syscall/errno behavior.
+```
+
+A mock that only reports `directIo(alignment)` cannot close this gate. The test
+must run on an environment where `O_DIRECT` is supported; silently skipping it
+does not count as acceptance.
+
 ### B1 end-to-end test (binding)
 
 Add `TEST_F(FileCacheE2ETest, DirectIoSourceBackgroundDownloadCompletes)`:

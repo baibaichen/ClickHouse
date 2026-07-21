@@ -48,6 +48,10 @@ the old rejection behavior. They were updated after a fresh rebuild exposed the
 stale-binary false green; both now have a direct RED mutation and pass in mono
 and non-mono builds.
 
+**User decision:** conditionally accepted only as logic coverage. A real kernel
+`O_DIRECT` integration test is mandatory; mock-only coverage does not close the
+production-validation gate.
+
 ## D4 — Background aligned-body/pure-tail behavior
 
 **Decision:** Let the background worker download only the alignment-multiple
@@ -82,7 +86,7 @@ duplicate builds.
 ```text
 D1: approve
 D2: approve
-D3: approve / modify / reject
+D3: conditional — require real O_DIRECT integration
 D4: approve / modify / reject
 D5: approve / modify / reject
 D6: approve / modify / reject

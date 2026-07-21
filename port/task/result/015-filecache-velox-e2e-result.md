@@ -322,3 +322,20 @@ Accepted Velox follow-up commit:
 43a9e6f75ffb94be38836b45fd476325665f50be
 Task 015: Sync direct-IO adapter tests
 ```
+
+## Forward obligation — real `O_DIRECT` integration
+
+The accepted tests use strict direct-IO mocks. They prove the adapter,
+background-download, and tail-handling logic, but they do not execute a real
+kernel `O_DIRECT` file descriptor.
+
+User decision:
+
+```text
+Real O_DIRECT integration coverage is mandatory.
+Mock-only coverage is not meaningful final acceptance.
+```
+
+This remains open until a supported local filesystem test exercises the actual
+kernel path, including aligned reads, EOF tail handling, background tail skip,
+and absence of buffered fallback.

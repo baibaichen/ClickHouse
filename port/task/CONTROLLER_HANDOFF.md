@@ -232,6 +232,8 @@ Current task:
        its direct-IO adapter test contract was corrected at
        `43a9e6f75ffb94be38836b45fd476325665f50be`, with all 15 registered
        `velox_ch_*` targets rebuilt and green in mono/non-mono;
+       real kernel `O_DIRECT` integration remains a mandatory forward gate and
+       mock-only coverage is not final acceptance;
     7. Tasks 016-019 contract review is recorded in
        `port/task/fullreview/root-oss/3/016-019-task-review.md`;
     8. Task 016 was rewritten and re-reviewed, then explicitly deferred by the
