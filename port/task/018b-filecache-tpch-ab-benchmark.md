@@ -117,3 +117,14 @@ continue`（含 `error_code` 重载，避免 stat 失败抛出）逐字补进 fi
 worker-receipt 格式：baselines、文件、命令（含 `--num_splits_per_file=1`）+exit+日志、
 三引擎冒烟端到端时间、fcbi-经-Manager/builder 证据（grep + 命中非零）、split=1 已应用、
 velox 主干零改动。
+
+## 主干破例 2 — readFileSchema 按列名解析（用户 2026-07-21 授权移植）
+
+第二处 velox 主干测试工具改动，同 `velox/exec/tests/utils/TpchQueryBuilder.cpp`：
+`readFileSchema` 由**按位置 zip**（`std::transform(columns, fileType->names())` +
+`types = fileType->children()`）改为**按列名解析**（对每个 TPCH 列 `fileType->findChild(column)`
+取真实类型）。**背景**：Spark 生成的 TPC-H parquet 列序 ≠ dbgen 标准列序（如 `part`
+的 `p_brand` 被挪到末尾），位置映射把列名绑到错的物理类型，导致 Q2 等 `like(INTEGER,VARCHAR)`
+abort（22 条里 11 条崩）。**逐字移植自 ch-filecache**（同分支同函数已有此补丁，注释一致）。
+**验证**：补丁前 q2/q4 signal 6（like(INTEGER)）；补丁后 q2 exit 0（12382098 行）、q4 exit 0。
+性质同破例 1（size=0 跳过）：测试工具、补 Spark-数据兼容真实缺陷、有 ch-filecache 先例。
