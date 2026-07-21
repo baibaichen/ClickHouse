@@ -11,9 +11,9 @@ Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
                        E2E cases and the checked seek benchmark.
 Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
                        Task 019 design.
-                       The three executable plans are independently reviewed,
-                       but implementation remains unauthorized until the
-                       Controller records the user's execution choice.
+                       The three executable plans are independently reviewed.
+                       Task 017A implementation is authorized by the user;
+                       later stages retain their dependency/checkpoint gates.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.

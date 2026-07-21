@@ -259,8 +259,9 @@ Current task:
         a Tasks 003–018 whole-port review whose first section closes the Review-4
         corrective/decision debt. No complete-parity or production-ready claim
         is allowed before Review 5 acceptance;
-    15. implementation remains unauthorized until the user selects the execution
-        mode.
+    15. Task 017A implementation is authorized by the user on 2026-07-21.
+        Task 018 still requires accepted Task 017A; TPCH retains its separate
+        explicit checkpoint approval; Review 5 and Task 017B retain their gates.
     16. Task 018 stops after non-TPCH correctness/micro/wrapper/Gluten work and
         Waves 1–3. No TPCH source copy, target build, data requirement, or run is
         allowed until the user explicitly approves the pre-TPCH checkpoint.
@@ -288,11 +289,12 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: user selection of the execution mode for the reviewed
-  Tasks 017A/018 plans. After Task 018, the next mandatory stop is Review 5.
+- Current state: Task 017A implementation is authorized and may be dispatched.
+  Task 018 waits for accepted Task 017A; after Task 018, the next mandatory stop
+  is Review 5.
 - Tasks 003-015 are accepted. Task 016 is deferred. Planned order is Task 017A,
-  Task 018, Review 5, then Task 017B. None is authorized. Task 019 design is
-  blocked until Task 017B is accepted.
+  Task 018, Review 5, then Task 017B. Task 017A is authorized; later stages are
+  dependency-gated. Task 019 design is blocked until Task 017B is accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

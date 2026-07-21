@@ -18,6 +18,8 @@
 - No C++ sleeps in tests or production code
 - Worker never commits; Controller commits after review per EXECUTION_PROTOCOL
 - All build output redirected to log files in the build directory
+- Do not build or run benchmark targets from Debug builds. Task 018 owns every
+  benchmark build and uses RelWithDebInfo or Release.
 
 ---
 
@@ -2175,10 +2177,10 @@ Expected: lists all `velox_ch_*` test targets (at least 16 after Task 1 adds `ve
 
 Plus 1 new: `velox_ch_metrics_snapshot_test`.
 
-- [ ] **Step 2: Build ALL discovered targets + benchmark (mono)**
+- [ ] **Step 2: Build ALL discovered test targets (mono)**
 
 ```bash
-cd /root/oss/velox/_build/debug && ninja $(cat velox_ch_targets_mono.txt | tr '\n' ' ') velox_ch_filecache_seek_benchmark > build_all_mono_pt5.log 2>&1
+cd /root/oss/velox/_build/debug && ninja $(cat velox_ch_targets_mono.txt | tr '\n' ' ') > build_all_mono_pt5.log 2>&1
 ```
 
 Expected: exit 0. Then dispatch a `task` subagent to analyze `build_all_mono_pt5.log` and return a
@@ -2231,10 +2233,10 @@ cd /root/oss/velox/_build/debug-task017a-nonmono && ctest -N -R "velox_ch_" 2>&1
 
 Expected: same target set as mono.
 
-- [ ] **Step 6: Build ALL discovered targets + benchmark (non-mono)**
+- [ ] **Step 6: Build ALL discovered test targets (non-mono)**
 
 ```bash
-cd /root/oss/velox/_build/debug-task017a-nonmono && ninja $(cat velox_ch_targets_nonmono.txt | tr '\n' ' ') velox_ch_filecache_seek_benchmark > build_all_nonmono_pt5.log 2>&1
+cd /root/oss/velox/_build/debug-task017a-nonmono && ninja $(cat velox_ch_targets_nonmono.txt | tr '\n' ' ') > build_all_nonmono_pt5.log 2>&1
 ```
 
 Expected: exit 0. Then dispatch a `task` subagent to analyze `build_all_nonmono_pt5.log` and
