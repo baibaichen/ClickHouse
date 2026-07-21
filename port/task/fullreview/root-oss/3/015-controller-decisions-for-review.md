@@ -62,6 +62,10 @@ release-inert `TestValue` notification at the pure-tail skip.
 exception B1 was intended to fix. The notification makes the absence of a
 background tail read deterministically observable.
 
+**User decision:** non-direct-I/O behavior is accepted as CH-aligned. The
+direct-I/O aligned-body/tail-skip policy remains conditional on real kernel
+`O_DIRECT` evidence and a final parity decision.
+
 ## D5 — Non-destructive benchmark freshness
 
 **Decision:** Use fresh random cache keys for benchmark hit setup, misses, and
@@ -81,13 +85,15 @@ behavioral assertion. Each test remains a separate receipt row.
 the identical mutation once preserves evidence quality while avoiding
 duplicate builds.
 
+**User decision:** approved.
+
 ## User review record
 
 ```text
 D1: approve
 D2: approve
 D3: conditional — require real O_DIRECT integration
-D4: approve / modify / reject
+D4: conditional — non-DIO approved; DIO policy pending real O_DIRECT
 D5: approve / modify / reject
-D6: approve / modify / reject
+D6: approve
 ```
