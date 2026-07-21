@@ -167,10 +167,11 @@ Run tasks in this order in the same Velox `filecache` worktree:
 | 013 | Factory and Manager | `velox_ch_filecache_manager_test` |
 | 014 | `FileCacheBufferedInput` / `FileCacheInputStream` | `velox_ch_filecache_buffered_input_test` |
 | 015 | Velox-only E2E and random-seek benchmark | current MVP acceptance gate |
-| 016 | post-MVP `WriteBufferToFileSegment` | focused ephemeral writer test |
-| 017 | post-MVP observability and cancellation | focused + E2E regression tests |
-| 018 | future Gluten `VeloxBackend` ownership and Builder integration | Gluten focused native test |
-| 019 | future Gluten builder/lifecycle E2E | Gluten integration acceptance gate |
+| 016 | deferred `WriteBufferToFileSegment` | not dispatched |
+| 017A | statistics, cancellation, caller identity, scheduler parity | focused + mono/non-mono accumulated gates |
+| 018 | Gluten lifecycle/Builder/metrics plus Velox benchmark suite | correctness, native/JNI/Java/Scala, and benchmark gates |
+| 017B | logging and exception stack formatting | focused + mono/non-mono accumulated gates |
+| 019 | Spark end-to-end design after accepted Task 017B | design gate only |
 
 Tasks 011 and 012 are one atomic implementation stage. Task 011 must not create
 fake center-SCC definitions or claim a build; Task 012 immediately completes
@@ -184,6 +185,8 @@ After Task 014 is accepted, stop and run a whole-port source-contract review of
 Tasks 003-014. Continue to Task 015 only when the review has zero unresolved
 findings and the user explicitly approves.
 
-Tasks 003-015 are the current Velox MVP path. The execution protocol stops after
-Task 015. Tasks 016-017 are optional Velox post-MVP work. Tasks 018-019 are
-deferred Gluten integration work and are not dispatched in the current phase.
+Tasks 003-015 are accepted. Task 016 and real kernel `O_DIRECT` integration are
+deferred by user decision. The reviewed mainline order is Task 017A, Task 018,
+then Task 017B; Task 019 design starts only after Task 017B is accepted.
+Implementation remains gated by `EXECUTION_PROTOCOL.md` and the current
+Controller authorization.

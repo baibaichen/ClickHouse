@@ -4,12 +4,13 @@
 
 ```text
 environment_profile: root-oss
-disposition: planned_independent
+disposition: implementation_plan_ready_independent
 implementation_authorized: false
 prerequisite: Tasks 003-015 accepted
 task_017a_dependency: none
 execution_after: accepted Task 018
 task_019_dependency: Task 019 design requires accepted Task 017B
+implementation_plan: port/task/017b-filecache-logging-exception-stack-plan.md
 ```
 
 Binding design:
@@ -18,8 +19,15 @@ Binding design:
 port/design/filecache-task-017-018-joint-design.md
 ```
 
-This task must be rewritten into a complete executable contract and reviewed
-before implementation.
+The executable contract is:
+
+```text
+port/task/017b-filecache-logging-exception-stack-plan.md
+```
+
+It passed independent plan review. Do not implement until Task 018 is accepted
+and the Controller records explicit authorization; after authorization, the plan
+supersedes this index.
 
 ## Scope
 

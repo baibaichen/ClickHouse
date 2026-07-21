@@ -80,11 +80,12 @@ environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    Task 010 receipt commit containing this handoff update; resolve
+    the latest planning/receipt commit containing this handoff update; resolve
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    1b41f73382668ffdc8d902e6dc5268e2e22832e2 Task 003: Complete `FileCache` metric names
+    43a9e6f75ffb94be38836b45fd476325665f50be (Task-015 direct-I/O adapter
+    contract correction and fresh mono/non-mono accumulated rebuild)
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -232,8 +233,9 @@ Current task:
        its direct-IO adapter test contract was corrected at
        `43a9e6f75ffb94be38836b45fd476325665f50be`, with all 15 registered
        `velox_ch_*` targets rebuilt and green in mono/non-mono;
-       real kernel `O_DIRECT` integration remains a mandatory forward gate and
-       mock-only coverage is not final acceptance;
+       real kernel `O_DIRECT` integration is deferred by user decision because
+       it is not the main path; mock logic coverage does not authorize claiming
+       kernel-`O_DIRECT` coverage;
     7. Tasks 016-019 contract review is recorded in
        `port/task/fullreview/root-oss/3/016-019-task-review.md`;
     8. Task 016 was rewritten and re-reviewed, then explicitly deferred by the
@@ -246,7 +248,14 @@ Current task:
     11. Tasks 017A/018 are jointly designed because benchmark output consumes
         Task-017A statistics;
     12. user-selected execution order is Task 017A -> Task 018 -> Task 017B;
-        Task 019 design waits for accepted Task 017B.
+        Task 019 design waits for accepted Task 017B;
+    13. executable plans are independently reviewed and stored at
+        `port/task/017a-filecache-statistics-cancellation-plan.md`,
+        `port/task/018-filecache-gluten-benchmark-plan.md`, and
+        `port/task/017b-filecache-logging-exception-stack-plan.md`; the binding
+        orchestration is `port/task/017a-018-017b-execution-plan.md`;
+    14. implementation remains unauthorized until the user selects the execution
+        mode.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -264,13 +273,13 @@ Resume procedure:
 4. Tasks 011 B2/B3, 012 B4/B5, and 014's B4 caller-order confirmation are
    corrected and accepted.
 5. The targeted re-review records zero unresolved findings.
-6. Task 015 is complete and accepted. Review Tasks 016-019 without
-   implementation.
+6. Task 015 is complete and accepted. Tasks 017A/018/017B have reviewed
+   executable plans; wait for execution authorization.
 
 Continuous execution target:
 
-- Current stop condition: user review of the Tasks 016-019 amendments and the
-  autonomous-decision ledgers.
+- Current stop condition: user selection of the execution mode for the reviewed
+  Tasks 017A/018/017B plans.
 - Tasks 003-015 are accepted. Task 016 is deferred. Planned order is Task 017A,
   Task 018, then Task 017B. None is authorized. Task 019 design is blocked until
   Task 017B is accepted.

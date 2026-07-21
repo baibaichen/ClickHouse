@@ -9,17 +9,18 @@ cross-task correctness, acceptance, and commits.
 ```text
 Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
                        E2E cases and the checked seek benchmark.
-Next dispatch order:   Tasks 016-019 contract review completed. Run a task
-                       authoring wave only after the review amendments are
-                       approved; do not implement Task 016.
+Next dispatch order:   Task 017A -> Task 018 -> Task 017B -> Task 019 design.
+                       The three executable plans are independently reviewed,
+                       but implementation remains unauthorized until the
+                       Controller records the user's execution choice.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
-Tasks 017A and 018 are planned mainline work and must be redesigned together:
+Tasks 017A and 018 are planned mainline work and were designed together:
 Task 017A owns statistics/cancellation/scheduler/caller-id and Task 018 owns Gluten integration plus
 the adapted Velox correctness, core/buffered-input/wrapper microbenchmark, and
-TPCH suite. Implementation is not authorized. Task 019 is not allowed as
-currently written.
+TPCH suite. Their executable plans are under `port/task/`; implementation is not
+authorized. Task 019 is not allowed as currently written.
 Task 017B independently owns logging and exception stacks. It executes after
 Task 018 and must be accepted before Task 019 design.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
@@ -27,8 +28,9 @@ Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   probe requirements, exact CH/Velox source citations, exact test owners,
   and explicit stop conditions.
 Deferred Velox work:  Task 016
-Planned Velox work:   Task 017A, then post-018 Task 017B
-Planned Gluten work:  Task 018, joint design with Task 017A
+Planned Velox work:   `017a-filecache-statistics-cancellation-plan.md`, then
+                      post-018 `017b-filecache-logging-exception-stack-plan.md`
+Planned Gluten work:  `018-filecache-gluten-benchmark-plan.md`
 Deferred Gluten:      Task 019, blocked on Task 018
 ```
 

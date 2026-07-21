@@ -4,12 +4,13 @@
 
 ```text
 environment_profile: root-oss
-disposition: planned
+disposition: implementation_plan_ready
 implementation_authorized: false
 prerequisite: Tasks 003-015 accepted
 task_016_dependency: none
 task_018_dependency: Task 018 requires accepted Task 017A
 task_017b_order: Task 017B executes after Task 018
+implementation_plan: port/task/017a-filecache-statistics-cancellation-plan.md
 ```
 
 Binding design:
@@ -18,8 +19,14 @@ Binding design:
 port/design/filecache-task-017-018-joint-design.md
 ```
 
-This task must be rewritten into a complete executable contract and reviewed
-before implementation.
+The executable contract is:
+
+```text
+port/task/017a-filecache-statistics-cancellation-plan.md
+```
+
+It passed independent plan review. Do not implement until the Controller records
+explicit authorization; after authorization, the plan supersedes this index.
 
 ## Scope
 
