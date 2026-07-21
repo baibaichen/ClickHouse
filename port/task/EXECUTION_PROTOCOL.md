@@ -13,8 +13,8 @@ Current state:        Tasks 003-014 Review-2 decisions approved; Tasks 011,
                        reopened_by_contract_audit; Task 015 amended with the
                        B1 corrective contract and strengthened E2E/benchmark
                        requirements.
-Next dispatch order:   1. corrective Task 012 Worker (B4/B5), then Task 014
-                          Worker (B4 Task-014-half confirmation)
+Next dispatch order:   1. corrective Task 014 Worker
+                          (B4 Task-014-half confirmation)
                        2. a targeted re-review of only the Tasks 003-014 rows
                           affected by B2-B5 (not a full re-review of every
                           accepted row)

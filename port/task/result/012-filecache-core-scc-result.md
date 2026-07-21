@@ -1106,3 +1106,394 @@ non-mono/accumulated evidence, before Task 015 may start.
 
 No production change is authorized by this audit alone; the corrective task
 may change production code only if its own new tests expose a real defect.
+
+---
+
+## Worker attempt 7 (Review-2 B4/B5 corrective wave)
+
+```text
+status: ready_for_controller
+environment_profile: root-oss
+task: 012 corrective B4/B5
+worker_attempt: 7
+date: 2026-07-21
+```
+
+### Baselines verified
+
+Clean baselines confirmed before any editing:
+
+```text
+velox branch: filecache, HEAD b18a8d039904a0421011f6d5a47bcefa1669185b (clean)
+clickhouse branch: ch-filecache, HEAD 1138704d4d50bb899f6b88944175d6d8b8a50dfe (clean)
+baseline mono:    103/103 gtests PASSED
+baseline non-mono: 103/103 gtests PASSED
+accumulated CTest: 14/14 PASSED
+```
+
+Log paths:
+- `_build/debug/task012corr/baseline_mono.log`
+- `_build/debug-task012-nonmono/task012corr/baseline_nonmono.log`
+
+### Files changed
+
+```text
+velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp  (+108 lines)
+  — added #include <barrier>
+  — added TEST_F(FileSegmentTest, ConcurrentExtractRacesResetBeforeComplete)
+
+velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp  (+61 lines)
+  — added #include "velox/ch/Common/FileCacheBoundedQueue.h"
+  — added TEST(FileCacheBoundedQueueTest, SccQueuePipelineCallShapes)
+
+Production sources unchanged.  CMake unchanged.
+```
+
+### B4 implementation: ConcurrentExtractRacesResetBeforeComplete
+
+**File**: `velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp`
+
+Fixture: `FileSegmentTest`. The test acquires a bare EMPTY segment on the
+fixture thread; ALL downloader operations (elect, reserve, write, setReader,
+resetReader, complete) happen on thread A, so downloader identity is per
+physical thread A as required.
+
+Thread A writes 40 of 100 bytes (partial download) so that
+`completePartAndResetDownloader()` takes the `PARTIALLY_DOWNLOADED` path via
+`resetDownloadingStateUnlocked`, leaving `download_data` intact (only the
+`DOWNLOADED` path via `setDownloadedUnlocked` resets `download_data`).
+
+Three `std::barrier<>` synchronisation points:
+
+| Barrier | Thread A prior action | Thread B action after barrier |
+|---|---|---|
+| barrier 1 | write 40 bytes, stash reader, drop local ref (use_count=2) | step 2: `extractRemoteFileReader()` = nullptr (state=DOWNLOADING, state gate) |
+| barrier 2 | `resetRemoteFileReader()` step 3 — reader withdrawn, use_count drops to 1 | step 4: `extractRemoteFileReader()` = nullptr; **`reader_a.use_count() == 1`** |
+| barrier 3 | `completePartAndResetDownloader()` step 5 | step 6: `extractRemoteFileReader()` = nullptr |
+
+After `threadA.join()` / `threadB.join()`: `reader_a.use_count() == 1`.
+
+**Downloader identity coherence**: after `completePartAndResetDownloader()`,
+`download_data->downloader_id` is cleared by `resetDownloaderUnlocked`.
+`download_data` is NOT freed (PARTIALLY_DOWNLOADED path). `reader_a` is the
+sole owner because `download_data->remote_file_reader` was null-ed in step 3.
+
+### B4 RED evidence
+
+```text
+Pre-state: no test schedules the concurrent reset-before-complete race.
+Existing ExtractRemoteFileReaderOnlyInTerminalOrPartialNoContinuationState
+(FileSegmentTest.cpp:568-612) proves the sequential ordering only.
+The gap: a regression reversing resetRemoteFileReader / completePartAndResetDownloader
+order was not detectable by any existing test.
+```
+
+### B4 false-green mutation (scratch, not committed)
+
+Mutation: swap steps 3 and 5 in thread A's lambda.
+
+```cpp
+// MUTATION thread A (instead of resetRemoteFileReader then complete):
+segment->completePartAndResetDownloader();   // before barrier 2
+barrier2.arrive_and_wait();
+try { segment->resetRemoteFileReader(); } catch (...) {}  // THROWS: not the downloader
+barrier3.arrive_and_wait();
+```
+
+After the mutated `completePartAndResetDownloader()` (from DOWNLOADING with
+partial data):
+- state → PARTIALLY_DOWNLOADED
+- `download_data->downloader_id` cleared
+- `download_data->remote_file_reader` still set (reader NOT withdrawn)
+
+Thread B at barrier 2 sees `reader_a.use_count() == 2` (download_data still
+holds a reference). `EXPECT_EQ(reader_a.use_count(), 1)` **FAILS**.
+
+`resetRemoteFileReader()` then throws "Operation resetRemoteFileReader can be
+done only by downloader" (caught to avoid deadlocking barrier 3).
+
+**Mutation output (build/debug/task012corr/b4_mutation.log)**:
+```
+FileSegmentTest.cpp:1111: Failure
+Expected equality of these values:
+  reader_a.use_count()
+    Which is: 2
+  1
+[RUNTIME] assertIsDownloaderUnlocked: Operation resetRemoteFileReader can be
+done only by downloader. (CallerId: b4-downloader:..., downloader id: )
+FileSegmentTest.cpp:1123: Failure
+  reader_a.use_count() Which is: 2  (expected 1)
+Assertion failed: Memory buffer for buffer must have been reset ...
+```
+
+Exit code: 134 (abort from teardown chassert after mutation left
+`download_data->remote_file_reader` non-null — expected consequence of the
+inconsistent state the reversed order creates).
+
+**Discrepancy with task spec**: The task contract states the step-4 mutation
+detection is "extractRemoteFileReader() returns non-null". With the current
+production code, `extractRemoteFileReader()` uses a state gate (DOWNLOADED or
+PARTIALLY_DOWNLOADED_NO_CONTINUATION only) which prevents non-null return in
+PARTIALLY_DOWNLOADED state. The actual detection is via
+`reader_a.use_count() == 2` (double-ownership window). This still correctly
+proves the ordering invariant. The production code is not defective; the task
+spec assumed a different state path.
+
+Source restored to exact correct form. Re-verify: `PASSED`.
+
+### B5 implementation: SccQueuePipelineCallShapes
+
+**File**: `velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp`
+**Test**: `TEST(FileCacheBoundedQueueTest, SccQueuePipelineCallShapes)`
+
+Includes `velox/ch/Common/FileCacheBoundedQueue.h` (same type used by
+`FileCache.cpp`; no local redeclaration).
+
+Covers all required call shapes from `FileCache.cpp`:
+
+| Step | Shape | FileCache.cpp ref |
+|---|---|---|
+| 1 | construct `FileCacheBoundedQueue<int>(4)` | 1626-1627 |
+| 2 | `tryPush(10, 10)`, `tryPush(20, 10)` | 1799 |
+| 3 | `tryPop(val)` → 10 (FIFO), `tryPop(val)` → 20 (FIFO) | 1643 non-blocking |
+| 3b | `tryPop(val)` on empty → false (observably necessary) | — |
+| 4 | blocking `pop(item)` on empty + `finish()` → pop returns false | 1691, 1720/1831/1833 |
+
+### B5 RED evidence
+
+```bash
+# Pre-implementation grep (before this corrective wave):
+grep -r "FileCacheBoundedQueue" velox/ch/Interpreters/FileCache/tests/
+# → zero matches
+# velox_ch_filecache_core_scc_test had zero FileCacheBoundedQueue coverage;
+# regressions in timed-tryPush, non-blocking-tryPop, FIFO, or finish-wake
+# reachable only from this binary would pass CI undetected.
+```
+
+### B5 false-green mutation (scratch, not committed)
+
+Mutation: replace `EXPECT_FALSE(q.tryPop(val))` with `EXPECT_FALSE(q.pop(val))`.
+
+```text
+timeout 8s ./velox_ch_filecache_core_scc_test \
+  --gtest_filter=FileCacheBoundedQueueTest.SccQueuePipelineCallShapes
+```
+
+Output (b5_mutation_out.log):
+```
+[ RUN      ] FileCacheBoundedQueueTest.SccQueuePipelineCallShapes
+<hangs — blocking pop on unfinished empty queue>
+timeout exit: 124
+```
+
+Exit code 124 (SIGTERM from `timeout`). The test hangs because `q.pop(val)` on
+an unfinished empty queue waits indefinitely (no `finish()` is called on `q`).
+
+Source restored. Re-verify: `PASSED`.
+
+### Mono / non-mono / accumulated final gates
+
+```text
+Mono build log:    _build/debug/task012corr/build_final_mono.log  EXIT:0
+Mono full suite:   _build/debug/task012corr/final_mono.log
+  [==========] 105 tests from 13 test suites ran.  [PASSED] 105 tests.
+
+Non-mono build:    _build/debug-task012-nonmono/task012corr/build_final_nonmono.log  EXIT:0
+Non-mono suite:    _build/debug-task012-nonmono/task012corr/final_nonmono.log
+  [==========] 105 tests from 13 test suites ran.  [PASSED] 105 tests.
+
+Accumulated CTest: _build/debug/task012corr/final_accumulated_ctest.log
+  100% tests passed, 0 tests failed out of 14
+  Total Test time (real) = 2.08 sec
+```
+
+gtest count: 103 → 105 (+1 B4, +1 B5).
+CTest target count: 14 → 14 (unchanged — both new tests were added to the
+existing `velox_ch_filecache_core_scc_test` CTest target; no new target was
+registered; the task prose "counts increase" referred to the gtest count
+within the existing target, not the CTest target count).
+
+### git diff --check
+
+```text
+EXIT:0  (no trailing whitespace, no CRLF)
+```
+
+### Self-review
+
+- Three `std::barrier` sync points used; no sleep; no timing-only assertions.
+- Downloader identity on thread A (physical thread); fixture thread only calls `acquireEmptySegment`.
+- `reader_a.use_count()` check at barrier 2 is safe: both threads are at the barrier (sequentially consistent release), thread A's barrier-2 entry serialises the `resetRemoteFileReader()` completion before thread B's check; `use_count()` is an atomic load.
+- No production code modified; no CMake change.
+- B5 uses `facebook::velox::ch::FileCacheBoundedQueue` (the real type from the header) — no local redeclaration.
+- The empty-queue `tryPop` in step 3b is observably necessary: the false-green mutation (replace with blocking `pop`) hangs, proving the call shape matters.
+- `git diff --check` clean.
+
+### Blockers
+
+None.
+
+### Declaration
+
+I certify that:
+1. Baselines were verified (103/103 mono and non-mono) before any editing.
+2. B4 uses real `std::thread` and three `std::barrier`s with no sleep.
+3. B4 mutation (swapped steps 3/5) fails deterministically via `reader_a.use_count() == 2`.
+4. B5 uses the real `FileCacheBoundedQueue` type with all required call shapes.
+5. B5 mutation (blocking pop for empty tryPop) hangs, confirmed by timeout exit 124.
+6. Final gates: 105/105 mono, 105/105 non-mono, 14/14 accumulated CTest, diff --check clean.
+7. No production source changed, no CMake changed, no disabled tests, no sleeps.
+
+---
+
+## Review-fix wave (B4 + B5 — 2026-07-21)
+
+### Findings addressed
+
+Two reviewer findings from the independent code review (attempt 7):
+
+**B5 — `FileCacheTest.cpp`:** `q2.finish()` could run before the consumer
+reached `q2.pop()`, proving only a finish-before-pop ordering rather than
+waking a blocked pop.
+
+**B4 — `FileSegmentTest.cpp`:** Fatal `ASSERT_*` macros inside `threadA`
+before `barrier1` could return from the thread (gtest semantics), causing
+`threadB` to deadlock at `barrier1.arrive_and_wait()` indefinitely.
+
+### Changes made
+
+#### `velox/ch/Interpreters/FileCache/tests/FileCacheTest.cpp`
+
+1. Added `#include <latch>` (after `#include <barrier>`).
+2. Added `std::latch consumer_at_pop(1)` before the consumer thread.
+3. Consumer calls `consumer_at_pop.count_down()` immediately before `q2.pop()`.
+4. Main calls `consumer_at_pop.wait()` before `q2.finish()`, guaranteeing
+   `finish()` runs only after the consumer has entered `pop()` — proving the
+   wake-up path, not a finish-before-pop ordering.
+5. Removed "or preempts" from all comments; updated wording to accurately
+   describe the latch coordination.
+6. No `TestValue` hook added; no production files changed.
+
+#### `velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp`
+
+1. Replaced the monolithic `threadA` lambda with a two-phase structure:
+   - **Setup phase:** `getOrSetDownloader`, `reserve`, `write`, `setRemoteFileReader`,
+     `reader_a` capture — communicates success or failure to the fixture thread
+     via `std::promise<void> setup_promise` / `std::future<void> setup_future`
+     before thread B is started.  No `ASSERT_*` macros here; failures call
+     `setup_promise.set_exception()` and `return`, so thread B is never started
+     and no barrier deadlock can occur.
+   - **Post-setup phase:** barrier-synchronized work wrapped in a `try`/`catch`;
+     on any unexpected exception, `arrive_and_drop` is called on every barrier
+     not yet completed (`past_barrier1/2/3` flags), so thread B cannot be
+     stranded.  The exception is captured in `thread_a_exception` and reported
+     on the fixture thread after both threads join.
+2. Main thread waits on `setup_future.get()` (throws if setup failed), joins
+   `threadA`, and calls `FAIL()` with the error message — without ever starting
+   `threadB`.
+3. Unchanged: three `std::barrier<>` sync points, 40/100 partial path,
+   `reader_a.use_count()` ownership check, all three observation assertions
+   in thread B, the false-green mutation description in the comment block.
+4. No production files changed; no `ASSERT_*` inside worker threads.
+
+### Build and test log paths (all under velox repo root)
+
+```text
+Build mono:      _build/debug/task012corr/build_mono_corr.log         EXIT:0
+Build non-mono:  _build/debug-task012-nonmono/task012corr/build_nonmono_corr.log  EXIT:0
+
+Focused B4+B5 mono:     _build/debug/task012corr/focused_b4b5_mono.log
+  [PASSED] 2 tests (FileSegmentTest.ConcurrentExtractRacesResetBeforeComplete,
+                    FileCacheBoundedQueueTest.SccQueuePipelineCallShapes)
+
+Focused B4+B5 non-mono: _build/debug-task012-nonmono/task012corr/focused_b4b5_nonmono.log
+  [PASSED] 2 tests
+
+Full suite mono:     _build/debug/task012corr/full_suite_mono.log
+  [==========] 105 tests from 13 test suites ran.  [PASSED] 105 tests.
+
+Full suite non-mono: _build/debug-task012-nonmono/task012corr/full_suite_nonmono.log
+  [==========] 105 tests from 13 test suites ran.  [PASSED] 105 tests.
+
+Accumulated CTest:   _build/debug/task012corr/accumulated_ctest.log
+  100% tests passed, 0 tests failed out of 14.  Total time: 1.87 sec.
+```
+
+### git diff --check
+
+```text
+velox:      EXIT:0
+clickhouse: EXIT:0
+```
+
+### Summary
+
+- Test counts unchanged at 105 gtest / 14 CTest (same as after original attempt 7).
+- No production source, CMake, Gluten, or unrelated files modified.
+- No sleeps, no disabled tests, no weakened assertions.
+
+## Controller review 7 — Review-2 B4/B5
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+scope: test/evidence only
+```
+
+Two independent task reviews were completed. The first found two test-harness
+hazards: `finish()` could preempt the B5 consumer before `pop`, and fatal
+assertions in B4 thread A could strand barrier peers. The review-fix wave added
+the one-shot consumer latch and an exception-safe setup/barrier handoff. The
+second review approved both specification compliance and technical quality
+with no unresolved Blocker/Major findings.
+
+The review also corrected the B4 mutation expectation against production
+source truth: a full completion destroys `download_data` before publishing
+`DOWNLOADED`, so a non-null post-completion extraction cannot be observed.
+The accepted partial-download mutation instead detects the retained reader
+deterministically through `reader_a.use_count() == 2`.
+
+Controller evidence:
+
+```text
+mono:
+  focused B4/B5 2/2
+  full core SCC 105/105
+
+non-mono:
+  VELOX_MONO_LIBRARY=OFF
+  focused B4/B5 2/2
+  full core SCC 105/105
+
+accumulated mono CTest:
+  14/14 targets
+
+failed/skipped/disabled:
+  0/0/0
+
+mutations:
+  B4 reversed completion/reset order -> ownership assertion fails
+  B5 empty tryPop changed to blocking pop -> timeout exit 124
+
+git diff --check:
+  clean
+```
+
+Final post-review style-only rebuild and focused run:
+
+```text
+_build/debug/task012corr/build_after_style_fix.log: exit 0
+_build/debug/task012corr/focused_after_style_fix.log: 2/2 passed
+```
+
+No production source or CMake changed.
+
+Accepted Velox commit:
+
+```text
+ad1a13c37cb13332bbb61cf8d224d8244ad17d32
+Task 012: Complete concurrency evidence
+```
+
+Task 012's B4 half and B5 are closed. Task 014's caller-order confirmation is
+the remaining B4 gate.

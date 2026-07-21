@@ -316,7 +316,7 @@ state after *both* calls have already run, in whichever order):
    `resetRemoteFileReader()` then `completePartAndResetDownloader()`, thread
    B's `extractRemoteFileReader()` must return `nullptr`**;
 5. thread A calls `completePartAndResetDownloader()` (the second half of the
-   correct sequence, publishing the terminal download state), then
+   correct sequence, publishing the next download state), then
    `arrive_and_wait()`s on barrier 3;
 6. thread B `arrive_and_wait()`s on barrier 3, then calls
    `extractRemoteFileReader()` again and asserts it still returns `nullptr`,
@@ -343,21 +343,27 @@ production code already honors the correct order.
 False-green mutation: in a scratch copy of the test only (not production),
 swap steps 3 and 5 so thread A calls `completePartAndResetDownloader()` first
 (before barrier 2) and `resetRemoteFileReader()` second (before barrier 3),
-matching what a regression at either real call site would do, rebuild, and
-confirm the test now fails deterministically: after barrier 2, the download
-state is already terminal (`DOWNLOADED`) but `download_data->remote_file_reader`
-has not yet been reset, so thread B's step-4 `extractRemoteFileReader()` now
-returns a **non-null** reader — the exact same object as thread A's locally
-held `reader_a` — while thread A still believes it exclusively owns that
-reader and is about to call `resetRemoteFileReader()` on it (which becomes a
-silent no-op against an already-emptied field, since thread B already moved
-the reader out). This is the double-ownership the reversed order exposes:
-thread A's `reader_a` and thread B's newly-extracted reader alias the same
-underlying object simultaneously. Confirm the test fails at the step-4
-assertion (now observing non-null instead of the expected `nullptr`), not at
-a compile error. Restore the correct call order and re-confirm green. Do not
-mutate production code for this probe; the point is to prove the *test* can
-fail when the *documented* ordering contract is violated by a caller.
+matching what a regression at either real call site would do. Use a partial
+download so `completePartAndResetDownloader()` publishes
+`PARTIALLY_DOWNLOADED` without destroying `download_data`. After barrier 2,
+thread B's extraction remains state-gated and returns `nullptr`, but
+`reader_a.use_count()` is 2 rather than 1 because
+`download_data->remote_file_reader` still owns the same reader. Assert sole
+ownership after the reset window so this reversed sequence fails
+deterministically on that assertion. Catch and record the subsequent
+`resetRemoteFileReader()` rejection (completion cleared the downloader
+identity) so the scratch mutation can release barrier 3 instead of deadlocking.
+Restore the correct call order and re-confirm green.
+
+This ownership-count probe is the source-truth correction to the earlier
+`DOWNLOADED`/non-null-extraction expectation: on a complete download,
+`setDownloadedUnlocked()` destroys `download_data` and its reader before
+publishing `DOWNLOADED`, while
+`setDownloadFinishedWithoutContinuation()` rejects a still-stashed reader via
+`chassert`. Neither path can expose the previously described non-null
+extraction in this Debug test. Do not mutate production code for this probe;
+the point is to prove the test fails when the documented caller ordering is
+reversed.
 
 No production change is expected. If the test exposes an actual defect in
 `FileSegment.cpp`'s state-publication gating, fix the minimal defect and

@@ -220,8 +220,9 @@ Current task:
 - Next dispatch order:
     1. Task 011 B2/B3 is corrected and accepted at
        `b18a8d039904a0421011f6d5a47bcefa1669185b`;
-    2. a fresh Task 012 Worker for the B4/B5 corrective scope, then a fresh
-       Task 014 Worker for the B4 Task-014-half confirmation;
+    2. Task 012 B4/B5 is corrected and accepted at
+       `ad1a13c37cb13332bbb61cf8d224d8244ad17d32`; dispatch a fresh Task 014
+       Worker for the B4 Task-014-half confirmation;
     3. a targeted re-review of only the Tasks 003-014 rows affected by
        B2-B5 (not a full re-review of every already-accepted row);
     4. only after that targeted review records zero unresolved findings and
@@ -246,9 +247,9 @@ Resume procedure:
    authoring wave; see `port/task/011-filecache-priority-eviction.md`,
    `port/task/012-filecache-core-scc.md`, `port/task/014-filecache-buffered-input.md`,
    and `port/task/015-filecache-velox-end-to-end.md`).
-4. Task 011 B2/B3 is corrected and accepted. Dispatch a fresh Task 012 Worker,
-   then a fresh Task 014 Worker, executing exactly the remaining corrective
-   scopes recorded in step 3.
+4. Tasks 011 B2/B3 and 012 B4/B5 are corrected and accepted. Dispatch a fresh
+   Task 014 Worker for the remaining caller-order confirmation recorded in
+   step 3.
 5. Run the targeted re-review of the affected Tasks 003-014 rows and record
    zero unresolved findings.
 6. Continue to Task 015 only with zero unresolved findings from step 5 and
