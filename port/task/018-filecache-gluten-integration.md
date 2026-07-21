@@ -55,6 +55,16 @@ Task 018 consumes that API across microbenchmark/wrapper/TPCH output and wires
 FileCache into Gluten.
 ```
 
+Task 018 must additionally verify the Task-014 statistics wiring debt is closed:
+the real `FileCacheBufferedInput` path must populate the existing
+`IoStatistics` object, and those values must reach Gluten/Spark through the same
+`RuntimeMetric` pipeline used by `CachedBufferedInput`.
+
+Task 018 also owns the host half of the Task-014 cancellation wiring debt:
+extract the copied `folly::CancellationToken` from `ConnectorQueryCtx` at the
+builder boundary and pass it into the Task-017 FileCache API. The FileCache
+library must not retain the query-context pointer.
+
 The joint design must decide the exact hit/miss/downloaded-byte/eviction/current
 size fields before either task is implemented.
 

@@ -84,6 +84,13 @@ co_design_with: Task 018 TPCH statistics
 
 ### Important
 
+- Close the explicit Task-014 statistics wiring debt:
+  `FileCacheBufferedInput` stores `IoStatistics`/`IoStats`, but
+  `FileCacheInputStream` never updates them, and the three CH read-path byte
+  events have no call sites in Velox.
+- Close the Task-014 cancellation wiring debt: Task 012's
+  `FileSegment::wait` accepts and checks a token, but Task 014 hard-coded an
+  empty token instead of forwarding one through the Velox consumer API.
 - Add `FileCacheBufferedInput.h/.cpp` and the Task-015 shared test helper to file
   scope if the constructor changes.
 - Store a copied `folly::CancellationToken`, not a raw

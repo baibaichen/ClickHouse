@@ -32,6 +32,62 @@ Task 017 owns the stable FileCache counters/snapshots; Task 018's correctness
 tool, microbenchmarks, wrapper A/B, and TPCH benchmark consume them. Do not
 finalize metric storage or benchmark output columns independently.
 
+### Deferred Task-014 statistics wiring debt
+
+Task 014 deliberately excluded
+`AsyncDataCache raw-bytes path sharing with FileCacheBufferedInput` while still
+accepting and storing `ioStatistics_`/`ioStats_`. As a result,
+`FileCacheInputStream` currently updates neither the three CH read-path
+`ProfileEvents` nor Velox `IoStatistics`.
+
+This is a binding Task-017/018 debt, not an optional metric:
+
+```text
+Task 017 defines and implements the exact FileCache read-type -> statistics
+  mapping and makes the CH metric/event shims real.
+Task 018 proves those IoStatistics values flow through RuntimeMetric,
+  OperatorStats, TaskStats, Gluten JNI, and Spark SQLMetric.
+```
+
+The three CH global events are:
+
+```text
+CachedReadBufferReadFromCacheBytes
+CachedReadBufferReadFromSourceBytes
+CachedReadBufferCacheWriteBytes
+```
+
+The query-level mapping must be designed separately from the global event
+storage; merely making `ProfileEvents::increment` non-noop does not close this
+reader-wiring debt.
+
+### Deferred/missed Task-014 cancellation wiring debt
+
+Task 012 already implemented cancellation-aware
+`FileSegment::wait(offset, token)` with one-second checks. Task 014's
+`FileCacheInputStream` nevertheless hard-coded an empty token:
+
+```cpp
+fileSegment.wait(offset, folly::CancellationToken{});
+```
+
+The absence of a Gluten `ConnectorQueryCtx` in the Velox-only phase explains
+why no real host token was available, but it did not require hard-coding the
+empty value. Task 014 should have accepted/forwarded a token and tested the
+consumer path with a synthetic `CancellationSource`.
+
+This is now a binding Task-017/018 correction:
+
+```text
+Task 017 owns the value-semantic cancellation token in
+  FileCacheBufferedInput/FileCacheInputStream and forwards it into the existing
+  FileSegment::wait implementation plus safe outer checkpoints.
+Task 018 extracts ConnectorQueryCtx::cancellationToken() and supplies it to the
+  Task-017 API.
+```
+
+Do not store a `ConnectorQueryCtx *` in the FileCache library.
+
 ## Goal
 
 Replace the selected no-op shims in `velox/ch/Common/` with lightweight
