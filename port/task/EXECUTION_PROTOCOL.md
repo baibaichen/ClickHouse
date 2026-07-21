@@ -20,14 +20,14 @@ Task 017A owns statistics/cancellation/scheduler/caller-id and Task 018 owns Glu
 the adapted Velox correctness, core/buffered-input/wrapper microbenchmark, and
 TPCH suite. Implementation is not authorized. Task 019 is not allowed as
 currently written.
-Task 017B independently owns logging and exception stacks and does not block
-Task 018.
+Task 017B independently owns logging and exception stacks. It executes after
+Task 018 and must be accepted before Task 019 design.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,
   and explicit stop conditions.
 Deferred Velox work:  Task 016
-Planned Velox work:   Task 017A; independent Task 017B
+Planned Velox work:   Task 017A, then post-018 Task 017B
 Planned Gluten work:  Task 018, joint design with Task 017A
 Deferred Gluten:      Task 019, blocked on Task 018
 ```

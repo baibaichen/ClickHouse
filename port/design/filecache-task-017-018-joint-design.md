@@ -279,7 +279,10 @@ condition-variable registration mechanism is needed.
 
 ## 5. Task 017B: logging and exception stacks
 
-Task 017B is independent of Task 017A and does not block Task 018.
+Task 017B is independent of Task 017A and does not block Task 018. By user
+decision it is scheduled after Task 018 acceptance, but it must complete before
+Task 019 design and before the overall FileCache integration is declared
+production-ready.
 
 Preserve the current logger type and both exception-logging call shapes:
 
@@ -635,12 +638,11 @@ No broad catch or success-shaped fallback is introduced.
 
 1. Rewrite Task 017A and Task 017B from this design.
 2. Implement and independently accept Task 017A.
-3. Task 017B may be implemented/reviewed independently in parallel; it does not
-   gate Task 018.
-4. Rewrite Task 018 against the accepted Task-017A API.
-5. Implement Velox benchmark adaptations and Gluten integration under Task 018.
-6. Independently accept Task 018.
-7. Only then design Task 019.
+3. Rewrite Task 018 against the accepted Task-017A API.
+4. Implement Velox benchmark adaptations and Gluten integration under Task 018.
+5. Independently accept Task 018.
+6. Implement and independently accept Task 017B.
+7. Only after Task 017B is accepted, design Task 019.
 
 Real kernel `O_DIRECT` integration remains a recorded forward obligation but is
 deferred and does not block Tasks 017-018.

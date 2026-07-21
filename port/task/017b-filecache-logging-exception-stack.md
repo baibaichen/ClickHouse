@@ -8,7 +8,8 @@ disposition: planned_independent
 implementation_authorized: false
 prerequisite: Tasks 003-015 accepted
 task_017a_dependency: none
-task_018_dependency: none
+execution_after: accepted Task 018
+task_019_dependency: Task 019 design requires accepted Task 017B
 ```
 
 Binding design:
@@ -36,8 +37,9 @@ noexcept behavior that never replaces the original exception;
 focused mono/non-mono tests and mutation evidence.
 ```
 
-Task 017B may be implemented and reviewed independently of Task 017A and does
-not block Task 018.
+Task 017B is independent of Task 017A and does not block Task 018. Per user
+decision it is executed after Task 018 and becomes a mandatory gate before
+Task 019 design and production readiness.
 
 ## Exclusions
 

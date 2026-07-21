@@ -244,8 +244,9 @@ Current task:
         `CacheVerify`, core/buffered-input/wrapper microbenchmarks, and TPCH from
         `baibaichen/ch-filecache`;
     11. Tasks 017A/018 are jointly designed because benchmark output consumes
-        Task-017A statistics; Task 017B does not block Task 018; Task 019 remains
-        blocked and requires revision.
+        Task-017A statistics;
+    12. user-selected execution order is Task 017A -> Task 018 -> Task 017B;
+        Task 019 design waits for accepted Task 017B.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -270,9 +271,9 @@ Continuous execution target:
 
 - Current stop condition: user review of the Tasks 016-019 amendments and the
   autonomous-decision ledgers.
-- Tasks 003-015 are accepted. Task 016 is deferred. Tasks 017A/018 form one
-  design wave; Task 017B is independent. None is authorized. Task 019 is
-  blocked and not allowed as currently written.
+- Tasks 003-015 are accepted. Task 016 is deferred. Planned order is Task 017A,
+  Task 018, then Task 017B. None is authorized. Task 019 design is blocked until
+  Task 017B is accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

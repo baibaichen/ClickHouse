@@ -60,6 +60,9 @@ the real `FileCacheBufferedInput` path must populate the existing
 `IoStatistics` object, and those values must reach Gluten/Spark through the same
 `RuntimeMetric` pipeline used by `CachedBufferedInput`.
 
+Task 018 does not depend on Task 017B. After Task 018 is accepted, Task 017B
+must add real logging/exception stacks before Task 019 is designed.
+
 Task 018 also owns the host half of the Task-014 cancellation wiring debt:
 extract the copied `folly::CancellationToken` from `ConnectorQueryCtx` at the
 builder boundary and pass it into the Task-017A FileCache API. The FileCache
