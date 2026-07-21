@@ -218,7 +218,8 @@ Current task:
   scenario in its `## Goal` and the CH migration matrix) and a binding
   benchmark specification replacing the former comment-only skeleton.
 - Next dispatch order:
-    1. a fresh Task 011 Worker for the B2/B3 corrective scope;
+    1. Task 011 B2/B3 is corrected and accepted at
+       `b18a8d039904a0421011f6d5a47bcefa1669185b`;
     2. a fresh Task 012 Worker for the B4/B5 corrective scope, then a fresh
        Task 014 Worker for the B4 Task-014-half confirmation;
     3. a targeted re-review of only the Tasks 003-014 rows affected by
@@ -245,9 +246,9 @@ Resume procedure:
    authoring wave; see `port/task/011-filecache-priority-eviction.md`,
    `port/task/012-filecache-core-scc.md`, `port/task/014-filecache-buffered-input.md`,
    and `port/task/015-filecache-velox-end-to-end.md`).
-4. Dispatch a fresh Task 011 Worker, then a fresh Task 012 Worker, then a
-   fresh Task 014 Worker, executing exactly the corrective scopes recorded
-   in step 3.
+4. Task 011 B2/B3 is corrected and accepted. Dispatch a fresh Task 012 Worker,
+   then a fresh Task 014 Worker, executing exactly the remaining corrective
+   scopes recorded in step 3.
 5. Run the targeted re-review of the affected Tasks 003-014 rows and record
    zero unresolved findings.
 6. Continue to Task 015 only with zero unresolved findings from step 5 and

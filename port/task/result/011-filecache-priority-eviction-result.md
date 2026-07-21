@@ -297,3 +297,210 @@ evidence, before Task 015 may start.
 
 No production change is authorized by this audit alone; the corrective task
 may change production code only if its own new tests expose a real defect.
+
+## Worker attempt 2 (Review-2 B2/B3 corrective wave)
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 011 (Review-2 B2/B3 test-plane corrective scope)
+```
+
+Executes exactly `port/task/011-filecache-priority-eviction.md` §`## Review-2
+corrective scope: B2/B3 test evidence`. Test-only: no production `.cpp`/`.h`
+was changed — none of the three new tests exposed a defect in
+`moveEvictionPosIfEqual`, the `DowngradedEntriesInfos` rollback, or
+`collectEvictionInfoForResize`, so per the Production-change rule no production
+edit was made.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/velox` | `filecache` | `b92a0ae3a96493aa63df44bc38514c68003db28e` | clean (no FileCache source dirty) |
+| `/root/oss/clickhouse` | `ch-filecache` | `f0679980a2e135dd87e1193a5b901feb899bb328` | only `tmp/` untracked |
+
+Baseline gate confirmed green before starting (Task 012's own gate, both
+configs): `velox_ch_filecache_core_scc_test` 101/101 mono
+(`_build/debug`) and 101/101 non-mono (`_build/debug-task012-nonmono`, rebuilt
+from current source); accumulated mono CTest 13/13.
+
+## Files changed (test-plane only; exactly the corrective file scope)
+
+```text
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/MoveEvictionPosTest.cpp   (NEW, B2)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/PriorityEvictionTest.cpp  (MODIFIED, B3a + B3b + addDownloadedSegment fixture helper)
+/root/oss/velox/velox/ch/Interpreters/FileCache/tests/CMakeLists.txt            (MODIFIED, new velox_ch_filecache_priority_cursor_test target only)
+```
+
+No production source, no ClickHouse source. `git status --short` in Velox shows
+exactly these three paths (two `M`, one `??`). Nothing staged/committed/pushed.
+
+## Tests added
+
+```text
+B2  velox_ch_filecache_priority_cursor_test :: TEST(FileCacheTest, MoveEvictionPos)
+      Global-scope, own standalone executable (matches friend
+      ::FileCacheTest_MoveEvictionPos_Test; avoids the "FileCacheTest" gtest
+      suite-name collision with FileCacheTest.cpp's TEST_F cases).
+B3a velox_ch_filecache_core_scc_test :: PriorityEvictionTest.SLRUDowngradeFailpointRollsBackBeforeFinalize
+      Arms file_cache_slru_downgrade_fail_before_finalize via SCOPED_TESTVALUE_SET
+      and drives the downgrade through tryIncreasePriority.
+B3b velox_ch_filecache_core_scc_test :: PriorityEvictionTest.SLRUDynamicResizeEvictsFromBothSubQueues
+      Proves collectEvictionInfoForResize requires eviction from BOTH sub-queues
+      and modifySizeLimits then applies the new 8/6 limits without LOGICAL_ERROR.
+```
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| configure mono (new CMake target) | 0 | `/root/oss/velox/_build/debug/task011corr/configure_b2.log` |
+| build B2 cursor test (mono) | 0 | `/root/oss/velox/_build/debug/task011corr/build_b2_mono.log` |
+| build scc test w/ B3a+B3b (mono) | 0 | `/root/oss/velox/_build/debug/task011corr/build_scc_mono.log` |
+| run B2 cursor test (mono) GREEN 1/1 | 0 | `/root/oss/velox/_build/debug/task011corr/green_b2_mono.log` |
+| run scc test (mono) GREEN 103/103 | 0 | `/root/oss/velox/_build/debug/task011corr/green_scc_mono.log` |
+| accumulated CTest `^velox_ch_` (mono) 14/14 | 0 | `/root/oss/velox/_build/debug/task011corr/accumulated_ctest_mono.log` |
+| configure non-mono (new CMake target) | 0 | `/root/oss/velox/_build/debug-task012-nonmono/configure_task011corr.log` |
+| build both targets (non-mono) | 0 | `/root/oss/velox/_build/debug-task012-nonmono/build_task011corr.log` |
+| run scc test (non-mono) GREEN 103/103 | 0 | `/root/oss/velox/_build/debug-task012-nonmono/test_scc_task011corr.log` |
+| run B2 cursor test (non-mono) GREEN 1/1 | 0 | `/root/oss/velox/_build/debug-task012-nonmono/test_cursor_task011corr.log` |
+| B2 RED (mutate moveEvictionPosIfEqual) | 1 | `/root/oss/velox/_build/debug/task011corr/red_b2_MUT.log` |
+| B3a RED (mutate ~DowngradedEntriesInfos rollback) | 1 | `/root/oss/velox/_build/debug/task011corr/red_b3a_MUT.log` |
+| B3b RED (mutate collectEvictionInfoForResize) | 1 | `/root/oss/velox/_build/debug/task011corr/red_b3b_MUT.log` |
+
+The "eight logs" required by the task: mono/non-mono focused for both
+executables (green_scc_mono, test_scc_task011corr, green_b2_mono,
+test_cursor_task011corr), mono accumulated (accumulated_ctest_mono), and the
+RED/false-green mutation log for each of the three tests (red_b2_MUT,
+red_b3a_MUT, red_b3b_MUT). B3a's own mono green run is in green_b3a_mono.log;
+the full-suite mono green (including B3b) is green_scc_mono.log.
+
+## Acceptance evidence
+
+```text
+test count:
+  velox_ch_filecache_core_scc_test:      103 (mono) / 103 (non-mono)  [was 101; +2 = B3a, B3b]
+  velox_ch_filecache_priority_cursor_test: 1 (mono) /   1 (non-mono)  [new, B2]
+  accumulated mono CTest (^velox_ch_):    14/14                       [was 13; +1 new target]
+failed tests: 0
+skipped/disabled tests: 0 (no *_DISABLED_*, no GTEST_SKIP, no comment-only bodies)
+benchmark result: n/a (not required by B2/B3)
+git diff --check: no whitespace errors
+
+RED / false-green mutation (each: mutate production line -> test FAILS for the
+declared reason [not a compile error, build exit 0] -> restore via
+`git checkout --` -> test GREEN again):
+  B2  LRUFileCachePriority.cpp moveEvictionPosIfEqual `*pos = std::next(it);`
+        -> both cursors stay at offset 10 (moved-away node) instead of 20;
+           ASSERT_EQ fails. Restored -> 1/1 green.
+  B3a SLRUFileCachePriority.cpp ~DowngradedEntriesInfos rollback loop
+        `for (auto & entry : *this) entry.rollbackState();`
+        -> a protected entry is left stuck in Evicting (state 2) not Active (0);
+           EXPECT_EQ fails ("left stuck ... after a skipped downgrade
+           finalization"). Restored -> green.
+  B3b SLRUFileCachePriority.cpp collectEvictionInfoForResize probationary
+        delegation `info->add(probationary_queue.collectEvictionInfoForResize(...))`
+        -> queues_requiring_eviction == 1 (protected only) not 2; ASSERT_EQ
+           fails, and modifySizeLimits would then throw LOGICAL_ERROR
+           (probationary 10 > new 4-byte limit). Restored -> green.
+
+post-restore: LRUFileCachePriority.cpp and SLRUFileCachePriority.cpp are clean
+(tracked, unmodified); only the three test-plane files remain changed.
+```
+
+## Worker review
+
+```text
+review subagent: one read-only code-review agent over the complete B2/B3
+  task-owned diff (MoveEvictionPosTest.cpp, PriorityEvictionTest.cpp,
+  CMakeLists.txt) plus the production surfaces they exercise.
+findings: no significant issues. Confirmed all three tests are non-vacuous
+  (each catches its targeted regression and fails cleanly under the RED
+  mutation); addDownloadedSegment path/releasable()/lifetime correct; B3a
+  objects valid across the throw (RAII rollback runs during unwinding before
+  the assertions read state); B2 at global scope in its own executable (friend
+  match, no suite collision); new CMake block mirrors the scc link set and
+  leaves the scc block untouched; no regression to the 6 pre-existing cases
+  (103/103 full binary).
+resolutions: none required (no actionable finding).
+unresolved findings: none.
+```
+
+The reviewer noted it could not itself run the mutations (read-only) nor the
+non-mono config; the Worker performed both directly (RED confirmed for all
+three; non-mono 103/103 + 1/1 green — logs above), closing those two
+limitations with observed evidence.
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 011 (Review-2 B2/B3 corrective scope) was attempted.
+No production source was changed (no defect exposed); test-plane only.
+Changes are unstaged and uncommitted in both repositories.
+The worker stopped after writing this receipt.
+```
+
+## Controller review 2 — Review-2 B2/B3
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+scope: test/evidence only
+```
+
+The corrective wave added:
+
+- a dedicated global-friend `MoveEvictionPos` executable proving both LRU
+  cursors advance independently;
+- an armed SLRU downgrade failpoint test proving RAII rollback; and
+- an SLRU dynamic-resize test requiring eviction from both sub-queues.
+
+Independent review:
+
+```text
+spec compliance: approved
+technical quality: approved
+Blocker/Major findings: 0
+```
+
+Controller evidence:
+
+```text
+mono:
+  cursor 1/1
+  B3 focused 2/2
+  accumulated CTest 14/14
+
+non-mono:
+  VELOX_MONO_LIBRARY=OFF
+  cursor/core focused CTest 2/2
+
+failed/skipped/disabled:
+  0/0/0
+
+mutations:
+  cursor update removed -> B2 fails
+  downgrade rollback removed -> B3a fails
+  probationary resize branch removed -> B3b fails
+
+git diff --check:
+  clean
+```
+
+No production defect was exposed and no production source changed.
+
+Accepted Velox commit:
+
+```text
+b18a8d039904a0421011f6d5a47bcefa1669185b
+Task 011: Complete priority eviction evidence
+```
+
+B2 and B3 are closed.
