@@ -8,7 +8,7 @@ disposition: implementation_plan_ready_independent
 implementation_authorized: false
 prerequisite: Tasks 003-015 accepted
 task_017a_dependency: none
-execution_after: accepted Task 018
+execution_after: accepted Review 5 for Tasks 003-018
 task_019_dependency: Task 019 design requires accepted Task 017B
 implementation_plan: port/task/017b-filecache-logging-exception-stack-plan.md
 ```
@@ -25,9 +25,9 @@ The executable contract is:
 port/task/017b-filecache-logging-exception-stack-plan.md
 ```
 
-It passed independent plan review. Do not implement until Task 018 is accepted
-and the Controller records explicit authorization; after authorization, the plan
-supersedes this index.
+It passed independent plan review. Do not implement until Task 018 and Review 5
+are accepted and the Controller records explicit authorization; after
+authorization, the plan supersedes this index.
 
 ## Scope
 
@@ -46,8 +46,8 @@ focused mono/non-mono tests and mutation evidence.
 ```
 
 Task 017B is independent of Task 017A and does not block Task 018. Per user
-decision it is executed after Task 018 and becomes a mandatory gate before
-Task 019 design and production readiness.
+decision it is executed after Task 018 and accepted Review 5, and becomes a
+mandatory gate before Task 019 design and production readiness.
 
 ## Exclusions
 

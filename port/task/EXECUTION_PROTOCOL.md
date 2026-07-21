@@ -9,7 +9,8 @@ cross-task correctness, acceptance, and commits.
 ```text
 Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
                        E2E cases and the checked seek benchmark.
-Next dispatch order:   Task 017A -> Task 018 -> Task 017B -> Task 019 design.
+Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
+                       Task 019 design.
                        The three executable plans are independently reviewed,
                        but implementation remains unauthorized until the
                        Controller records the user's execution choice.
@@ -22,7 +23,7 @@ the adapted Velox correctness, core/buffered-input/wrapper microbenchmark, and
 TPCH suite. Their executable plans are under `port/task/`; implementation is not
 authorized. Task 019 is not allowed as currently written.
 Task 017B independently owns logging and exception stacks. It executes after
-Task 018 and must be accepted before Task 019 design.
+Task 018 and accepted Review 5, and must be accepted before Task 019 design.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,

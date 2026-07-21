@@ -247,14 +247,19 @@ Current task:
         `baibaichen/ch-filecache`;
     11. Tasks 017A/018 are jointly designed because benchmark output consumes
         Task-017A statistics;
-    12. user-selected execution order is Task 017A -> Task 018 -> Task 017B;
-        Task 019 design waits for accepted Task 017B;
+    12. user-selected execution order is Task 017A -> Task 018 -> Review 5 ->
+        Task 017B; Task 019 design waits for accepted Task 017B;
     13. executable plans are independently reviewed and stored at
         `port/task/017a-filecache-statistics-cancellation-plan.md`,
         `port/task/018-filecache-gluten-benchmark-plan.md`, and
         `port/task/017b-filecache-logging-exception-stack-plan.md`; the binding
         orchestration is `port/task/017a-018-017b-execution-plan.md`;
-    14. implementation remains unauthorized until the user selects the execution
+    14. Review 4's unresolved parity items are explicitly non-blocking for Tasks
+        017A/018 by user decision. After Task 018, dispatch stops for Review 5:
+        a Tasks 003–018 whole-port review whose first section closes the Review-4
+        corrective/decision debt. No complete-parity or production-ready claim
+        is allowed before Review 5 acceptance;
+    15. implementation remains unauthorized until the user selects the execution
         mode.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
@@ -279,10 +284,10 @@ Resume procedure:
 Continuous execution target:
 
 - Current stop condition: user selection of the execution mode for the reviewed
-  Tasks 017A/018/017B plans.
+  Tasks 017A/018 plans. After Task 018, the next mandatory stop is Review 5.
 - Tasks 003-015 are accepted. Task 016 is deferred. Planned order is Task 017A,
-  Task 018, then Task 017B. None is authorized. Task 019 design is blocked until
-  Task 017B is accepted.
+  Task 018, Review 5, then Task 017B. None is authorized. Task 019 design is
+  blocked until Task 017B is accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

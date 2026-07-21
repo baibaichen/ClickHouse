@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Execute the remaining mainline `FileCache` work in the binding order `017A -> 018 -> 017B`, then open Task 019 design only after all three tasks are accepted.
+**Goal:** Execute the remaining mainline `FileCache` work in the binding order `017A -> 018 -> Review 5 -> 017B`, then open Task 019 design only after all implementation tasks and the whole-port review are accepted.
 
-**Architecture:** Task 017A first establishes the Velox statistics, cancellation, caller identity, and scheduler APIs. Task 018 consumes those accepted APIs in Velox benchmarks and an isolated Gluten worktree. Task 017B then replaces the independent logging/exception shim; no Task 019 implementation is included.
+**Architecture:** Task 017A first establishes the Velox statistics, cancellation, caller identity, and scheduler APIs. Task 018 consumes those accepted APIs in Velox benchmarks and an isolated Gluten worktree. Execution then stops for Review 5, which reviews Tasks 003–018 as one system and closes the deferred Review-4 findings before Task 017B replaces the independent logging/exception shim; no Task 019 implementation is included.
 
 **Tech Stack:** C++20, Folly, Velox, Gluten C++/JNI/Java/Scala, CMake/Ninja, GoogleTest, Maven/ScalaTest, shell benchmark orchestration.
 
@@ -18,6 +18,7 @@
 - No C++ sleeps, no Ninja `-j`, no `nproc`, and all build/test output goes to build-directory logs.
 - A task is not accepted until focused tests, mutations, mono/non-mono or integration gates, accumulated gates, and one read-only task-diff review are green.
 - Real kernel `O_DIRECT`, Task 016, and Task 019 implementation remain excluded.
+- Review 4 remains `PARITY_BLOCKED` during Tasks 017A/018 but is explicitly non-blocking for those two tasks by user decision. No complete-parity or production-ready claim is allowed before Review 5 closes or dispositionally accepts its remaining rows.
 
 ---
 
@@ -94,11 +95,41 @@ dedicated leaf pool, fail-before-allocation mutual exclusion, canonical file
 identity, query token copy, every native/JNI/Java/Scala metric carrier, sentinel
 cleanup, and benchmark result artifacts.
 
-Expected: Task 018 is accepted in both repositories before Task 017B starts.
+Expected: Task 018 is accepted in both repositories, then execution stops for Review 5. Task 017B must not start yet.
 
 ---
 
-### Task 3: Execute and accept Task 017B
+### Task 3: Run Review 5 — Tasks 003–018 whole-port review
+
+**Files:**
+- Execute: `port/task/fullreview/root-oss/5/003-018-whole-port-review-plan.md`
+- Read: `port/task/fullreview/root-oss/4/003-015-ch-parity-audit.md`
+- Read: `port/task/fullreview/root-oss/4/003-015-parity-user-decisions.md`
+- Produce: `port/task/fullreview/root-oss/5/003-018-whole-port-review.md`
+- Produce: `port/task/fullreview/root-oss/5/003-018-review-decisions-needed.md`
+
+**Interfaces:**
+- Consumes: accepted Tasks 003–018 implementation commits, receipts, designs, tests, and benchmark evidence
+- Produces: Review-4 corrective disposition plus an integrated Tasks 017A/018 contract/parity verdict
+
+- [ ] **Step 1: Stop dispatch after Task 018**
+
+Do not start Task 017B. Freeze exact ClickHouse, Velox, and isolated-Gluten
+baselines and run the Review-5 plan.
+
+- [ ] **Step 2: Close the Review-5 gate**
+
+Every Critical/Important finding must be fixed, explicitly accepted by the user,
+or recorded as a non-blocking forward item. The review must independently verify
+the affected implementation and evidence before changing any Review-4
+classification.
+
+Expected: Review 5 records an accepted verdict and explicitly authorizes Task
+017B. Otherwise the pipeline remains stopped.
+
+---
+
+### Task 4: Execute and accept Task 017B
 
 **Files:**
 - Execute: `port/task/017b-filecache-logging-exception-stack-plan.md`
@@ -109,14 +140,17 @@ Expected: Task 018 is accepted in both repositories before Task 017B starts.
 - Consumes: the accepted Velox branch after Task 018
 - Produces: lazy attributed FileCache logging, current-exception formatting, optional Velox stack output, and `noexcept` logging overloads
 
-- [ ] **Step 1: Confirm Task 018 is accepted**
+- [ ] **Step 1: Confirm Task 018 and Review 5 are accepted**
 
 ```bash
 grep -n 'controller_status: accepted' \
   port/task/result/018-filecache-gluten-benchmark-result.md
+grep -n 'review_status: accepted' \
+  port/task/fullreview/root-oss/5/003-018-whole-port-review.md
 ```
 
-Expected: accepted Controller review with no unresolved cross-repository finding.
+Expected: accepted Task-018 Controller review and accepted Review-5 verdict with
+no unresolved blocking cross-repository finding.
 
 - [ ] **Step 2: Execute every checkbox in the Task-017B plan**
 
@@ -132,7 +166,7 @@ Expected: Task 017B is accepted with zero unresolved findings.
 
 ---
 
-### Task 4: Open Task 019 design only
+### Task 5: Open Task 019 design only
 
 **Files:**
 - Modify after Task 017B acceptance: `port/task/019-filecache-gluten-end-to-end.md`

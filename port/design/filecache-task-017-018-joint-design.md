@@ -47,7 +47,8 @@ the complete Velox correctness/micro/wrapper/TPCH benchmark suite.
 ```
 
 Task 019 is explicitly excluded. Spark end-to-end correctness and performance
-remain required, but they will be designed only after Task 018 is accepted.
+remain required, but they will be designed only after Task 018, Review 5, and
+Task 017B are accepted.
 
 ## 2. Existing debts closed by this design
 
@@ -280,9 +281,10 @@ condition-variable registration mechanism is needed.
 ## 5. Task 017B: logging and exception stacks
 
 Task 017B is independent of Task 017A and does not block Task 018. By user
-decision it is scheduled after Task 018 acceptance, but it must complete before
-Task 019 design and before the overall FileCache integration is declared
-production-ready.
+decision Task 018 acceptance is followed by Review 5, a Tasks 003–018 whole-port
+review that also closes Review-4 debt. Task 017B runs only after Review 5 is
+accepted, and must complete before Task 019 design and before the overall
+FileCache integration is declared production-ready.
 
 Preserve the current logger type and both exception-logging call shapes:
 

@@ -19,6 +19,34 @@ separately.
 | `R2-D6` | `pending` | Do not approve, reject, modify, or reclassify the reader-detach/query-pool-lifetime decision yet. |
 | `G-CACHEBUF-01` | `approve_fix` | Restore the ClickHouse external-truncation self-heal; do not accept the gap as a permanent deviation. |
 
+## Scheduling decision — defer corrective closure until after Task 018
+
+```text
+decision_date: 2026-07-21
+review_4_pipeline_blocking_for_017a_018: false
+next_review: Review 5 — Tasks 003-018 whole-port review
+review_5_position: after accepted Task 018, before Task 017B
+```
+
+The remaining Review-4 corrective work and pending decisions do not block Tasks
+017A or 018. This is a scheduling exception only: the Review-4 audit remains
+`PARITY_BLOCKED`, its row classifications remain unchanged, and no complete CH
+parity or production-ready claim is authorized during Tasks 017A/018.
+
+After Task 018 is accepted, implementation dispatch stops. Review 5 must:
+
+1. close or disposition the remaining Review-4 decisions and evidence debts;
+2. implement and verify any approved Review-4 corrective work that is still
+   absent from the accepted Velox branch;
+3. review Task 017A and Task 018 as an integrated statistics, cancellation,
+   lifecycle, Builder, metrics, correctness, and benchmark path;
+4. issue the next whole-port verdict before Task 017B starts.
+
+Real kernel `O_DIRECT` remains deferred as a non-main-path item by user
+decision. Tasks 017A/018 and their baseline benchmarks must not claim real
+kernel-`O_DIRECT` coverage, but its absence does not block their execution or
+Review-5 scheduling.
+
 ## `R2-D2` — use Folly once semantics
 
 Canonical mapping:

@@ -22,7 +22,7 @@ worktree.
 |---|---|---|
 | 016 — write buffer to segment | **DEFERRED** | The corrected contract is ready, but Velox has no temporary-data spill consumer and the user marked it non-mainline. |
 | 017A — statistics/cancellation/scheduler | **PLANNED; DESIGN APPROVED** | Supplies the global/query statistics and cancellation APIs required by Task 018. |
-| 017B — logging/exception stacks | **PLANNED AFTER 018** | Independent scope; executes after Task 018 and gates Task 019 design/production readiness. |
+| 017B — logging/exception stacks | **PLANNED AFTER REVIEW 5** | Independent scope; Task 018 is followed by the Tasks 003–018 whole-port Review 5; accepted Review 5 gates Task 017B, which then gates Task 019 design/production readiness. |
 | 018 — Gluten integration | **PLANNED; DESIGN APPROVED** | Gluten integration and the complete Velox correctness/micro/wrapper/TPCH benchmark suite consume accepted Task-017A APIs. |
 | 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
 
@@ -120,8 +120,9 @@ Task 017B:
   logger laziness/attribution, current exception formatting, optional Velox
   exception stacks, logger/name overloads.
 
-Task 018 depends only on Task 017A. Task 017B runs after Task 018 and must be
-accepted before Task 019 design.
+Task 018 depends only on Task 017A. After Task 018, dispatch stops for Review 5
+over Tasks 003–018. Task 017B runs after accepted Review 5 and must be accepted
+before Task 019 design.
 ```
 
 ## Task 018 findings

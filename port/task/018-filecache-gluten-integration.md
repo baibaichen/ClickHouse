@@ -8,7 +8,7 @@ disposition: implementation_plan_ready
 implementation_authorized: false
 prerequisite: accepted Task 017A
 execution_after: Task 017A
-execution_before: Task 017B
+execution_before: Review 5, then Task 017B
 task_019_dependency: Task 019 design waits for accepted Task 017B
 implementation_plan: port/task/018-filecache-gluten-benchmark-plan.md
 ```
@@ -28,6 +28,9 @@ port/task/018-filecache-gluten-benchmark-plan.md
 It passed source-level and independent plan review. The plan supersedes the old
 Task-018 contract. Do not implement until Task 017A is accepted and the
 Controller records explicit authorization.
+
+After Task 018 is accepted, stop implementation dispatch and run Review 5 over
+Tasks 003–018. Task 017B remains blocked until that review is accepted.
 
 ## Scope
 

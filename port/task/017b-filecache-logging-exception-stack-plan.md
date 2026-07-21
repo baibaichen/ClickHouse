@@ -5,9 +5,9 @@
 > - **Disposition:** implementation_plan_ready
 > - **Task ID:** 017B
 > - **Binding design:** `port/design/filecache-task-017-018-joint-design.md` §5
-> - **Prerequisite:** Tasks 003–015 accepted; execute only after accepted Task 018
+> - **Prerequisite:** Tasks 003–018 and Review 5 accepted
 > - **Successor:** Task 019 design begins after 017B acceptance
-> - **Execution order:** 017A → 018 → 017B → 019 design
+> - **Execution order:** 017A → 018 → Review 5 → 017B → 019 design
 > - **Environment:** `root-oss` (`/root/oss/velox`, branch `filecache`)
 > - **Commit policy:** Worker never commits (`worker_commits: false`); Controller commits after independent review (`controller_commits: true`).
 
@@ -61,7 +61,7 @@ logger_useful.cpp
 10. Expression lifetimes: logger pointer captured before streaming to avoid dangling.
 11. Use "exception" not "crash" for logical failures; "process terminates" for `std::terminate`.
 12. Source registration must work in both mono and non-mono builds.
-13. Execution authorized only after Task 018 is accepted.
+13. Execution authorized only after Task 018 and Review 5 are accepted.
 
 ---
 
@@ -1102,8 +1102,8 @@ control capture at throw-time; we never override them at format-time.
 ## 8. Worker Protocol
 
 - Worker never stages or commits; Controller commits after independent task review.
-- Execution is authorized only after Task 018 is accepted.
-- Execution order: 017A → 018 → **017B** → 019 design.
+- Execution is authorized only after Task 018 and Review 5 are accepted.
+- Execution order: 017A → 018 → Review 5 → **017B** → 019 design.
 - After Task 017B acceptance, Task 019 design may begin.
 - Every redirected build/test log (`ninja`/`ctest`/`cmake` output captured to a
   `.log` file) is analyzed by a `task` subagent that returns only a concise

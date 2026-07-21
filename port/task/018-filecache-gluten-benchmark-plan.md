@@ -12,7 +12,7 @@
 
 ```text
 Task 017A: accepted; Task 018 consumes its APIs only.
-Task 017B: independent; executes after Task 018.
+Task 017B: independent; executes after Task 018 and accepted Review 5.
 Task 019: excluded from this plan entirely.
 No hard performance regression threshold (baseline only).
 No commit by worker; controller commits accepted subtasks.
@@ -203,7 +203,8 @@ code is near-copy from the reference commit.
 
 Execution order: 018-A → 018-B → 018-C (parallel with 018-D) → 018-E → 018-F → 018-G → 018-H
 
-Task 017B is independent and scheduled after Task 018 (not a dependency).
+Task 017B is independent and scheduled after Task 018 plus accepted Review 5
+(not a Task-018 dependency).
 
 ---
 
@@ -2697,7 +2698,7 @@ test -d "${TPCH_DATA:-}" || echo "BLOCKED: TPCH_DATA unset or directory missing 
 
 ```text
 Task 019 (Spark E2E) — excluded entirely
-Task 017B (logging) — independent, executes after Task 018, not a dependency
+Task 017B (logging) — independent, executes after Task 018 and accepted Review 5, not a dependency
 pageLoadTimeNs key mismatch — existing bug, out of scope
 Hard performance regression thresholds — baseline only
 Multi-cache configuration — single "default" only

@@ -170,6 +170,7 @@ Run tasks in this order in the same Velox `filecache` worktree:
 | 016 | deferred `WriteBufferToFileSegment` | not dispatched |
 | 017A | statistics, cancellation, caller identity, scheduler parity | focused + mono/non-mono accumulated gates |
 | 018 | Gluten lifecycle/Builder/metrics plus Velox benchmark suite | correctness, native/JNI/Java/Scala, and benchmark gates |
+| Review 5 | Tasks 003–018 whole-port review plus Review-4 corrective closure | accepted review verdict |
 | 017B | logging and exception stack formatting | focused + mono/non-mono accumulated gates |
 | 019 | Spark end-to-end design after accepted Task 017B | design gate only |
 
@@ -187,6 +188,6 @@ findings and the user explicitly approves.
 
 Tasks 003-015 are accepted. Task 016 and real kernel `O_DIRECT` integration are
 deferred by user decision. The reviewed mainline order is Task 017A, Task 018,
-then Task 017B; Task 019 design starts only after Task 017B is accepted.
+Review 5, then Task 017B; Task 019 design starts only after Task 017B is accepted.
 Implementation remains gated by `EXECUTION_PROTOCOL.md` and the current
 Controller authorization.
