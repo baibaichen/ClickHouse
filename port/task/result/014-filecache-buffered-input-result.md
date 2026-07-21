@@ -446,3 +446,41 @@ b92a0ae3a Task 014: Add `FileCache` buffered input
 Task 014 is accepted. Task 015 remains prohibited until the mandatory
 Tasks 003-014 full review reaches zero unresolved findings and the user
 explicitly approves.
+
+## Post-acceptance contract audit 1 (Review-2 B4 Task-014 half)
+
+```text
+controller_status: reopened_by_contract_audit
+environment_profile: root-oss
+task: 014
+reopened_by: port/task/fullreview/root-oss/2/003-014-review-decisions.md (B4)
+reopened_by: port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md
+  §2 "Task 014 — Buffered input reader — ACCEPT with one Major cross-cutting
+  reopen item", §7.2 item 3
+```
+
+The Tasks 003-014 full review (Review 2) found the accepted reader/handoff
+implementation above structurally faithful and identified no implementation
+defect, and reopened Task 014 jointly with Task 012 on the B4
+coverage/evidence gap: the concurrent two-thread `resetRemoteFileReader`
+before `completePartAndResetDownloader`/`setDownloadFinishedWithoutContinuation`
+race is enforced by production invariants at every one of this task's six
+`FileCacheInputStream.cpp` call sites, but no test schedules the race under
+real concurrent threads. The B1 direct-IO/background-download cross-cutting
+gap (already recorded as accepted-with-reopen above) remains explicitly
+deferred to Task 015 and is not part of this audit.
+
+This receipt is reopened per the state machine in `EXECUTION_PROTOCOL.md`
+(`accepted -> reopened_by_contract_audit -> worker_running`). The original
+acceptance above (including the corrective wave already recorded) is
+unchanged and immutable; this section is additive. The binding corrective
+contract is recorded in `port/task/014-filecache-buffered-input.md`, section
+`### B4 (Task-014 half): confirm reset-before-complete ordering at both
+FileCacheInputStream.cpp call sites`. The Task-012 B4 test itself must be
+accepted first; a fresh Task-014 worker then confirms (or, if drifted,
+corrects) ordering at this task's six call sites and appends a new
+worker-attempt section below before Task 015 may start.
+
+No production change is authorized by this audit alone; a Task-014 corrective
+worker may change production code only if re-inspection finds a genuine
+ordering regression at one of the six cited call sites.

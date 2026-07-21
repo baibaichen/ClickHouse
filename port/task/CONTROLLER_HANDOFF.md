@@ -207,9 +207,31 @@ Current task:
     B2/B3 Task-011 cursor/SLRU evidence is required now;
     B4 Task-012/014 handoff-race evidence is required now;
     B5 Task-012 SCC-owned queue-pipeline evidence is required now.
-- No affected numbered task or receipt has yet been marked
-  `reopened_by_contract_audit`; that authoring wave is the next action.
-- Task 015 is prohibited.
+- The Review-2 authoring wave is complete: Tasks 011, 012, 014, and 015 are
+  amended in place with the binding B2-B5/B1 corrective contracts (exact
+  CH/Velox source citations, exact test owners, RED/false-green matrices,
+  mono/non-mono/accumulated gates, and stop conditions), and receipts
+  011/012/014 each carry a `## Post-acceptance contract audit 1`
+  (`controller_status: reopened_by_contract_audit`) recording the exact
+  reopened findings and pointing at the corrective task sections. Task 015
+  additionally carries the strengthened E2E scenario matrix (covering every
+  scenario in its `## Goal` and the CH migration matrix) and a binding
+  benchmark specification replacing the former comment-only skeleton.
+- Next dispatch order:
+    1. a fresh Task 011 Worker for the B2/B3 corrective scope;
+    2. a fresh Task 012 Worker for the B4/B5 corrective scope, then a fresh
+       Task 014 Worker for the B4 Task-014-half confirmation;
+    3. a targeted re-review of only the Tasks 003-014 rows affected by
+       B2-B5 (not a full re-review of every already-accepted row);
+    4. only after that targeted review records zero unresolved findings and
+       the user explicitly approves, a Task 015 Worker (which also
+       implements the B1 fix, the strengthened E2E suite, and the
+       benchmark).
+- Recording a fresh decision document for the targeted re-review is good
+  practice but is **not** itself a blocking gate: once the targeted review
+  records zero unresolved findings and the user approves, Task 015 may start
+  without waiting on a separately-authored decision-doc artifact.
+- Task 015 remains prohibited until that gate is satisfied.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
@@ -218,15 +240,26 @@ Resume procedure:
 2. The approved Task-011/012/013/014 authoring amendments and structure
    deviation registrations are written in place (done by the Task-1
    authoring wave).
-3. Amend Tasks 011 and 012/014 plus their receipts with B2-B5.
-4. Execute and review the corrective test/evidence work.
-5. Continue to Task 015 only with zero unresolved findings and explicit user
-   approval.
+3. Tasks 011, 012, 014, and 015 plus receipts 011/012/014 are amended with
+   B2-B5/B1 and marked `reopened_by_contract_audit` (done by this Review-2
+   authoring wave; see `port/task/011-filecache-priority-eviction.md`,
+   `port/task/012-filecache-core-scc.md`, `port/task/014-filecache-buffered-input.md`,
+   and `port/task/015-filecache-velox-end-to-end.md`).
+4. Dispatch a fresh Task 011 Worker, then a fresh Task 012 Worker, then a
+   fresh Task 014 Worker, executing exactly the corrective scopes recorded
+   in step 3.
+5. Run the targeted re-review of the affected Tasks 003-014 rows and record
+   zero unresolved findings.
+6. Continue to Task 015 only with zero unresolved findings from step 5 and
+   explicit user approval.
 
 Continuous execution target:
 
-- Current stop condition: approved B2-B5 corrective work is pending.
-- Task 015 remains prohibited until the post-Task-014 full review.
+- Current stop condition: the Review-2 authoring wave (this update) is
+  complete; approved B2-B5/B1 corrective work is pending dispatch.
+- Task 015 remains prohibited until the corrective Tasks 011/012/014 are
+  accepted, the targeted re-review of the affected Tasks 003-014 rows
+  records zero unresolved findings, and the user explicitly approves.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

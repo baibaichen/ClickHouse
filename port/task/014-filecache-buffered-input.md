@@ -6,6 +6,66 @@
 > files. **Do not modify any Gluten file.** Do not commit or stage either
 > repository.
 
+## Status and authority
+
+```text
+controller_status: reopened_by_contract_audit
+environment_profile: root-oss
+reopened_by: port/task/fullreview/root-oss/2/003-014-review-decisions.md (B4)
+reopened_by: port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md
+  §2 "Task 014 — Buffered input reader — ACCEPT with one Major cross-cutting
+  reopen item", §7.2 item 3
+```
+
+Task 014's reader/handoff implementation below is accepted; only the B1
+direct-IO/background-download integration evidence (deferred to Task 015, not
+this task) and the B4 concurrent reset-before-complete race evidence remain
+open. B4's test itself lives in Task 012's file scope
+(`FileSegmentTest.cpp`, already registered) because the race is at the
+`FileSegment` level shared by both tasks' production callers; see Task 012's
+`### B4 — concurrent resetRemoteFileReader-before-complete race evidence`
+section for the full test contract. Task 014's corrective obligation is
+narrower: confirm that both of this task's own production call sites already
+follow the required order, and record that confirmation in this task's
+receipt rather than re-deriving or duplicating the test.
+
+### B4 (Task-014 half): confirm reset-before-complete ordering at both `FileCacheInputStream.cpp` call sites
+
+`FileCacheInputStream.cpp` calls `resetRemoteFileReader()` immediately followed
+by the state-publishing call (`completePartAndResetDownloader()` or
+`setDownloadFinishedWithoutContinuation()`, both of which trigger the same
+"reader up for grabs" publication described at `FileSegment.cpp:788-801`) at
+six call sites: `FileCacheInputStream.cpp:603-604` (paired with
+`setDownloadFinishedWithoutContinuation`), `FileCacheInputStream.cpp:631-632`
+(paired with `completePartAndResetDownloader`),
+`FileCacheInputStream.cpp:710-711` (paired with
+`setDownloadFinishedWithoutContinuation`), `FileCacheInputStream.cpp:754-755`,
+`FileCacheInputStream.cpp:836-837` (both paired with
+`completePartAndResetDownloader`), and `FileCacheInputStream.cpp:849,857`
+(reset only on the `!readerCanBeReused` branch, unconditional
+`completePartAndResetDownloader()` afterward on both branches).
+A Task-014 corrective worker must:
+
+1. re-inspect every one of these six sites and confirm each still calls
+   `resetRemoteFileReader()` strictly before the corresponding
+   `completePartAndResetDownloader()`/state-publishing call, with no
+   intervening code that could observe or leak the reader;
+2. if Task 012's B4 test (run against the accepted `velox_ch_filecache_core_scc_test`
+   binary, per that task's corrective scope) passes with the current
+   `FileCacheInputStream.cpp` unchanged, record that confirmation — with the
+   exact six line citations above and the Task-012 receipt's B4 test-run
+   evidence — in this task's receipt; no new test is required from Task 014
+   itself;
+3. if re-inspection finds a site where the order has drifted (a regression
+   since Task 014's acceptance), fix the minimal ordering defect at that site,
+   add a regression note to this task's receipt, and re-run
+   `velox_ch_filecache_buffered_input_test` (mono and non-mono) to confirm no
+   other behavior changed.
+
+Stop as `blocked` if Task 012's B4 corrective work is not yet
+`ready_for_controller`/`accepted`: Task 014's confirmation depends on that
+test existing and passing first.
+
 ## Pre-execution source-contract amendment
 
 This section supersedes the placeholder fixture/tests and every Task 007 assumption

@@ -259,3 +259,41 @@ Task 011: Add `FileCache` priority eviction
 
 Task 011 is accepted. Task 012 must run immediately to close the atomic center
 SCC.
+
+## Post-acceptance contract audit 1 (Review-2 B2/B3)
+
+```text
+controller_status: reopened_by_contract_audit
+environment_profile: root-oss
+task: 011
+reopened_by: port/task/fullreview/root-oss/2/003-014-review-decisions.md (B2, B3)
+reopened_by: port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md
+  §2 "Task 011 — Priority / Eviction — REOPEN (test-plane)", §7.2 item 2
+```
+
+The Tasks 003-014 full review (Review 2) found the accepted migration above
+structurally faithful and identified no implementation defect, but reopened
+Task 011 on the test-plane only:
+
+```text
+HOLE: no MoveEvictionPos-equivalent cursor test exists
+  (LRUFileCachePriority.h:41,201 declares an unused
+  friend class ::FileCacheTest_MoveEvictionPos_Test).
+UNPROVEN: file_cache_slru_downgrade_fail_before_finalize
+  (SLRUFileCachePriority.cpp:584) is armed in production but no test arms it.
+HOLE: no SLRUDynamicResizeCorrectEviction-equivalent test exists
+  (SLRUFileCachePriority.cpp:852-874 collectEvictionInfoForResize).
+```
+
+This receipt is reopened per the state machine in `EXECUTION_PROTOCOL.md`
+(`accepted -> reopened_by_contract_audit -> worker_running`). The original
+acceptance above is unchanged and immutable; this section is additive. The
+binding corrective contract is recorded in
+`port/task/011-filecache-priority-eviction.md`, section
+`## Review-2 corrective scope: B2/B3 test evidence`. A fresh Worker must
+execute that scope, append a `## Worker attempt 2` (or `## Corrective wave 1`)
+section below with the required RED/false-green/mono/non-mono/accumulated
+evidence, before Task 015 may start.
+
+No production change is authorized by this audit alone; the corrective task
+may change production code only if its own new tests expose a real defect.

@@ -5,6 +5,27 @@
 > result file under this ClickHouse checkout. Do not modify ClickHouse source
 > files. Do not commit or stage either repository.
 
+## Status and authority
+
+```text
+controller_status: reopened_by_contract_audit
+environment_profile: root-oss
+reopened_by: port/task/fullreview/root-oss/2/003-014-review-decisions.md (B4, B5)
+reopened_by: port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md
+  §2 "Task 012 — Center SCC — REOPEN", §7.2 items 3-4
+```
+
+The center SCC below (the full `## Goal` through the false-green evidence
+requirement, and the original Steps) is accepted: `velox_ch_filecache_core` and
+`velox_ch_filecache_core_scc_test` build green in mono and non-mono. The
+Review-2 audit reopened Task 012 on two coverage/evidence gaps only: `### B4 —
+concurrent reset-before-complete race evidence` and `### B5 — SCC-owned
+queue-pipeline evidence` below are the binding, additive corrective scope a
+fresh Worker must execute before Task 015 may start. B1 (direct-IO background
+buffer alignment) is explicitly deferred to Task 015 and is not part of this
+task's corrective scope. Neither B4 nor B5 reopens, weakens, or contradicts any
+already-accepted decision elsewhere in this file.
+
 ## Pre-execution source-contract amendment
 
 Task 012 must not start until corrective Tasks 003, 004, 006, 007, and 008 are
@@ -32,6 +53,8 @@ observable postcondition:
 | remote reader handoff | reader detach, buffer-end offset, available bytes, and downloader release satisfy Task 007 |
 | partial-file resume | production `FileSegment` writes a first prefix, releases/recreates its writer through the real continuation path, verifies the existing physical size, appends without truncating the prefix, and keeps downloaded/physical size consistent |
 | partial physical append failure | the production `FileSegment` path observes an append that physically commits a strict prefix and then throws, reads `filesystem::file_size`, enforces `downloadedSize <= physicalSize <= reservedSize`, updates downloaded size to physical size, marks the download failed, preserves the original exception, and never counts reserved-but-unwritten bytes |
+| concurrent reset-before-complete race (B4) | a deterministic two-thread test proves `resetRemoteFileReader` before `completePartAndResetDownloader`/`setDownloadFinishedWithoutContinuation` is the only ordering under which no thread ever extracts a reader another thread still holds |
+| SCC-owned queue pipeline (B5) | `velox_ch_filecache_core_scc_test` itself (not `velox_ch_common_test`) proves timed `tryPush(batch, 10)`, non-blocking `tryPop`, FIFO order, and `finish()` wake/drain against the real `FileCacheBoundedQueue` call shapes used by `FileCache.cpp`'s collector/loader pipelines |
 
 For each material test, capture a behavioral RED against the pre-implementation or
 intentionally broken path. Missing-header compile failure alone is insufficient.
@@ -235,6 +258,219 @@ reverted path, for the declared behavioral reason) and a false-green probe
 the test claims to cover, and confirm the test now fails). Record both pieces
 of evidence per test in the result receipt; a test with only a compile-time
 RED, or with no false-green probe, is not accepted evidence for that row.
+
+### B4 — concurrent `resetRemoteFileReader`-before-complete race evidence (owner: Task 012/014)
+
+CH/Velox source of truth for the invariant:
+`FileSegment.cpp:788-801` (`setDownloadFinishedWithoutContinuation`'s comment
+and `chassert(!download_data || !download_data->remote_file_reader)`
+precondition), `FileSegment.cpp:823-841`
+(`completePartAndResetDownloader`, which reaches the same "reader up for
+grabs" publication via `resetDownloadingStateUnlocked` → `setDownloadedUnlocked`
+when a segment finishes fully), and `FileSegment.h:210,231,233`
+(`completePartAndResetDownloader`, `extractRemoteFileReader`,
+`resetRemoteFileReader`). Every real production caller already follows the
+required order — `resetRemoteFileReader()` immediately followed by the
+state-publishing call (`completePartAndResetDownloader()` or
+`setDownloadFinishedWithoutContinuation()`) — at exactly two call sites in
+this task's scope, `Metadata.cpp:1049-1050`
+(`CacheMetadata::downloadImpl`), and six call sites in Task 014's scope,
+`FileCacheInputStream.cpp:603-604,631-632,710-711,754-755,836-837,849,857`
+(see Task 014's `### B4 (Task-014 half)` section for the exact pairing of
+each site).
+The existing single-threaded regression,
+`FileSegmentTest.cpp:568-612`
+(`ExtractRemoteFileReaderOnlyInTerminalOrPartialNoContinuationState`), proves
+the sequential ordering; it does not prove the ordering holds under real
+concurrent scheduling. This is the gap B4 closes.
+
+Add `TEST_F(FileSegmentTest, ConcurrentExtractRacesResetBeforeComplete)` (this
+file is already registered in `velox_ch_filecache_core_scc_test`; no CMake
+change is needed) using **three** `std::barrier`s, following the existing
+`std::barrier` pattern already used for deterministic concurrent scheduling in
+`FileCacheTest.cpp:744` (`std::barrier sync(2); ... sync.arrive_and_wait();`).
+The middle barrier is required to make the two production calls
+(`resetRemoteFileReader()` and `completePartAndResetDownloader()`) individually
+observable by thread B; without it, a single-thread reordering of the two
+calls is invisible to a two-barrier test (thread B only ever observes the
+state after *both* calls have already run, in whichever order):
+
+1. thread A (the downloader) writes data, then calls `getRemoteFileReader()`
+   to keep a local copy of the reader it is about to hand off (`reader_a`),
+   then `arrive_and_wait()`s on barrier 1;
+2. thread B `arrive_and_wait()`s on barrier 1 too, then immediately calls
+   `extractRemoteFileReader()` and asserts it returns `nullptr` (the state is
+   still `DOWNLOADING`, so extraction must be gated by state regardless of
+   scheduling) — this proves point 4 of the Review-2 decision ("no thread can
+   extract a reader still borrowed by another thread") for the pre-publication
+   window;
+3. thread A calls `resetRemoteFileReader()` only (the first half of the
+   correct production sequence — the reader is withdrawn from `download_data`
+   while thread A is still the exclusive downloader), then
+   `arrive_and_wait()`s on barrier 2;
+4. thread B `arrive_and_wait()`s on barrier 2, then calls
+   `extractRemoteFileReader()` and asserts it returns `nullptr`: the reader
+   was already withdrawn by `resetRemoteFileReader()` in step 3, so there is
+   nothing left to extract, regardless of what download state gets published
+   next — this is the invariant the task states: **after thread A calls
+   `resetRemoteFileReader()` then `completePartAndResetDownloader()`, thread
+   B's `extractRemoteFileReader()` must return `nullptr`**;
+5. thread A calls `completePartAndResetDownloader()` (the second half of the
+   correct sequence, publishing the terminal download state), then
+   `arrive_and_wait()`s on barrier 3;
+6. thread B `arrive_and_wait()`s on barrier 3, then calls
+   `extractRemoteFileReader()` again and asserts it still returns `nullptr`,
+   and that thread A's locally-held `reader_a` (from step 1) remains the only
+   live reference to the reader (e.g. via its use count, or by asserting a
+   subsequent `getRemoteFileReader()` on thread A's side is not reachable
+   post-`completePartAndResetDownloader()`) — this proves point 5 of the
+   Review-2 decision ("downloader state and reader ownership are coherent
+   after completion": exactly one handoff (to `reader_a`, already completed
+   before the race window even opened), no duplicate live reference, no
+   thread left believing it still owns the reader). Do **not** assert that
+   thread B can extract the same reader `reader_a` refers to: nothing
+   re-stashes the reader into `download_data` after step 3's withdrawal, so it
+   is never extractable again absent a separate, explicit re-stash (e.g. a
+   fresh `setRemoteFileReader()` call), which this sequence does not perform.
+
+RED: before this test exists, a regression that publishes the terminal state
+before withdrawing the reader (i.e. calls `completePartAndResetDownloader()`
+before `resetRemoteFileReader()`) is not proven false by any existing test.
+Capture a run of this test against a temporarily reordered call sequence (see
+the false-green mutation below) as the RED evidence, since the current
+production code already honors the correct order.
+
+False-green mutation: in a scratch copy of the test only (not production),
+swap steps 3 and 5 so thread A calls `completePartAndResetDownloader()` first
+(before barrier 2) and `resetRemoteFileReader()` second (before barrier 3),
+matching what a regression at either real call site would do, rebuild, and
+confirm the test now fails deterministically: after barrier 2, the download
+state is already terminal (`DOWNLOADED`) but `download_data->remote_file_reader`
+has not yet been reset, so thread B's step-4 `extractRemoteFileReader()` now
+returns a **non-null** reader — the exact same object as thread A's locally
+held `reader_a` — while thread A still believes it exclusively owns that
+reader and is about to call `resetRemoteFileReader()` on it (which becomes a
+silent no-op against an already-emptied field, since thread B already moved
+the reader out). This is the double-ownership the reversed order exposes:
+thread A's `reader_a` and thread B's newly-extracted reader alias the same
+underlying object simultaneously. Confirm the test fails at the step-4
+assertion (now observing non-null instead of the expected `nullptr`), not at
+a compile error. Restore the correct call order and re-confirm green. Do not
+mutate production code for this probe; the point is to prove the *test* can
+fail when the *documented* ordering contract is violated by a caller.
+
+No production change is expected. If the test exposes an actual defect in
+`FileSegment.cpp`'s state-publication gating, fix the minimal defect and
+document it in the receipt; do not add a sleep, a timing-only assertion, or a
+retry loop to paper over a real race.
+
+### B5 — SCC-owned queue-pipeline evidence (owner: Task 012)
+
+The timed `tryPush(batch, 10)` / non-blocking `tryPop(batch)` call shapes
+already have Task-003 compile-coverage in `velox_ch_common_test`
+(`BasicShimsTest.cpp:265-274`, `Task012CallShapesCompile`), but that binary
+does not link `velox_ch_filecache_core`, so it cannot catch a regression in how
+the FileCache collector/loader pipelines actually call
+`FileCacheBoundedQueue<T>`. The real call shapes to reproduce are the ones
+`FileCache.cpp`'s free-space-keeping eviction pipeline and metadata-load
+listing pipeline already use in production:
+
+```text
+FileCache.cpp:1626-1627  FileCacheBoundedQueue<EvictionBatchPtr>
+                         pending_eviction_queue(queue_capacity),
+                         pending_finalization_queue(queue_capacity)
+FileCache.cpp:1691       pending_eviction_queue.pop(batch)              (blocking pop)
+FileCache.cpp:1702       pending_finalization_queue.push(std::move(batch))
+FileCache.cpp:1643       pending_finalization_queue.tryPop(batch)       (non-blocking, "finalize_removed(false)")
+FileCache.cpp:1643       pending_finalization_queue.pop(batch)          (blocking, "finalize_removed(true)")
+FileCache.cpp:1799       pending_eviction_queue.tryPush(batch, push_timeout_ms)  (timed)
+FileCache.cpp:1720,1831,1833  .finish()
+FileCache.cpp:2228       FileCacheBoundedQueue<std::pair<fs::path, OriginInfo>>
+                         key_dirs_queue(...)
+FileCache.cpp:2313       key_dirs_queue.tryPush({key_dir_path, origin})
+FileCache.cpp:2250       key_dirs_queue.pop(item)
+FileCache.cpp:2241,2328  key_dirs_queue.finish()
+```
+
+Add a queue-pipeline case to `FileCacheTest.cpp` (already registered in
+`velox_ch_filecache_core_scc_test`; no CMake change needed) using
+`facebook::velox::ch::FileCacheBoundedQueue` (the real production type
+included transitively via `FileCache.cpp`'s own header, not a private
+redeclaration) with the exact call shapes above:
+
+1. construct a `FileCacheBoundedQueue<int>` (or another small value type) with
+   a small bounded capacity;
+2. execute a timed `tryPush(value, 10)` call matching the `tryPush(batch,
+   push_timeout_ms)` shape at `FileCache.cpp:1799`, and assert it succeeds;
+3. execute a non-blocking `tryPop(value)` call matching the
+   `finalize_removed(false)` shape at `FileCache.cpp:1643`, and assert the
+   popped value equals what was pushed (FIFO: push two values, pop twice,
+   assert order);
+4. from a second thread, block on a blocking `pop(value)` (matching
+   `FileCache.cpp:1691`/`FileCache.cpp:1643`'s blocking branch) on an empty
+   queue, then call `finish()` from the first thread, and assert the blocked
+   `pop` wakes and returns `false` (drained-and-finished), proving `finish()`
+   wakes/drains the pipeline exactly as the collector/remover shutdown path
+   requires.
+
+RED: before this test exists, `velox_ch_filecache_core_scc_test` has zero
+coverage of `FileCacheBoundedQueue`; a regression in the timed-`tryPush`,
+non-blocking-`tryPop`, FIFO, or `finish()`-wake behavior reachable only from
+this binary would pass CI. Capture the pre-implementation state (grep
+confirming zero `FileCacheBoundedQueue` references in
+`velox/ch/Interpreters/FileCache/tests/`) as the RED evidence.
+
+False-green mutation: temporarily swap the non-blocking `tryPop` call in step 3
+for a blocking `pop` (a call-shape mutation, matching the Review-2 requirement
+"a false-green mutation of one call shape"), rebuild, and confirm the test now
+hangs or fails (a blocking `pop` on a queue that may still be empty at that
+point in the test does not return the same way `tryPop` does) — demonstrating
+the test actually depends on the specific call shape it claims to prove.
+Restore the non-blocking call and re-confirm green.
+
+No duplicate queue implementation is permitted: this test must include
+`velox/ch/Common/FileCacheBoundedQueue.h` and use the same
+`facebook::velox::ch::FileCacheBoundedQueue` template Task 003 defined and
+`FileCache.cpp` already uses; it must not declare a local queue type or copy
+the queue's internals into the test file.
+
+### B4/B5 mono/non-mono and accumulated gates
+
+Both B4 and B5 land inside files `velox_ch_filecache_core_scc_test` already
+compiles. Closing this corrective work requires re-proving the same build
+closure Task 012 already established (`port/task/result/012-filecache-core-scc-result.md`,
+101/101 focused in both mono and non-mono, 11/11 accumulated mono CTests):
+
+```text
+1. Build and run velox_ch_filecache_core_scc_test in the existing mono
+   configuration (<velox_build_dir>), full suite green.
+2. Build and run velox_ch_filecache_core_scc_test in the existing non-mono
+   configuration (VELOX_MONO_LIBRARY=OFF), full suite green.
+3. Re-run the accumulated mono CTest set and confirm the focused and
+   accumulated counts each increase by exactly the number of new tests added
+   here (one for B4, one for B5), with zero regressions elsewhere.
+```
+
+Record all required logs (mono focused, mono accumulated, non-mono focused,
+plus the RED and false-green mutation logs for both B4 and B5) in the
+corrective receipt appended to
+`port/task/result/012-filecache-core-scc-result.md`.
+
+### B4/B5 corrective stop conditions
+
+Stop as `blocked` and escalate instead of improvising if:
+
+```text
+velox_ch_filecache_core_scc_test does not build green in mono/non-mono before
+  this corrective work starts (that would be an unrelated regression, not a
+  B4/B5 defect; do not fix it silently under this task's scope).
+the two-thread B4 test cannot be made deterministic with std::barrier alone
+  (e.g. it requires a third barrier, a different Velox scheduling primitive,
+  or exposes a genuine lock-ordering hazard in FileSegment.cpp) — stop and
+  report the exact hazard instead of adding a sleep or a retry loop.
+a required assertion can only pass by weakening it, adding a sleep, or
+  skipping/disabling the test.
+```
 
 ## Goal
 

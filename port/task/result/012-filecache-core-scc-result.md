@@ -1057,3 +1057,52 @@ Task 012: Add `FileCache` center SCC
 
 Task 012 is accepted. The complete center SCC is green in mono and non-mono.
 Task 013 may proceed.
+
+## Post-acceptance contract audit 1 (Review-2 B4/B5)
+
+```text
+controller_status: reopened_by_contract_audit
+environment_profile: root-oss
+task: 012
+reopened_by: port/task/fullreview/root-oss/2/003-014-review-decisions.md (B4, B5)
+reopened_by: port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md
+  §2 "Task 012 — Center SCC — REOPEN", §7.2 items 3-4
+```
+
+The Tasks 003-014 full review (Review 2) found the accepted center SCC above
+structurally faithful — including the single-threaded
+`reset`-before-`completePartAndResetDownloader` ordering invariant
+(`FileSegment.cpp:788-801`) and the timed/non-blocking queue behavior — and
+identified no implementation defect, but reopened Task 012 on two
+coverage/evidence gaps:
+
+```text
+UNPROVEN (B4): the concurrent two-thread reset-before-complete race is
+  enforced by an invariant (chassert) and a single-threaded ordering test
+  (FileSegmentTest.cpp:568-612), but no test schedules the race under real
+  concurrent threads.
+HOLE (B5): the mandatory queue-pipeline case (timed tryPush(batch, 10),
+  non-blocking tryPop, FIFO, finish wake/drain) is proven only in
+  velox_ch_common_test (BasicShimsTest.cpp:265-274,
+  Task012CallShapesCompile), not in velox_ch_filecache_core_scc_test, so a
+  regression reachable only from the SCC binary would not be caught by a CI
+  gate that runs only that binary.
+```
+
+B1 (direct-IO source + background-download alignment) remains explicitly
+deferred to Task 015 per the same review decision and is not part of this
+audit's corrective scope.
+
+This receipt is reopened per the state machine in `EXECUTION_PROTOCOL.md`
+(`accepted -> reopened_by_contract_audit -> worker_running`). The original
+acceptance above (including the Worker-attempt-6 remote-reader-handoff fix
+wave) is unchanged and immutable; this section is additive. The binding
+corrective contract is recorded in
+`port/task/012-filecache-core-scc.md`, sections `### B4 — concurrent
+resetRemoteFileReader-before-complete race evidence` and `### B5 — SCC-owned
+queue-pipeline evidence`. A fresh Worker must execute that scope, append a
+new worker-attempt section below with the required RED/false-green/mono/
+non-mono/accumulated evidence, before Task 015 may start.
+
+No production change is authorized by this audit alone; the corrective task
+may change production code only if its own new tests expose a real defect.

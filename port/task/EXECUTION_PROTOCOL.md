@@ -7,13 +7,32 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Tasks 003-014 Review-2 decisions approved
-Repair before resume: B2-B5 test/evidence corrections
-Then dispatch:         corrective Tasks 011 and 012/014 Workers
+Current state:        Tasks 003-014 Review-2 decisions approved; Tasks 011,
+                       012, and 014 amended with the binding B2-B5 corrective
+                       scope; receipts 011/012/014 marked
+                       reopened_by_contract_audit; Task 015 amended with the
+                       B1 corrective contract and strengthened E2E/benchmark
+                       requirements.
+Next dispatch order:   1. corrective Task 011 Worker (B2/B3)
+                       2. corrective Task 012 Worker (B4/B5), then Task 014
+                          Worker (B4 Task-014-half confirmation)
+                       3. a targeted re-review of only the Tasks 003-014 rows
+                          affected by B2-B5 (not a full re-review of every
+                          accepted row)
+                       4. Task 015 Worker (implements B1, the strengthened
+                          E2E suite, and the benchmark), only after the
+                          targeted review records zero unresolved findings
+                          and the user explicitly approves
+Nonblocking note:      recording a fresh decision document for the targeted
+                       re-review is good practice but is not itself a gate;
+                       once zero unresolved findings are recorded and the
+                       user approves, Task 015 may start without waiting for
+                       a separately-authored decision-doc artifact.
 Task 015 is prohibited until B2-B5 close; B1 is explicitly deferred to Task 015.
-Tasks 011-014 have been amended with dependency pre-checks, consumer-contract
-  excerpts, structure-deviation registrations, RED matrices, and false-green
-  probe requirements.
+Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
+  excerpts, structure-deviation registrations, RED matrices, false-green
+  probe requirements, exact CH/Velox source citations, exact test owners,
+  and explicit stop conditions.
 Optional Velox work:  Tasks 016-017, only after a separate decision
 Deferred Gluten:       Tasks 018-019, not in the current phase
 ```
