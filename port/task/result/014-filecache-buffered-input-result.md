@@ -484,3 +484,150 @@ worker-attempt section below before Task 015 may start.
 No production change is authorized by this audit alone; a Task-014 corrective
 worker may change production code only if re-inspection finds a genuine
 ordering regression at one of the six cited call sites.
+
+## Worker attempt 3 (Review-2 B4 Task-014-half)
+
+```text
+status: ready_for_controller
+environment_profile: root-oss
+task: 014 corrective B4 (Task-014-half)
+date: 2026-07-21
+```
+
+### Baselines
+
+- Velox HEAD: `ad1a13c37e87cecda464ac8dfcc9fee57c093eb6` (branch `filecache`, clean)
+- ClickHouse HEAD: `723b6f08046` (branch `ch-filecache`, clean)
+- Last commit touching `FileCacheInputStream.cpp`: `b92a0ae3a` "Task 014: Add `FileCache` buffered input"
+- `FileCacheInputStream.cpp` is unchanged since Task 014 acceptance.
+
+### Task 012 B4 prerequisite confirmation
+
+Task 012 Worker attempt 7 + Controller review 7 is `accepted`
+(`port/task/result/012-filecache-core-scc-result.md`, §"Controller review 7").
+Evidence summary:
+
+| Suite | Count | Result |
+|---|---|---|
+| Mono full core SCC | 105/105 | PASSED |
+| Non-mono full core SCC | 105/105 | PASSED |
+| Focused B4+B5 mono | 2/2 | PASSED |
+| Focused B4+B5 non-mono | 2/2 | PASSED |
+| Accumulated mono CTest | 14/14 | PASSED |
+| B4 mutation (reset/publish order swapped) | — | ownership assertion fails (exit 134) |
+| B5 mutation (blocking pop replacing tryPop) | — | hangs (exit 124) |
+
+The `ConcurrentExtractRacesResetBeforeComplete` test (B4) exercises the shared
+`FileSegment` state machine, verifying that `resetRemoteFileReader` must occur
+before `completePartAndResetDownloader`/`setDownloadFinishedWithoutContinuation`
+for reader ownership to be safe across concurrent threads.
+
+### Six call-site inspection
+
+All six sites were located by searching the current file. Exact current line
+numbers match the contract spec in `014-filecache-buffered-input.md:38-46`
+precisely; no drift.
+
+**Site 1 — lines 603–604** (`FileCacheInputStream.cpp`)
+- Context: predownload loop, EOF before gap filled, `if (fileSegment.isDownloader())` guard.
+- Branch: `!hasData` → `fileSegment.isDownloader()`.
+- Sequence: `resetRemoteFileReader()` (603) → `setDownloadFinishedWithoutContinuation()` (604).
+- Intervening code: none. ✓
+
+**Site 2 — lines 631–632** (`FileCacheInputStream.cpp`)
+- Context: reservation or cache-write failure, bypass path.
+- Branch: `!ok` block, no downloader guard needed (caller already holds downloader).
+- Sequence: `resetRemoteFileReader()` (631) → `completePartAndResetDownloader()` (632).
+- Intervening code: none. ✓
+
+**Site 3 — lines 710–711** (`FileCacheInputStream.cpp`)
+- Context: remote download loop, zero-bytes-but-not-finished, `if (fileSegment.isDownloader())` guard.
+- Branch: `size == 0 && offset < readUntilPosition` → `isDownloader()`.
+- Sequence: `resetRemoteFileReader()` (710) → `setDownloadFinishedWithoutContinuation()` (711).
+- Intervening code: none. ✓
+
+**Site 4 — lines 754–755** (`FileCacheInputStream.cpp`, `releaseDownloaderIfNeeded`)
+- Context: explicit release helper, `if (fileSegment.isDownloader())` guard.
+- Sequence: `resetRemoteFileReader()` (754) → `completePartAndResetDownloader()` (755).
+- Intervening code: none. ✓
+
+**Site 5 — lines 836–837** (`FileCacheInputStream.cpp`, catch block)
+- Context: exception handler, reader dropped via `state_.reset()` before this block, then `if (fileSegment.isDownloader())`.
+- Sequence: `resetRemoteFileReader()` (836) → `completePartAndResetDownloader()` (837).
+- Intervening code: none. ✓
+
+**Site 6 — lines 849, 857** (`FileCacheInputStream.cpp`, post-read release)
+- Context: `if (state_ && readType != CACHED && isDownloader())` outer guard.
+- Branch: `!readerCanBeReused` → `resetRemoteFileReader()` (849); `else if (state_->reader)` → `releaseOwnedBuffer()` (850–856, no publication); unconditional `completePartAndResetDownloader()` (857) on both sub-branches.
+- On the reset branch: `resetRemoteFileReader` (849) occurs before `completePartAndResetDownloader` (857). ✓
+- On the reuse branch: reader is left in the segment; `releaseOwnedBuffer()` (not a publication) runs; `completePartAndResetDownloader` (857) follows. The reader is never leaked; it remains inside the `FileSegment` under the handoff contract. ✓
+- Intervening code between reset and publish (in the `!readerCanBeReused` sub-branch): none. ✓
+
+### Ordering invariant summary
+
+At all six sites, `resetRemoteFileReader()` is called strictly before the
+paired `completePartAndResetDownloader()` or `setDownloadFinishedWithoutContinuation()`.
+No intervening code at any site can publish, observe, or leak the reader
+between the two calls. The site-6 `readerCanBeReused` branch intentionally
+retains the reader inside the `FileSegment` for handoff — this is the designed
+behavior, not a leak.
+
+### Source status
+
+No production change was made. `FileCacheInputStream.cpp` is unchanged.
+`git status` reports a clean working tree in `/root/oss/velox`.
+
+### Blockers
+
+None.
+
+### Declaration
+
+I inspected all six `resetRemoteFileReader`/publication call sites in
+`FileCacheInputStream.cpp` in the current `filecache` HEAD
+(`ad1a13c37e87`). No ordering drift was found. Task 012 B4 is accepted
+with 105/105 mono and non-mono, focused 2/2, and mutation evidence as cited
+above. This task's B4 half is satisfied by that evidence together with the
+confirmed call-site ordering. No new test is required from Task 014 itself.
+No Velox source was modified.
+
+## Controller review 3 — Review-2 B4 Task-014 half
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+scope: caller-order inspection/evidence only
+```
+
+Independent review confirmed every current caller:
+
+```text
+603-604  resetRemoteFileReader -> setDownloadFinishedWithoutContinuation
+631-632  resetRemoteFileReader -> completePartAndResetDownloader
+710-711  resetRemoteFileReader -> setDownloadFinishedWithoutContinuation
+754-755  resetRemoteFileReader -> completePartAndResetDownloader
+836-837  resetRemoteFileReader -> completePartAndResetDownloader
+849,857  conditional non-reuse reset -> unconditional completion
+```
+
+At the sixth site, the mutually exclusive reuse branch intentionally retains
+the reader, releases its owned query-pool buffer, and completes the segment for
+handoff. This exactly matches the Task 014 contract; it is not a missing reset.
+
+Task 012 supplies the shared `FileSegment` state-machine evidence:
+
+```text
+focused B4/B5: 2/2 mono and 2/2 non-mono
+full core SCC: 105/105 mono and 105/105 non-mono
+B4 reversed-order mutation: ownership assertion fails
+```
+
+Review result:
+
+```text
+spec compliance: approved
+technical quality: approved
+Blocker/Major findings: 0
+```
+
+No Velox source changed. B4 is closed.
