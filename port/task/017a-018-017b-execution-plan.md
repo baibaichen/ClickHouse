@@ -82,13 +82,24 @@ Follow the exact worktree and baseline commands in
 `port/task/018-filecache-gluten-benchmark-plan.md`. Do not copy dirty changes
 from `/root/oss/gluten`.
 
-- [ ] **Step 3: Execute every Task-018 subtask in order**
+- [ ] **Step 3: Execute the non-TPCH Task-018 phase**
 
-Run `018-A -> 018-B -> 018-C/018-D -> 018-E -> 018-F -> 018-G -> 018-H`.
-Correctness, content hash, and metric propagation gates must pass before baseline
-performance collection.
+Run `018-A -> 018-B -> 018-D -> 018-E -> 018-F -> 018-G -> 018-H1`.
+Every benchmark target is freshly built in RelWithDebInfo or Release; Debug
+benchmark output is invalid.
 
-- [ ] **Step 4: Run the Task-018 cross-repository review and acceptance gate**
+- [ ] **Step 4: Stop at the mandatory pre-TPCH checkpoint**
+
+The Worker records non-TPCH evidence and stops. The Controller reviews the
+Velox/Gluten changes and Waves 1–3 artifacts. No TPCH source is copied, no TPCH
+target is built, and no TPCH command runs before explicit user approval.
+
+- [ ] **Step 5: After approval, execute TPCH and finish Task 018**
+
+Dispatch a fresh Task-018 Worker for `018-C -> 018-H2`. Build and run TPCH only
+from RelWithDebInfo or Release.
+
+- [ ] **Step 6: Run the Task-018 cross-repository acceptance gate**
 
 Review the complete Velox and isolated-Gluten diffs together. Verify the
 dedicated leaf pool, fail-before-allocation mutual exclusion, canonical file

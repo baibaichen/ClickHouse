@@ -58,7 +58,12 @@ Reject simultaneous AsyncDataCache/FileCache configuration before either cache
 is initialized.
 Use `FileCacheFileIdentity::deriveKey`; do not duplicate path/etag hashing.
 Correctness gates run before performance.
+Every benchmark is freshly built and run with RelWithDebInfo or Release; Debug
+benchmark binaries and results are invalid.
 TPCH uses one split per file for mode fairness.
+After non-TPCH correctness, micro, wrapper, Gluten lifecycle, Builder, metrics,
+and baseline Waves 1–3 complete, stop for explicit user approval before copying,
+building, or running TPCH.
 The first performance wave establishes a baseline/noise band and has no hard
 percentage threshold.
 Worker does not stage or commit; Controller owns acceptance commits.

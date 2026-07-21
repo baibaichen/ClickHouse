@@ -467,6 +467,10 @@ native integration tests.
 
 Task 019 later owns real Spark-to-Gluten end-to-end correctness/performance.
 
+Every benchmark target must be freshly built and run from a RelWithDebInfo or
+Release build. Debug builds are valid for focused functional tests only and
+must never supply benchmark results.
+
 ### 9.2 Reuse policy
 
 Use `baibaichen/ch-filecache` and
@@ -498,6 +502,10 @@ do not publish performance output after a correctness failure.
 ```
 
 TPCH validates result rows and result checksum against direct input.
+
+Before any TPCH source is copied, target is built, data is required, or command
+is run, stop after the completed non-TPCH Task-018 phase and obtain explicit
+user approval. Resume TPCH in a fresh Task-018 Worker only after that approval.
 
 ### 9.4 Performance waves
 

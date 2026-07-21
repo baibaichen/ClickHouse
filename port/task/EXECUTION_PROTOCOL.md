@@ -24,6 +24,9 @@ TPCH suite. Their executable plans are under `port/task/`; implementation is not
 authorized. Task 019 is not allowed as currently written.
 Task 017B independently owns logging and exception stacks. It executes after
 Task 018 and accepted Review 5, and must be accepted before Task 019 design.
+Task 018 has an additional mandatory stop after all non-TPCH work and before any
+TPCH source copy/build/run. Benchmark evidence must come from RelWithDebInfo or
+Release, never Debug. TPCH resumes only after explicit user approval.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,
@@ -115,6 +118,10 @@ ready_for_controller
 worker_running
   -> blocked
   -> worker_running
+
+worker_running
+  -> waiting_for_pre_tpch_approval
+  -> worker_running
 ```
 
 Only the worker writes implementation changes and worker-attempt sections.
@@ -154,8 +161,10 @@ attempt.
    Record findings and resolutions. Unresolved findings make the task
    `blocked`, not successful.
 12. Write or append the task's declared result receipt. Set
-   `worker_status: ready_for_controller` when complete or
-   `worker_status: blocked` when unresolved, then stop immediately.
+   `worker_status: ready_for_controller` when complete,
+   `worker_status: blocked` when unresolved, or
+   `worker_status: waiting_for_pre_tpch_approval` at Task 018's mandatory
+   checkpoint, then stop immediately.
 
 The worker is responsible for correctness inside the assigned task. It is not
 responsible for approving the overall port architecture or earlier tasks.
@@ -172,7 +181,7 @@ controller feedback.
 ## Worker attempt 1
 
 ```text
-worker_status: ready_for_controller | blocked
+worker_status: ready_for_controller | blocked | waiting_for_pre_tpch_approval
 environment_profile: <name>
 task: NNN
 ```
@@ -232,6 +241,26 @@ The worker stopped after writing this receipt.
 For a rework attempt, append `## Worker attempt 2` with fresh baselines,
 commands, evidence, and review. Do not alter the previous attempt or the
 controller's request.
+
+## Task-018 pre-TPCH checkpoint
+
+When the Task-018 Worker writes
+`worker_status: waiting_for_pre_tpch_approval`, the Controller:
+
+1. verifies every non-TPCH correctness, micro, wrapper, Gluten lifecycle,
+   Builder, metric, and Waves 1–3 gate;
+2. verifies every benchmark binary came from a fresh RelWithDebInfo or Release
+   build;
+3. verifies `tpch_sources_copied`, `tpch_target_built`, and
+   `tpch_commands_run` are all `false`;
+4. appends a Controller checkpoint review to the receipt;
+5. stops and waits for explicit user approval without accepting Task 018 or
+   dispatching Review 5.
+
+After approval, the Controller records it in the receipt and dispatches a fresh
+Task-018 Worker. The new Worker appends the next Worker-attempt section, executes
+018-C/018-H2 only, and then returns the complete task to the normal
+`ready_for_controller` acceptance path.
 
 ## Blocked handoff
 

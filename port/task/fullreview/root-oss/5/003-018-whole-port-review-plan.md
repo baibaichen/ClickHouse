@@ -111,7 +111,10 @@ shutdown, dedicated leaf pool lifetime, and executor ordering.
 
 Verify byte/content hashes before performance, direct/CBI/FCBI fairness,
 one-split TPCH runs, cache cleanup sentinels, result artifacts, and the explicit
-absence of a hard first-wave performance threshold.
+absence of a hard first-wave performance threshold. Verify that every benchmark
+binary was freshly built in RelWithDebInfo or Release, no Debug benchmark result
+was accepted, and the pre-TPCH receipt proves no TPCH source copy/build/run
+occurred before explicit user approval.
 
 ---
 

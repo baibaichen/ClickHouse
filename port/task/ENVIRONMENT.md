@@ -92,6 +92,11 @@ worktree. Tasks 018-019 are still the only tasks that modify Gluten.
 - Do not use `-j` with Ninja; let Ninja decide parallelism.
 - For long builds/tests, redirect output to a unique log under
   `<velox_build_dir>` and report the log path.
+- Benchmark binaries must be freshly built and run from a RelWithDebInfo or
+  Release build directory. Debug is allowed for functional tests only and
+  cannot supply benchmark evidence.
+- Task 018 stops after its non-TPCH phase. Do not copy TPCH sources, build the
+  TPCH target, require TPCH data, or run TPCH before explicit user approval.
 - If a command fails, stop and report the first actionable error plus the log
   path.
 - Result files under `port/task/result/` are handoff artifacts. Do not commit

@@ -261,6 +261,11 @@ Current task:
         is allowed before Review 5 acceptance;
     15. implementation remains unauthorized until the user selects the execution
         mode.
+    16. Task 018 stops after non-TPCH correctness/micro/wrapper/Gluten work and
+        Waves 1–3. No TPCH source copy, target build, data requirement, or run is
+        allowed until the user explicitly approves the pre-TPCH checkpoint.
+        Every benchmark result must come from a fresh RelWithDebInfo or Release
+        build; Debug benchmark results are invalid.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 

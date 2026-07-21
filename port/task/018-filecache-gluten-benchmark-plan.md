@@ -17,12 +17,17 @@ Task 019: excluded from this plan entirely.
 No hard performance regression threshold (baseline only).
 No commit by worker; controller commits accepted subtasks.
 RelWithDebInfo benchmark build uses vcpkg toolchain.
-External dataset: ${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory} (BLOCKED if unset).
+Every benchmark binary is freshly built and run from a RelWithDebInfo or
+Release build directory; Debug benchmark binaries are forbidden.
+External dataset: ${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}
+is required only after 018-P approval; it is not a pre-checkpoint blocker.
 All temp/cache directories use tmp/ relative to CWD or build dirs; never /tmp.
 Gluten dirty worktree (/root/oss/gluten branch main) is never modified.
 All build/test output redirected to log files in the build directory.
 Build/test logs are analyzed by task subagents per protocol.
 No -j or nproc arguments to ninja.
+Stop after all non-TPCH work. Do not copy, build, or run TPCH sources/targets
+until the user approves the pre-TPCH checkpoint.
 ```
 
 ---
@@ -194,14 +199,22 @@ code is near-copy from the reference commit.
 |---|---|---|---|---|
 | 018-A | Benchmark adapter + correctness verify | Velox repo | `velox_cache_verify` PASS all modes | Task 017A APIs absent |
 | 018-B | Dedicated FCBI micro target + wrapper A/B smoke | Velox repo | FCBI micro exits 0, 3 CSVs produced with no error rows | 018-A not green |
-| 018-C | TPCH benchmark correctness | Velox repo | `rows` AND `result_hash` identical across modes for q01 | `${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}` unset |
+| 018-C | TPCH benchmark correctness (post-checkpoint) | Velox repo | `rows` AND `result_hash` identical across modes for q01 | pre-TPCH approval absent or `${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}` unset |
 | 018-D | Orchestration scripts | Velox repo | `bash -n` clean + sentinel tests pass | 018-A not green |
 | 018-E | Gluten lifecycle + config | Gluten worktree | Lifecycle GTest green | Worktree creation fails |
 | 018-F | Gluten Builder adapter | Gluten worktree | `dynamic_cast<FileCacheBufferedInput*>` succeeds | 018-E not green |
 | 018-G | Complete Gluten metric bridge | Gluten worktree | native `sumRuntimeMetric` + Java carrier + Scala updater tests green, JNI/Java/Scala compile | 018-F not green |
-| 018-H | Performance waves (baseline) | Velox repo | CSVs collected, no crash | 018-C green, 018-B green |
+| 018-H1 | Non-TPCH performance waves 1–3 | Velox repo | RelWithDebInfo/Release outputs collected for core, FCBI, and wrapper modes | 018-B/018-D/018-G not green |
+| 018-P | Mandatory pre-TPCH checkpoint | Controller/user | non-TPCH receipt reviewed and user explicitly approves TPCH | 018-A/B/D/E/F/G/H1 incomplete |
+| 018-H2 | TPCH performance wave 4 (post-checkpoint) | Velox repo | RelWithDebInfo/Release TPCH CSVs collected | 018-P approval absent or 018-C not green |
 
-Execution order: 018-A → 018-B → 018-C (parallel with 018-D) → 018-E → 018-F → 018-G → 018-H
+Execution order:
+
+```text
+018-A -> 018-B -> 018-D -> 018-E -> 018-F -> 018-G -> 018-H1
+  -> STOP at 018-P for user approval
+  -> 018-C -> 018-H2
+```
 
 Task 017B is independent and scheduled after Task 018 plus accepted Review 5
 (not a Task-018 dependency).
@@ -930,6 +943,10 @@ echo "exit: $?"
 ---
 
 ## Task 018-C: TPCH Benchmark Correctness
+
+**Authorization gate:** This entire section is post-checkpoint. Before the user
+approves 018-P, do not copy the TPCH reference sources, add/build the TPCH
+target, inspect `${TPCH_DATA}`, or run any TPCH command.
 
 **Files:**
 - Near-copy from reference: `velox/benchmarks/tpch/TpchBenchmark.h`, `velox/benchmarks/tpch/TpchBenchmark.cpp`, `velox/benchmarks/tpch/TpchBenchmarkMain.cpp`
@@ -2513,7 +2530,10 @@ Step 8 (`CacheReadHarness.cpp`).
 - Consumes: `velox_ch_filecache_seek_benchmark`, `velox_ch_fcbi_benchmark`, `velox_bufferedinput_wrapper_benchmark`, `velox_tpch_benchmark`
 - Produces: Baseline timing CSVs and folly benchmark tables. No performance threshold.
 
-**Scheduling:** 018-H runs after 018-B and 018-C are green. Task 019 is excluded. Task 017B is not a dependency.
+**Scheduling:** Waves 1–3 are 018-H1 and run after 018-B, 018-D, and 018-G.
+Then the Worker stops at 018-P. Wave 4 is 018-H2 and runs only after explicit
+user approval and green 018-C. Task 019 is excluded. Task 017B is not a
+dependency.
 
 ### Wave 1: Core seek microbenchmark (existing target, baseline)
 
@@ -2571,7 +2591,8 @@ Output: `tmp/fc_w3/wrapper_direct.csv`, `tmp/fc_w3/wrapper_cbi.csv`,
 
 ### Wave 4: TPCH all 22 queries (correctness before perf)
 
-Correctness already verified in 018-C. Now run perf baseline:
+This wave is forbidden before the user approves 018-P. After approval,
+correctness must first be verified in 018-C, then run the perf baseline:
 
 ```bash
 for Q in 1 9 21; do
@@ -2608,7 +2629,7 @@ echo "Wave 4 full exit: $?"
 
 ### Steps
 
-- [ ] **Step 1: Build all benchmark targets**
+- [ ] **Step 1: Build non-TPCH benchmark targets in RelWithDebInfo**
 
 ```bash
 source /root/oss/velox-helper/env.sh
@@ -2616,19 +2637,42 @@ ninja -C /root/oss/velox/_build/relwithdebinfo \
   velox_ch_filecache_seek_benchmark \
   velox_ch_fcbi_benchmark \
   velox_bufferedinput_wrapper_benchmark \
-  velox_tpch_benchmark \
-  > /root/oss/velox/_build/relwithdebinfo/build_018h.log 2>&1
+  > /root/oss/velox/_build/relwithdebinfo/build_018h1.log 2>&1
 echo "exit: $?"
 ```
 
 - [ ] **Step 2: Run Wave 1 (core seek micro)**
 - [ ] **Step 3: Run Wave 2 (dedicated FCBI micro)**
 - [ ] **Step 4: Run Wave 3 (wrapper A/B)**
-- [ ] **Step 5: Run Wave 4 smoke (q01, q09, q21)**
-- [ ] **Step 6: Run Wave 4 full (all 22) if smoke passes**
-- [ ] **Step 7: Collect CSVs, report median wall_ms per (mode, query, round)**
+- [ ] **Step 5: Write and stop at the mandatory pre-TPCH checkpoint**
 
-**Gate:** All waves exit 0. CSVs collected. No crash or timeout. No hard regression threshold (baseline establishment only). Noise band established from within-run variance.
+The Worker writes the non-TPCH results to the Task-018 receipt, including build
+type, exact binary paths, correctness results, carrier tests, and Waves 1–3
+artifacts, then sets:
+
+```text
+worker_status: waiting_for_pre_tpch_approval
+tpch_sources_copied: false
+tpch_target_built: false
+tpch_commands_run: false
+```
+
+The Controller verifies the receipt and asks for explicit user approval. No
+Worker continues into 018-C or Wave 4 under the original dispatch.
+
+- [ ] **Step 6: After approval, dispatch a fresh Task-018 Worker and execute Task 018-C**
+
+Task 018-C performs the first authorized TPCH source copy, target registration,
+fresh RelWithDebInfo build, and correctness run.
+
+- [ ] **Step 7: Run Wave 4 smoke (q01, q09, q21)**
+- [ ] **Step 8: Run Wave 4 full (all 22) if smoke passes**
+- [ ] **Step 9: Collect CSVs, report median wall_ms per (mode, query, round)**
+
+**Gate:** Every benchmark binary path is under a RelWithDebInfo or Release build
+directory; any Debug binary invalidates the result. All authorized waves exit
+0, CSVs are collected, and no exception or timeout occurs. No hard regression
+threshold is applied; the noise band comes from within-run variance.
 
 ---
 
@@ -2663,8 +2707,8 @@ test -f "$CMAKE_TOOLCHAIN_FILE" || { echo "BLOCKED: CMAKE_TOOLCHAIN_FILE not set
 # 4. Gluten worktree can be created
 cd /root/oss/gluten && git worktree list | grep -v "018" | head -5
 
-# 5. TPCH data (BLOCKED for 018-C and Wave 4)
-test -d "${TPCH_DATA:-}" || echo "BLOCKED: TPCH_DATA unset or directory missing (018-C, 018-H Wave 4 cannot run)"
+# 5. TPCH data is checked only after 018-P approval.
+# Do not inspect or require TPCH_DATA during the pre-checkpoint phase.
 ```
 
 ---
