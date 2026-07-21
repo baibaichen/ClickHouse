@@ -14,10 +14,11 @@
 ## Status and authority
 
 ```text
-task_015_allowed: false (until the gate below is satisfied)
+task_015_allowed: true
 environment_profile: root-oss
 authority: port/task/fullreview/root-oss/2/003-014-review-decisions.md
 authority: port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md
+closure: port/task/fullreview/root-oss/2/003-014-targeted-b2-b5-closure.md
 ```
 
 Task 015 is prohibited until:
@@ -35,6 +36,10 @@ Recording a fresh decision document for that targeted re-review is good
 practice but is **not** itself a blocking gate: once the targeted review
 records zero unresolved findings and the user approves, Task 015 may start
 without waiting for a separately-authored decision-doc artifact.
+
+All five gates are satisfied. The targeted review closed B2-B5 with zero
+unresolved findings, and the user's instruction "好，继续；直到做完 task 015"
+supplies the explicit approval.
 
 This task also carries the corrective fix and end-to-end evidence for **B1 —
 direct-IO source with background download**, deferred from the Review-2
@@ -247,6 +252,7 @@ Create in the Velox checkout:
 
 ```text
 <velox_repo>/velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp
+<velox_repo>/velox/ch/Disks/IO/tests/FileCacheTestHelpers.h
 <velox_repo>/velox/ch/benchmarks/CMakeLists.txt
 <velox_repo>/velox/ch/benchmarks/FileCacheSeekBenchmark.cpp
 ```
@@ -280,6 +286,11 @@ Create in the ClickHouse checkout:
 
 Every new Velox C++ file must begin with the Apache 2.0 Facebook license
 header from `port/task/003-filecache-basic-common-shims.md`.
+
+`FileCacheTestHelpers.h` is the shared, header-only fixture surface used by
+both the E2E binary and benchmark. It owns deterministic source data,
+counting/direct-IO `ReadFile` helpers, manager/cache/input construction, and
+stream draining so the benchmark does not reimplement a divergent fixture.
 
 ## Steps
 
@@ -324,7 +335,7 @@ target_link_libraries(
     velox_ch_filecache_core
     velox_ch_filecache
     velox_dwio_common
-    velox_hive_connector
+    velox_file
     velox_test_util
     velox_exception
     velox_memory
@@ -367,8 +378,8 @@ protected:
     void SetUp() override {
         filesystems::registerLocalFileSystem();
         tempDir_ = common::testutil::TempDirectoryPath::create();
-        pool_ = memory::memoryManager()->addLeafPool("e2e").get();
-        auto opts = makeOptions(tempDir_->getPath(), pool_);
+        pool_ = memory::memoryManager()->addLeafPool("e2e");
+        auto opts = makeOptions(tempDir_->getPath(), pool_.get());
         manager_ = FileCacheManager::create(std::move(opts));
         FileCacheManager::setInstance(manager_.get());
         cache_ = manager_->getDefault();
@@ -395,7 +406,7 @@ protected:
     std::vector<char> readAll(SeekableInputStream& stream);
 
     std::shared_ptr<common::testutil::TempDirectoryPath> tempDir_;
-    memory::MemoryPool* pool_{nullptr};
+    std::shared_ptr<memory::MemoryPool> pool_;
     std::shared_ptr<FileCacheManager> manager_;
     FileCachePtr cache_;
 };
@@ -643,9 +654,11 @@ ctest \
 echo "exit: $?"
 ```
 
-Expected: the accumulated count increases by exactly the number of new
-`velox_ch_filecache_e2e_test` cases added in this task, with zero regressions
-in any previously-accepted `velox_ch_*` binary.
+Expected: the E2E binary's internal GTest count increases by exactly the number
+of cases added in this task. The accumulated CTest count increases by exactly
+one because `add_test` registers the whole
+`velox_ch_filecache_e2e_test` executable as one CTest target, with zero
+regressions in any previously-accepted `velox_ch_*` binary.
 
 - [ ] **Step 6: Add the Velox random-seek benchmark**
 
@@ -772,7 +785,7 @@ logic from points 1-7, not comments describing it):
 
 DEFINE_int32(file_size_mb, 64, "Synthetic file size in MiB");
 DEFINE_int32(cache_size_mb, 128, "FileCache max size in MiB");
-DEFINE_string(cache_dir, "/tmp/fc_seek_bench", "FileCache directory path");
+DEFINE_string(cache_dir, "tmp/fc_seek_bench", "FileCache directory path");
 DEFINE_int32(seek_count, 1000, "Number of random seeks per benchmark run");
 
 namespace facebook::velox::ch
