@@ -1080,3 +1080,87 @@ Per-query statistics aggregation — the ProfileEvents atomic counters are
 glog initialization — this task assumes the Velox binary initializes glog
   (via folly::init or LOG_INIT); no new init call is added here.
 ```
+
+---
+
+## Post-acceptance amendment 1 — 填命中三件套（仅全局 ProfileEvents）（reopened 2026-07-21）
+
+```text
+state: reopened_by_contract_audit
+owner_task: 017
+environment_profile: home-chang
+scope: 仅 Velox 侧、仅全局 ProfileEvents（算子级 IoStatistics 已拆出，见末尾"拆分说明"）
+design_ref: port/design/filecache-observability-design.md（§0.3、§4、§9）
+```
+
+### 拆分说明（worker attempt 1 blocked → 用户决策 C，2026-07-21）
+
+原修正含两半：(1) 填全局 ProfileEvents 三件套；(2) 在读路径把同样的量记进算子级
+`io::IoStatistics`。worker attempt 1 证实 **(2) 无法在"velox 主干零改动"下完成**：
+`io::IoStatistics`（velox 主干）只有固定原生字节计数器（`ramHit_`/`read_`/`ssdRead_`…，
+设计 §3 禁止借用其语义），唯一可扩展的 `operationStats_` 的 `OperationCounters` **无字节
+字段**；加专属计数须改 `velox/common/io/IoStatistics.{h,cpp}`（主干），与铁律冲突。
+
+**用户决策 C**：本修正**只做 (1) 全局 ProfileEvents 三件套**（完全在范围、不碰主干、
+benchmark 018b 靠它即可读 fcbi 命中）；**(2) 算子级 IoStatistics 拆为独立 backlog
+task，连同"改主干(A) vs 在 velox/ch 自建 sink(B)"的选择，推迟到 Gluten 阶段
+（018/019）** 再定——那时能看清 Gluten 到底怎么接，再决定改主干还是自建桥更合算。
+
+### Why
+
+017 移植时把命中率三件套的 ProfileEvents **枚举名照搬了，但没有任何 increment
+调用点（空壳）**：
+```text
+CachedReadBufferReadFromCacheBytes   —— 从缓存段读的字节（命中量）
+CachedReadBufferReadFromSourceBytes  —— 从源读的字节（回源/未命中量）
+CachedReadBufferCacheWriteBytes      —— 下载后写入缓存的字节
+```
+（核实：`velox/ch/Common/ProfileEvents.h` 有定义，全仓 0 个 increment 点。）
+
+后果：命中率算不出（`命中率 = ReadFromCacheBytes / (ReadFromCacheBytes +
+ReadFromSourceBytes)`，两个量都是 0），Task 018b benchmark 的 fcbi 命中列拿不到数。
+
+对齐 CH 权威口径：`src/Common/ProfileEvents.cpp:850/852/854`。
+
+### Scope（本修正）
+
+Velox 侧，允许修改：
+```text
+velox/ch/Disks/IO/FileCacheInputStream.cpp   —— 读路径填三件套（全局 ProfileEvents）
+velox/ch/Disks/IO/tests/*                     —— RED/验收测试
+```
+不碰：`ProfileEvents.h`（枚举已存在，只填调用点）、`io::IoStatistics`（拆出）、
+`FileCacheBufferedInput`（本修正不再需要穿透 ioStatistics）、Gluten、velox 主干。
+
+### 契约
+
+在 `FileCacheInputStream` 读路径的命中/回源/写缓存三个语义点，各记**全局 ProfileEvents**
+一处：
+
+| 语义点 | 全局（ProfileEvents，累计差值口径） |
+|---|---|
+| 从缓存段读到 N 字节（命中） | `increment(CachedReadBufferReadFromCacheBytes, N)` |
+| 从源读到 N 字节（回源/未命中） | `increment(CachedReadBufferReadFromSourceBytes, N)` |
+| 下载写入缓存 N 字节 | `increment(CachedReadBufferCacheWriteBytes, N)` |
+
+- 命中/回源的判断以读路径既有的 `ReadType`（读缓存段 vs 读源）为准，不新造判断逻辑。
+- **不报"率"**：只记三个原始累计量，命中率由消费端相除。
+- **算子级 IoStatistics 不在本修正**（拆出，见上）。CurrentMetrics、淘汰量（6a）等
+  全局空壳也不在本修正（design §6a）。
+
+### Acceptance
+
+- 新增/扩展测试证明：一次命中读使 `CachedReadBufferReadFromCacheBytes` 增加所读字节数；
+  一次回源读使 `CachedReadBufferReadFromSourceBytes` 增加；下载使 `CacheWriteBytes` 增加。
+  用 `ProfileEvents::get()` 前后差值断言（累计口径）。
+- **RED**：去掉命中读路径的 `increment`（或中和记录点），命中断言必须变红；恢复后转绿。
+  证明测试真驱动了记录点，非空断言。
+- 回归：既有 gate 全绿（observability 14 / e2e 17 / buffered_input 19 / manager 20 /
+  core_scc 47 / cancellation 5 / connector 4），两 benchmark 仍构建。
+- velox 主干零改动（git diff 仅在 velox/ch/）。不 push；无 -j；日志入 build 目录。
+
+### Result receipt
+
+追加 `## Worker attempt 2` 到
+`port/task/result/017-filecache-observability-cancellation-result.md`（不 erase attempt 1
+或原结果），EXECUTION_PROTOCOL worker-receipt 格式。
