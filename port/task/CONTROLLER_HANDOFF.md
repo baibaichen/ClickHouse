@@ -224,17 +224,12 @@ Current task:
        `ad1a13c37e87cecda464ac8dfcc9fee57c093eb6`;
     3. Task 014's B4 caller-order confirmation is accepted with no Velox source
        change;
-    4. a targeted re-review of only the Tasks 003-014 rows affected by
-       B2-B5 (not a full re-review of every already-accepted row);
-    5. only after that targeted review records zero unresolved findings and
-       the user explicitly approves, a Task 015 Worker (which also
-       implements the B1 fix, the strengthened E2E suite, and the
-       benchmark).
-- Recording a fresh decision document for the targeted re-review is good
-  practice but is **not** itself a blocking gate: once the targeted review
-  records zero unresolved findings and the user approves, Task 015 may start
-  without waiting on a separately-authored decision-doc artifact.
-- Task 015 remains prohibited until that gate is satisfied.
+    4. the targeted B2-B5 re-review is approved with zero unresolved findings;
+    5. the user's instruction to continue through Task 015 satisfies the
+       explicit-approval gate;
+    6. dispatch Task 015, including B1, the strengthened E2E suite, and the
+       benchmark.
+- Task 015 is allowed.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
@@ -250,18 +245,14 @@ Resume procedure:
    and `port/task/015-filecache-velox-end-to-end.md`).
 4. Tasks 011 B2/B3, 012 B4/B5, and 014's B4 caller-order confirmation are
    corrected and accepted.
-5. Run the targeted re-review of the affected Tasks 003-014 rows and record
-   zero unresolved findings.
-6. Continue to Task 015 only with zero unresolved findings from step 5 and
-   explicit user approval.
+5. The targeted re-review records zero unresolved findings.
+6. Continue to Task 015 under the user's explicit continuous-execution approval.
 
 Continuous execution target:
 
-- Current stop condition: the Review-2 authoring wave (this update) is
-  complete; approved B2-B5/B1 corrective work is pending dispatch.
-- Task 015 remains prohibited until the corrective Tasks 011/012/014 are
-  accepted, the targeted re-review of the affected Tasks 003-014 rows
-  records zero unresolved findings, and the user explicitly approves.
+- Current stop condition: complete Task 015 and its acceptance gates.
+- Corrective Tasks 011/012/014 and the targeted B2-B5 re-review are accepted;
+  Task 015 is allowed.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

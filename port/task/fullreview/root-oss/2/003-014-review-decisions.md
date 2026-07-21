@@ -6,7 +6,7 @@
 environment_profile: root-oss
 review_round: 2
 decision_status: approved
-task_015_allowed: false
+task_015_allowed: true
 ```
 
 Evidence:
@@ -15,6 +15,7 @@ Evidence:
 port/task/fullreview/root-oss/2/evidence/003-014-consumer-contract-ledger.md
 port/task/fullreview/root-oss/2/evidence/003-014-full-review-result.md
 port/task/fullreview/root-oss/2/evidence/014-senior-review-corrective-result.md
+port/task/fullreview/root-oss/2/003-014-targeted-b2-b5-closure.md
 ```
 
 This file is authoritative over the evidence report's proposed disposition.
@@ -155,8 +156,9 @@ Before Task 015:
 5. rerun the targeted Tasks 003-014 review rows;
 6. record zero unresolved findings.
 
-Until then:
+The targeted review completed with B2-B5 closed and zero unresolved findings.
+The user explicitly approved continuous execution through Task 015.
 
 ```text
-task_015_allowed: false
+task_015_allowed: true
 ```
