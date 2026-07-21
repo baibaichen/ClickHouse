@@ -19,6 +19,8 @@ binary and benchmark instead of duplicating manager/cache/source construction.
 **Reason:** The original file scope had no reusable fixture even though the
 benchmark contract prohibited a divergent second implementation.
 
+**User decision:** approved.
+
 ## D2 — Executable Task-015 contract corrections
 
 **Decision:** Store the test `MemoryPool` as a `shared_ptr`, link `velox_file`
@@ -29,6 +31,8 @@ accumulated CTest target.
 the Hive dependency was unnecessary, and CTest counts executables rather than
 individual GTest cases with the repository's `add_test` pattern.
 
+**User decision:** approved.
+
 ## D3 — Foreground direct-IO tail scope expansion
 
 **Decision:** Modify `ReadBufferFromVeloxReadFile.cpp` even though the original
@@ -38,6 +42,11 @@ B1 scope expected only the accessor and `Metadata.cpp`.
 logical EOF/right-bound tail before `pread`. The accepted fix keeps validation
 strict, issues an aligned physical request, and publishes only logical bytes.
 No buffered fallback was added.
+
+**Coverage correction:** the two pre-existing adapter unit tests still asserted
+the old rejection behavior. They were updated after a fresh rebuild exposed the
+stale-binary false green; both now have a direct RED mutation and pass in mono
+and non-mono builds.
 
 ## D4 — Background aligned-body/pure-tail behavior
 
@@ -71,8 +80,8 @@ duplicate builds.
 ## User review record
 
 ```text
-D1: approve / modify / reject
-D2: approve / modify / reject
+D1: approve
+D2: approve
 D3: approve / modify / reject
 D4: approve / modify / reject
 D5: approve / modify / reject

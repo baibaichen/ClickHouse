@@ -219,6 +219,30 @@ length up to the direct-IO alignment, validates that aligned request, and
 publishes only the logical bytes up to `readUntil_`. This is not a buffered
 fallback and never exposes the physical over-read.
 
+### Post-acceptance direct-IO test-plane correction
+
+The original `IoAdaptersTest` cases still asserted the pre-Task-015 contract:
+an unaligned logical EOF tail/right bound must be rejected before `pread`.
+Task 015 intentionally changed that behavior to an aligned physical request
+with logical clamping. Running CTest without rebuilding every registered target
+used the stale `velox_ch_io_test` executable and hid this contradiction.
+
+The binding adapter tests are:
+
+```text
+ReaderDirectIoUnalignedTailUsesAlignedPhysicalRead
+ReaderDirectIoUnalignedRightBoundClampsPhysicalRead
+```
+
+They must prove the physical offset/address/length are aligned, only logical
+bytes are exposed, and reaching the logical right bound issues no second read.
+A mutation that passes `logicalToRead` directly as the physical length must make
+both tests fail on direct-IO length validation.
+
+The accumulated gate must first build every registered `velox_ch_*` target and
+only then run `ctest -R '^velox_ch_'`; running CTest alone is not accepted
+evidence after a shared-library/source change.
+
 ### B1 end-to-end test (binding)
 
 Add `TEST_F(FileCacheE2ETest, DirectIoSourceBackgroundDownloadCompletes)`:

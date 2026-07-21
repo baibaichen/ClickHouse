@@ -260,3 +260,65 @@ Task 015: Complete FileCache E2E validation
 
 Task 015 is accepted. Tasks 016-019 remain unimplemented pending the requested
 post-Task-015 task-contract review.
+
+## Post-acceptance correction — direct-IO adapter tests
+
+The accepted production behavior rounds an unaligned logical tail/right bound
+up to an aligned physical direct-IO request and exposes only logical bytes.
+Two pre-existing adapter tests still expected the old fail-before-`pread`
+behavior. The original accumulated CTest run did not rebuild
+`velox_ch_io_test`, so its stale executable produced a false-green gate.
+
+Fresh rebuild before correction:
+
+```text
+IoAdaptersTest.ReaderDirectIoUnalignedTailRejectedBeforePread: failed
+IoAdaptersTest.ReaderDirectIoUnalignedRightBoundRejectedBeforePread: failed
+reason: both observed the new successful aligned physical read
+```
+
+Corrected tests:
+
+```text
+ReaderDirectIoUnalignedTailUsesAlignedPhysicalRead
+  logical tail: 100 bytes
+  physical pread: 512 bytes
+  exposed bytes: 100
+
+ReaderDirectIoUnalignedRightBoundClampsPhysicalRead
+  logical bound: 600 bytes
+  physical pread: 1024 bytes
+  exposed bytes: 600
+  reads after logical bound: 0
+```
+
+RED mutation:
+
+```text
+mutation: physicalToRead = logicalToRead
+build: succeeded
+tail test: failed on 100 % 512 direct-IO length validation
+right-bound test: failed on 600 % 512 direct-IO length validation
+logs:
+  _build/debug/task015_followup/build_io_red.log
+  _build/debug/task015_followup/test_io_red.log
+```
+
+Restored final gate:
+
+```text
+velox_ch_io_test mono:      33/33
+velox_ch_io_test non-mono:  33/33
+all 15 registered velox_ch_* targets built before CTest
+accumulated mono CTest:     15/15
+accumulated non-mono CTest: 15/15
+git diff --check:           clean
+review:                     approved, no Critical/Important findings
+```
+
+Accepted Velox follow-up commit:
+
+```text
+43a9e6f75ffb94be38836b45fd476325665f50be
+Task 015: Sync direct-IO adapter tests
+```
