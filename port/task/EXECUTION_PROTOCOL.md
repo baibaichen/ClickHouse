@@ -15,12 +15,15 @@ Next dispatch order:   Tasks 016-019 contract review completed. Run a task
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
-Tasks 017-019 are not allowed as currently written.
+Task 017 is planned mainline work, but its design revision is pending and
+implementation is not authorized. Tasks 018-019 are not allowed as currently
+written.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,
   and explicit stop conditions.
-Optional Velox work:  Tasks 016-017, only after a separate decision
+Deferred Velox work:  Task 016
+Planned Velox work:   Task 017, redesign before implementation
 Deferred Gluten:       Tasks 018-019, not in the current phase
 ```
 

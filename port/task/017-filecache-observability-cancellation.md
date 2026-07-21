@@ -1,8 +1,9 @@
 # Task 017: `FileCache` Observability and Cancellation Hardening
 
-> **Post-MVP optional task.**
+> **Planned mainline hardening task; design revision pending.**
 >
-> **Prerequisite:** Tasks 004–016 must be complete. The shims in
+> **Prerequisite:** Tasks 003–015 must be complete. Task 016 is deferred and is
+> not a code prerequisite. The shims in
 > `velox/ch/Common/` (logger_useful.h, CurrentMetrics.h, ProfileEvents.h,
 > QueryStatus.h) must be present as no-op stubs from the earlier port tasks.
 > `FileCacheInputStream` must be implemented from task 014.
@@ -11,6 +12,19 @@
 > modifies the Velox checkout under `<velox_repo>` and writes
 > one result file under this ClickHouse checkout. Do not modify ClickHouse
 > source files. Do not commit or stage either repository.
+
+## Status and user disposition
+
+```text
+environment_profile: root-oss
+disposition: planned
+task_017_allowed: false
+reason: user wants this capability, but the reviewed contract must be redesigned first
+```
+
+The user explicitly selected observability and cancellation as work that should
+be completed. This records priority only; it does not approve the current
+contract or authorize implementation. Redesign is a separate step.
 
 ## Goal
 

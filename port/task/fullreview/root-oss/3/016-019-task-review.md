@@ -21,12 +21,12 @@ worktree.
 | Task | Verdict | Blocking reason |
 |---|---|---|
 | 016 — write buffer to segment | **DEFERRED** | The corrected contract is ready, but Velox has no temporary-data spill consumer and the user marked it non-mainline. |
-| 017 — observability/cancellation | **REVISE** | Proposed shim replacements remove names used by accepted production code; cancellation scope and deferred obligations are incomplete. |
+| 017 — observability/cancellation | **PLANNED; REVISE FIRST** | The user marked it mainline work, but the current shim/cancellation contract remains unsafe and must be redesigned before implementation. |
 | 018 — Gluten integration | **REVISE** | The prescribed fixture/configure path cannot run on `root-oss`, and the builder-selection test is false-green. |
 | 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
 
-Only Task 016's rewritten contract is ready; no later implementation is
-authorized.
+Task 016 is deferred. Task 017 is selected for later design. No later
+implementation is authorized.
 
 ## Task 016 follow-up resolution
 
@@ -52,6 +52,14 @@ The contract is preserved for a future real consumer, but
 `task_016_allowed: false` and `disposition: deferred` are binding.
 
 ## Task 017 findings
+
+### User disposition
+
+```text
+decision: do Task 017
+next_action: redesign the contract later
+implementation_authorized: false
+```
 
 ### Critical
 

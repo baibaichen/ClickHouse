@@ -232,7 +232,10 @@ Current task:
     7. Tasks 016-019 contract review is recorded in
        `port/task/fullreview/root-oss/3/016-019-task-review.md`;
     8. Task 016 was rewritten and re-reviewed, then explicitly deferred by the
-       user as unnecessary/non-mainline; Tasks 017-019 still require revision.
+       user as unnecessary/non-mainline;
+    9. Task 017 was selected by the user as mainline work, but design is deferred
+       to a later discussion and implementation remains unauthorized;
+    10. Tasks 018-019 still require revision.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -257,8 +260,9 @@ Continuous execution target:
 
 - Current stop condition: user review of the Tasks 016-019 amendments and the
   autonomous-decision ledgers.
-- Tasks 003-015 are accepted. Task 016 is deferred by user decision; Tasks
-  017-019 are not allowed as currently written.
+- Tasks 003-015 are accepted. Task 016 is deferred. Task 017 is planned but must
+  be redesigned before authorization. Tasks 018-019 are not allowed as
+  currently written.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
