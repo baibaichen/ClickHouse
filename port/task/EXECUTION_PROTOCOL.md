@@ -7,11 +7,11 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Review-2 B2-B5 corrective work and targeted re-review are
-                       accepted with zero unresolved findings.
-Next dispatch order:   Task 015 Worker (implements B1, the strengthened E2E
-                       suite, and the benchmark).
-Task 015 is allowed. B1 is implemented and tested inside Task 015.
+Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
+                       E2E cases and the checked seek benchmark.
+Next dispatch order:   Review Tasks 016-019 only; do not implement Task 016
+                       without a separate decision.
+Task 015 is complete.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,

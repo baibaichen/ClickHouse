@@ -227,9 +227,10 @@ Current task:
     4. the targeted B2-B5 re-review is approved with zero unresolved findings;
     5. the user's instruction to continue through Task 015 satisfies the
        explicit-approval gate;
-    6. dispatch Task 015, including B1, the strengthened E2E suite, and the
-       benchmark.
-- Task 015 is allowed.
+    6. Task 015 is implemented and accepted at
+       `aadc10db7bffbbc49ee9d7dcee1e01e78bbadfff`;
+    7. review Tasks 016-019 only; do not implement Task 016.
+- Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
@@ -246,13 +247,13 @@ Resume procedure:
 4. Tasks 011 B2/B3, 012 B4/B5, and 014's B4 caller-order confirmation are
    corrected and accepted.
 5. The targeted re-review records zero unresolved findings.
-6. Continue to Task 015 under the user's explicit continuous-execution approval.
+6. Task 015 is complete and accepted. Review Tasks 016-019 without
+   implementation.
 
 Continuous execution target:
 
-- Current stop condition: complete Task 015 and its acceptance gates.
-- Corrective Tasks 011/012/014 and the targeted B2-B5 re-review are accepted;
-  Task 015 is allowed.
+- Current stop condition: complete the requested Tasks 016-019 contract review.
+- Tasks 003-015 are accepted; no Task 016 implementation is authorized.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

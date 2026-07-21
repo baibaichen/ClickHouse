@@ -208,6 +208,17 @@ address up to the required alignment; this is the pattern to mirror.
    caller (`Metadata.cpp`), which must satisfy the adapter's existing
    contract, not relax it.
 
+### Execution-discovered foreground tail defect
+
+The B1 tail E2E exposed a second concrete integration defect: the foreground
+reader's destination buffer was aligned, but `ReadBufferFromFileBase::nextImpl`
+passed the unaligned logical tail length directly to the direct-IO `pread`
+check. The accepted fix in `ReadBufferFromVeloxReadFile.cpp` keeps
+`checkDirectIoRead`, `set`, and `seek` strict: it rounds the physical request
+length up to the direct-IO alignment, validates that aligned request, and
+publishes only the logical bytes up to `readUntil_`. This is not a buffered
+fallback and never exposes the physical over-read.
+
 ### B1 end-to-end test (binding)
 
 Add `TEST_F(FileCacheE2ETest, DirectIoSourceBackgroundDownloadCompletes)`:
@@ -266,6 +277,9 @@ Modify in the Velox checkout:
 <velox_repo>/velox/ch/IO/ReadBufferFromVeloxReadFile.h  (B1: add the
   directIoAlignment() public accessor only; no behavior change to any
   existing call site)
+<velox_repo>/velox/ch/IO/ReadBufferFromVeloxReadFile.cpp  (execution-discovered
+  B1 foreground-tail defect: aligned physical read with logical-byte clamp;
+  no relaxation of checkDirectIoRead/set/seek)
 <velox_repo>/velox/ch/Interpreters/FileCache/Metadata.cpp  (B1: align
   CacheMetadata::downloadImpl's background buffer and add the explicit
   unaligned-tail skip; this is the concrete integration defect this task's
@@ -912,7 +926,8 @@ this step, not evidence to weaken or remove.
 
 - [ ] **Step 7: Verify that no *unexpected* production defects required changes**
 
-`velox/ch/IO/ReadBufferFromVeloxReadFile.h` and
+`velox/ch/IO/ReadBufferFromVeloxReadFile.h`,
+`velox/ch/IO/ReadBufferFromVeloxReadFile.cpp`, and
 `velox/ch/Interpreters/FileCache/Metadata.cpp` are **expected** to change,
 exactly as documented in `## B1 corrective contract` above; that diff is not
 a violation of this step. Inspect the diff for every other production file to
@@ -930,12 +945,14 @@ git --no-pager diff -- \
 If any of these four files changed, describe the defect and fix in the result
 file before stating `status: success`. Separately, inspect the B1 diff itself
 and confirm it touches only the documented accessor addition
-(`ReadBufferFromVeloxReadFile.h`) and the documented alignment/skip logic
-(`Metadata.cpp`'s `downloadImpl`), with no unrelated change in either file:
+(`ReadBufferFromVeloxReadFile.h`), aligned physical/logical-tail handling
+(`ReadBufferFromVeloxReadFile.cpp`), and alignment/skip logic
+(`Metadata.cpp`'s `downloadImpl`), with no unrelated change in those files:
 
 ```bash
 git --no-pager diff -- \
   velox/ch/IO/ReadBufferFromVeloxReadFile.h \
+  velox/ch/IO/ReadBufferFromVeloxReadFile.cpp \
   velox/ch/Interpreters/FileCache/Metadata.cpp
 ```
 
@@ -1048,8 +1065,9 @@ Accumulated regression: 0 unexpected failures
 Benchmark build exit code: 0
 Benchmark smoke-pass assertions: passed (no VELOX_CHECK abort)
 git diff --check: no whitespace errors in Velox
-Both B1 production files (ReadBufferFromVeloxReadFile.h,
-  Metadata.cpp) changed only as documented in "## B1 corrective contract"
+  All three B1 production files (ReadBufferFromVeloxReadFile.h,
+  ReadBufferFromVeloxReadFile.cpp, Metadata.cpp) changed only as documented
+  in "## B1 corrective contract" and its execution-discovered defect
 ```
 
 ## Blocking errors
