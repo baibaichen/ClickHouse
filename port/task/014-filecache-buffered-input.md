@@ -1182,3 +1182,84 @@ Rebuild + run green: `velox_ch_filecache_buffered_input_test` (with the new test
 - The two documented exclusions (remote-object `CANNOT_READ_ALL_DATA`, `readBigAt`) —
   still legitimate; do not attempt.
 - F-011-T priority/eviction tests — downgraded to non-blocking backlog; not here.
+
+---
+
+## Post-acceptance amendment 1 — 修 SkipInt64 跨段错位 bug（reopened 2026-07-21）
+
+```text
+state: reopened_by_contract_audit
+owner_task: 014
+environment_profile: home-chang
+severity: 真 bug（6/22 TPCH query 在 FileCache 读路径 abort）
+```
+
+### Why（真 bug，Task 018b 全量 TPCH 暴露）
+
+`FileCacheInputStream::SkipInt64`（`FileCacheInputStream.cpp:929-962`）用了个**非 CH、
+非原生**的实现：**先调 `Next()` 读一下、再把 `position_` 往回拨**（`:948` 调 Next，`:955`
+`position_ -= produced`）。当一次 skip **横跨缓存段边界**时，`Next()` 内已执行**不可逆**的
+`completeCurrentSegmentAndAdvance()`（`:893`，把段 0 弹出、切到段 1），而后面的
+`position_ -= produced` 只回拨逻辑位置、**不恢复段 0、不回退 `state_`** → **position 与
+持有段错位**。之后 `updateCurrentReaderIfNeeded`（`:654-666`）对已 DOWNLOADED 的 CACHED 段
+是 no-op，仍从段 1 起始供数，字节记账漂移，region 末尾提前 EOF → `readFromCurrentSegment`
+返回 0 → `Next()` 返回 false → DWIO `StreamUtil.h:67 readBytes` abort **"Reading past end"**。
+
+- **表现**：q2/q11/q15/q17/q20/q21（`partsupp` 等 skip-heavy 聚合，
+  `FloatingPointColumnReader::skip → PageReader::skip`，跳过 > 当前 buffer、跨 32MiB 段边界的
+  压缩页）崩；其余 16 query 顺序读不跨段 skip，正常。**direct/cbi 同 query 正常**（它们的
+  `CacheInputStream::SkipInt64`（`CacheInputStream.cpp:137-148`）纯挪 `position_`、无 Next 副作用）。
+- **CH 权威**：CH 无独立 skip；`CachedOnDiskReadBufferFromFile::seek`（`:2000`）要么"目标在
+  当前 buffer 内→只挪指针"，要么"超出→`info.reset(); state.reset(); initialized=false;` 设新
+  位置、**下次读时按新位置重找段**"。**从不"先读再回拨"。**
+
+### Scope（本修正）
+
+```text
+velox/ch/Disks/IO/FileCacheInputStream.cpp   —— 重写 SkipInt64（对齐 CH/原生）
+velox/ch/Disks/IO/FileCacheInputStream.h     —— 若签名/辅助需要
+velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp —— 加真正的跨段 skip RED 测试
+```
+不碰其它文件、velox 主干、Gluten。
+
+### 契约（修法，对齐 CH seek 模型 + 原生 SkipInt64）
+
+`SkipInt64(count)`：
+1. 若目标仍落在**当前已发布 output buffer** 内 → 只挪 `position_`/`offsetInOutputBuffer_`
+   （快路径，保留现有 BackUp 语义）。
+2. 若目标**超出当前 buffer**（含跨段）→ **不调 `Next()`**。改为**复用 `seekToPosition`
+   已有的失效逻辑**（`:970` 起：释放 downloader、`readInfo_.reset()`、`state_.reset()`、
+   `initialized_ = false`），把 `position_` 设为 skip 目标绝对偏移；下次真 `Next()` 从新
+   `position_` 重新推导正确的段/reader。**绝不保留"翻段又回拨"的不可逆副作用。**
+- 保持 `ByteCount()` 语义正确（= 已 skip 的绝对进度）。段内相对坐标不动。
+- 不改 `Next()`/`completeCurrentSegmentAndAdvance` 本身。
+
+### RED（现有 SkipAcrossSegmentBoundary 是假绿，必须加真测试）
+
+现有 `FileCacheE2ETest.SkipAcrossSegmentBoundary`（`:350`）**先 `readN(seg)` 读完整个段 0
+再 skip** → 起点已在段边界，避开了错位路径，是**假绿**（名叫跨段却没测跨段风险）。
+新测试须精确造触发模式：
+1. 建缓存，段 `seg`（如 64KB），enqueue 跨多段 region。
+2. **只读段 0 的一部分**（如 `seg/2`，停在**段 0 中间**，绝不读到段边界）。
+3. `SkipInt64` 一个**足以横跨段边界**的距离（起点段 0 中间、终点落段 1，且 > 当前 buffer 剩余，
+   逼走坏路）。
+4. **断言 skip 后 `Next()` 读出的真实字节 == content 正确绝对偏移处的字节**（不只验
+   `ByteCount`——记账可能对而底层段错位；必须验读出内容）。
+变体加固：跨 2 段（段 0 中间→段 2）；skip→读一点→再跨段 skip（连续 skip）。
+**修前这些新断言必须红（Reading past end 或字节错位）；修后全绿。**
+
+### Acceptance
+
+- 新 RED 测试修前红、修后绿（记录失败断言+行）。既有 `SkipAcrossSegmentBoundary` 仍绿。
+- 回归全绿（0 failed/0 skipped）：e2e（原 17 + 新增 skip 测试）、buffered_input 19、
+  manager 20、core_scc 47、observability 14、cancellation 5、connector 4、hit_metrics 5。
+- **端到端验证**：用修好的 release 二进制重跑 6 个曾崩 query（q2/11/15/17/20/21）
+  `--input_source=filecache --num_splits_per_file=1`，各 exit 0、0 error（证明 filecache 全
+  22 通过）。数据集 `/home/chang/test/tpch-double/tpch-generated-100.0-parquet-decimal_as_double`。
+- velox 主干零改动（git diff 仅 velox/ch/）。不 push；无 -j；日志入 build 目录。
+
+### Result receipt
+
+追加 `## Worker attempt` 到
+`port/task/result/014-filecache-buffered-input-result.md`（不 erase 原结果），
+EXECUTION_PROTOCOL worker-receipt 格式。

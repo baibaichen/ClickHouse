@@ -836,3 +836,202 @@ None. Task 014 F-014-1 reopen accepted; whole-port review 2 zero-unresolved gate
 |---|---|
 | `/home/chang/OpenSource/velox` | (this acceptance — see Velox `Task 014:` reopen commit) |
 | `/home/chang/SourceCode/ClickHouse` | receipt+review-docs+handoff = this commit |
+
+## Worker attempt (post-acceptance amendment 1 — SkipInt64 cross-segment)
+
+```text
+worker_status: blocked
+environment_profile: home-chang
+task: 014 (post-acceptance amendment 1)
+```
+
+### Summary
+
+The amendment's declared fix (rewrite `SkipInt64` to align with CH
+`CachedOnDiskReadBufferFromFile::seek`) was implemented and is correct in
+isolation (review clean, all local gates green), BUT it does **not** resolve the
+real TPCH crash. Direct instrumentation proves the 6 crashing queries never call
+`SkipInt64` or `seekToPosition` on the failing path. The crash is a **different,
+out-of-scope bug**: `FileCacheInputStream::Next` returns `got == 0` at exactly
+`position_ == 1048576` (1 MiB = `kDefaultOutputBufferSize`) while ~5 MiB of the
+region remain, so DWIO `StreamUtil.h:67 readBytes` aborts "Reading past end".
+Fixing this is outside the amendment's declared file/behavior scope
+(`SkipInt64` rewrite), so per EXECUTION_PROTOCOL (record the conflict, do not
+expand scope, do not fabricate green) this attempt is `blocked`.
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `1a90c042afcd45d41b0de8c37edb0621c9ad310f` | `velox/exec/tests/utils/TpchQueryBuilder.cpp` dirty (pre-existing 018b, preserved) |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache2` | `49961f961452760c188666775a16710cacad9cc0` | `port/task/014-*.md`, `port/task/018b-*.md` dirty (pre-existing) |
+
+## Files changed (this attempt, all under velox/ch/)
+
+```text
+/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheInputStream.cpp
+/home/chang/OpenSource/velox/velox/ch/Disks/IO/FileCacheInputStream.h
+/home/chang/OpenSource/velox/velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp
+```
+
+`git diff --stat velox/ch/`: 3 files, +160 / -25. `git diff --check` clean.
+Pre-existing `velox/exec/tests/utils/TpchQueryBuilder.cpp` (018b) untouched.
+
+## Implementation
+
+- Rewrote `SkipInt64` (`FileCacheInputStream.cpp:931-963`): fast path advances
+  `offsetInOutputBuffer_`/`position_` when the target stays inside the published
+  output buffer; slow path computes `target = position_ + toSkip`,
+  `VELOX_CHECK_LE(target, region_.length)`, and calls the new helper
+  `invalidateAndReposition(target)` — no `Next()` call, no rollback side effect.
+- Factored `invalidateAndReposition(uint64_t)` (`FileCacheInputStream.cpp:990`),
+  reused by both `SkipInt64` slow path and `seekToPosition` slow path. Body is
+  byte-for-byte identical to the original inlined `seekToPosition` slow path.
+- Header: added the private declaration.
+- Added 3 tests (`FileCacheE2ETest.cpp`): `SkipFromMidSegmentAcrossBoundary`,
+  `SkipMidSegmentAcrossTwoSegments`, `ConsecutiveSkipsAcrossBoundaries` — each
+  pre-warms the cache (hit path), reads part of segment 0, skips across one/two
+  boundaries, and asserts the actual bytes at the correct absolute offset.
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| debug build e2e (pre-fix, RED build) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/build_red_e2e2.log` |
+| brute-force pre-fix skip search (all pass — bug not reproducible at unit level) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/run_brute_prefix.log` |
+| debug build e2e (with fix, GREEN) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/build_final_e2e.log` |
+| e2e run (20 tests, 17+3) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_filecache_e2e_final.log` |
+| buffered_input 19 | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_filecache_buffered_input.log` |
+| manager 20 | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_filecache_manager.log` |
+| core_scc 47 | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_filecache_core_scc.log` |
+| observability 14 | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_observability.log` |
+| cancellation 5 | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_cancellation.log` |
+| connector 4 | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_filecache_connector.log` |
+| hit_metrics 5 | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_logs/reg_filecache_hit_metrics.log` |
+| release build benchmark (pre-fix binary) | 0 | (stale binary predating changes; used for RED) |
+| RELEASE TPCH RED q2/11/15/17/20/21 (pre-fix binary) | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_logs/red_q*.log` |
+| release build benchmark (with fix) | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_logs/build_release_final.log` |
+| RELEASE TPCH GREEN attempt q2/11/15/17/20/21 (with fix) — STILL FAIL | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_logs/green_q*.log` |
+| instrumented run q17 (SkipInt64/seek/Next debug prints) | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_logs/dbg3_q17.log` |
+| direct q2 baseline (works, 12.3M rows) | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_logs/direct_q2.log` |
+
+## Acceptance evidence
+
+```text
+test count (debug regression, all pass, 0 failed / 0 skipped):
+  e2e 20 (17 original + 3 new), buffered_input 19, manager 20, core_scc 47,
+  observability 14, cancellation 5, connector 4, hit_metrics 5.
+existing SkipAcrossSegmentBoundary: still green.
+
+RED unit test requirement: NOT satisfiable in-harness. A brute-force search over
+  thousands of (remoteFsBufferSize x partial-read x skip-distance) combinations
+  on the cache-HIT path (run_brute_prefix.log) shows the PRE-FIX SkipInt64 returns
+  byte-correct data in every case: it reads-and-discards every skipped byte
+  sequentially, which keeps the (non-re-seekable) CACHED reader aligned. The
+  desync the amendment describes does not reproduce with LocalReadFile-backed
+  segments; it needs the production compressed-page DWIO stack.
+
+E2E RED (authoritative): PRE-FIX release binary, all 6 queries fail:
+  q2/11/15/17/20/21 -> 0 rows, error="task failed (see ERROR log)",
+  ERROR log = "StreamUtil.h:67 readBytes ... Reading past end" (INVALID_STATE).
+  Stack: PageReader::skip -> seekToPage -> prepareDataPageV1 -> readBytes.
+
+E2E GREEN (attempted): WITH-FIX release binary, all 6 queries STILL fail with the
+  IDENTICAL "Reading past end". Fix is compiled in (binary newer than source,
+  3x invalidateAndReposition present, 0x "position_ -= produced").
+
+ROOT CAUSE of the real crash (definitive, via instrumentation dbg3_q17.log):
+  Next() returns via the `got == 0` branch at position_=1048576 (exactly 1 MiB =
+  kDefaultOutputBufferSize) with region length 6318358. Zero SkipInt64 calls,
+  zero seekToPosition calls, zero Next-returns-at-region-end on the crash path.
+  => The crash is a sequential-read refill bug at the 1 MiB output-buffer
+  boundary, NOT a SkipInt64 cross-segment rollback bug. The amendment's premise
+  is incorrect for this crash; the declared scope (rewrite SkipInt64) cannot fix
+  it. direct q2 succeeds (12,381,970 rows, empty error), so data/query are fine;
+  only the filecache read path is broken.
+
+benchmark result: 6/6 queries still crash with the fix -> E2E acceptance NOT met.
+git diff --check: clean (velox/ch/ only; TpchQueryBuilder.cpp 018b preserved).
+```
+
+## Worker review
+
+```text
+review subagent: pr-review-toolkit:code-reviewer (read-only, over the velox/ch/ diff)
+findings: No correctness / lifetime / concurrency / false-green issues.
+  - target = position_ + toSkip correct given the DWIO contract.
+  - invalidateAndReposition confirmed byte-for-byte behavior-preserving vs the
+    original inlined seekToPosition slow path.
+  - No residual advance-via-Next-then-rollback.
+  - VELOX_CHECK_LE(target, region_.length) is the right bound (matches seek).
+  - The 3 new tests genuinely hit the slow path and assert real bytes at the
+    correct absolute offset; low false-green risk.
+  - Minor non-blocking: a stray brace tidy in completeCurrentSegmentAndAdvance.
+resolutions: Reverted the stray brace so completeCurrentSegmentAndAdvance is
+  untouched; rebuilt+reran e2e (20 pass) and the clean release binary.
+unresolved findings: None from the review of the SkipInt64 diff itself.
+```
+
+## Blockers
+
+```text
+BLOCKER: The amendment's fix does not resolve the real TPCH crash. Instrumented
+evidence (cmake-build-release-gcc13/task014_logs/dbg3_q17.log) proves the crash
+path never calls SkipInt64/seekToPosition; Next() returns got==0 at position_
+== 1 MiB (kDefaultOutputBufferSize) with ~5 MiB of the region unread. This is a
+sequential-read / output-buffer-refill defect, distinct from the SkipInt64
+cross-segment rollback the amendment targets. Resolving it requires a scope
+change / new contract review (likely in Next / readFromCurrentSegment /
+updateCurrentReaderIfNeeded around the 1 MiB buffer boundary), which is outside
+this amendment's declared file+behavior scope.
+
+Decision needed from the controller/user: re-scope the amendment (or open a new
+task) to fix the Next() got==0-at-1MiB refill bug. The SkipInt64 rewrite in this
+attempt is correct and review-clean and can be kept as a faithful CH-alignment
+change, but it must not be presented as fixing the 6 TPCH queries — it does not.
+```
+
+## Worker declaration
+
+```text
+Only Task 014 post-acceptance amendment 1 was attempted.
+Changes are unstaged and uncommitted (velox/ch/ only; 018b TpchQueryBuilder.cpp
+preserved and untouched).
+The worker stopped after writing this receipt.
+```
+
+## Controller review — amendment 1（SkipInt64 跨段修复；refill bug 拆出）
+
+```text
+controller_status: accepted (SkipInt64 部分)
+environment_profile: home-chang
+task: 014 (amendment 1)
+note: worker 诚实证伪了原根因假设——SkipInt64 修复正确但非本次 TPCH 崩溃解药；
+      真凶是 Next() 在 1 MiB output-buffer 边界的 refill bug，已拆为独立 task。
+```
+
+## Review evidence
+
+```text
+scope review: SkipInt64 改动限于 FileCacheInputStream.{h,cpp} + tests/FileCacheE2ETest.cpp
+  (3 文件)。TpchQueryBuilder.cpp 的 018b 两处补丁是既有未提交改动，本次不提交（单独走 018b）。
+implementation review: SkipInt64 重写对齐 CH seek/原生：快路径目标在当前 buffer 内→只挪
+  offsetInOutputBuffer_/position_（保 BackUp 语义）；慢路径 target=position_+toSkip →
+  invalidateAndReposition（无 Next()、无回拨），下次 Next 从 position_ 重找段。抽出共享
+  helper invalidateAndReposition(:988)，seekToPosition 亦复用。消除了原"Next()+position_-=produced"
+  不可逆副作用。CH 权威 CachedOnDiskReadBufferFromFile::seek(:2000)。
+log and test review: Controller 独立复现 RED——慢路径去掉 invalidate（改 position_=target 不重找段），
+  重建，3 个新测试 FAILED（SkipFromMidSegmentAcrossBoundary:419 / SkipMidSegmentAcrossTwoSegments:454
+  / ConsecutiveSkipsAcrossBoundaries:488），而旧 SkipAcrossSegmentBoundary 仍绿——坐实旧测试是
+  假绿（先读完整段再 skip，测不到）。还原；grep 无残留 probe；e2e 20/20、buffered_input 19、
+  core_scc 47 全绿。3 新测试均验真实读出字节（content.substr(target,4096)），非仅 ByteCount。
+unresolved: TPCH 端到端未通过——但因 refill bug（Next got==0 @1MiB），非 SkipInt64；
+  拆为 Task #30 后续（reopen 014 amendment 2）。
+```
+
+## Commits (amendment 1 — SkipInt64)
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `01c007abe` |
+| `/home/chang/SourceCode/ClickHouse` | (this acceptance commit) |
