@@ -208,6 +208,28 @@ These are retained for audit but are not current approval requests:
 | `EvictionInfo` changed public inheritance to composition | CH public inheritance preserved; only base container swapped |
 | `OpenedFileCache` deleter captured raw bucket state | Weak bucket-state deleter |
 
+## D8 — Task-012 B4 mutation corrected to the implemented state machine
+
+**Background:** The authored B4 mutation expected reversed
+`completePartAndResetDownloader`/`resetRemoteFileReader` ordering to publish
+`DOWNLOADED` while retaining an extractable reader.
+
+**Problem:** `setDownloadedUnlocked` destroys `download_data` before publishing
+`DOWNLOADED`, while the partial-completion path retains the reader but remains
+state-gated from extraction. The authored non-null terminal extraction cannot
+occur in the accepted implementation.
+
+**Controller decision:** Use a partial download and prove the reversed order
+retains two owners through `reader_a.use_count() == 2`; preserve the three
+barrier windows and cleanly release every peer on exceptions.
+
+**Why:** This tests the real ownership violation without weakening state gates
+or mutating production behavior.
+
+**Current implementation:** Task 012 corrective, Velox `ad1a13c37`.
+
+**User post-review:** pending.
+
 ## User review record
 
 The user may append one decision per item:
@@ -220,6 +242,7 @@ D4: approve / modify / reject
 D5: approve / modify / reject
 D6: approve / modify / reject
 D7: approve / modify / reject
+D8: approve / modify / reject
 ```
 
 Until the user appends that record, this document remains

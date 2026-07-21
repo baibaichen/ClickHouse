@@ -229,7 +229,9 @@ Current task:
        explicit-approval gate;
     6. Task 015 is implemented and accepted at
        `aadc10db7bffbbc49ee9d7dcee1e01e78bbadfff`;
-    7. review Tasks 016-019 only; do not implement Task 016.
+    7. Tasks 016-019 contract review is recorded in
+       `port/task/fullreview/root-oss/3/016-019-task-review.md`; all four require
+       revision and no implementation is authorized.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -252,8 +254,10 @@ Resume procedure:
 
 Continuous execution target:
 
-- Current stop condition: complete the requested Tasks 016-019 contract review.
-- Tasks 003-015 are accepted; no Task 016 implementation is authorized.
+- Current stop condition: user review of the Tasks 016-019 amendments and the
+  autonomous-decision ledgers.
+- Tasks 003-015 are accepted; Tasks 016-019 are not allowed as currently
+  written.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
