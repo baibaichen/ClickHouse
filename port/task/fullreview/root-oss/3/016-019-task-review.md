@@ -21,16 +21,18 @@ worktree.
 | Task | Verdict | Blocking reason |
 |---|---|---|
 | 016 — write buffer to segment | **DEFERRED** | The corrected contract is ready, but Velox has no temporary-data spill consumer and the user marked it non-mainline. |
-| 017 — observability/cancellation | **PLANNED; REVISE FIRST** | The user marked it mainline work, but the current shim/cancellation contract remains unsafe and must be redesigned before implementation. |
-| 018 — Gluten integration | **PLANNED; REVISE FIRST** | The user marked Gluten integration and the complete Velox correctness/micro/wrapper/TPCH benchmark suite as mainline work; Task 017/018 require a joint statistics design first. |
+| 017A — statistics/cancellation/scheduler | **PLANNED; DESIGN APPROVED** | Supplies the global/query statistics and cancellation APIs required by Task 018. |
+| 017B — logging/exception stacks | **PLANNED INDEPENDENT** | Split from 017A so logging/stack behavior has independent scope, tests, and review; it does not block Task 018. |
+| 018 — Gluten integration | **PLANNED; DESIGN APPROVED** | Gluten integration and the complete Velox correctness/micro/wrapper/TPCH benchmark suite consume accepted Task-017A APIs. |
 | 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
 
-Task 016 is deferred. Tasks 017 and 018 are selected for one joint design wave.
-No later implementation is authorized.
+Task 016 is deferred. Tasks 017A and 018 form one design wave; Task 017B is
+independent. No implementation is authorized.
 
-The Task-017/018 design wave must also place a real kernel `O_DIRECT`
+The Task-017A/018 design records real kernel `O_DIRECT`
 integration test before performance claims or Gluten rollout. The existing
-strict direct-IO mocks are logic coverage only.
+strict direct-IO mocks are logic coverage only. The user subsequently deferred
+this non-mainline gate, so it does not block Tasks 017A/018.
 
 ## Task 016 follow-up resolution
 
@@ -55,15 +57,15 @@ corrected contract:
 The contract is preserved for a future real consumer, but
 `task_016_allowed: false` and `disposition: deferred` are binding.
 
-## Task 017 findings
+## Task 017A/017B findings
 
 ### User disposition
 
 ```text
-decision: do Task 017
-next_action: redesign the contract later
+decision: do Task 017A and Task 017B
+next_action: rewrite the split task contracts from the approved joint design
 implementation_authorized: false
-co_design_with: Task 018 TPCH statistics
+co_design_with: Task 017A and Task 018 statistics/benchmarks
 ```
 
 ### Critical
@@ -97,13 +99,29 @@ co_design_with: Task 018 TPCH statistics
   `ConnectorQueryCtx *`, in the buffered input. This avoids a lifetime hazard
   and a heavyweight public-header dependency.
 - Review-2 explicitly deferred F-CALLERID and scheduler recursive-mutex
-  resolution to Task 017, but the task omits both. Add the work and evidence or
+  resolution to Task 017A, but the old task omitted both. Add the work and evidence or
   record a new user decision moving it elsewhere.
 - Add the full accumulated `ctest -R '^velox_ch_'` gate; changing compiled
   metric/event storage affects every linked target.
-- Task 016 is not a code prerequisite for Task 017. If sequencing is desired,
+- Task 016 is not a code prerequisite for Task 017A/017B. If sequencing is desired,
   state it as policy rather than a nonexistent dependency.
 - Preserve logger attribution in warning/error macros.
+
+### Split resolution
+
+The approved design is:
+
+```text
+Task 017A:
+  CurrentMetrics/ProfileEvents, global snapshot, IoStatistics/IoStats wiring,
+  cancellation, caller identity, scheduler two-lock parity.
+
+Task 017B:
+  logger laziness/attribution, current exception formatting, optional Velox
+  exception stacks, logger/name overloads.
+
+Task 018 depends only on Task 017A.
+```
 
 ## Task 018 findings
 
@@ -113,7 +131,7 @@ co_design_with: Task 018 TPCH statistics
 decision: do Task 018
 scope_addition: adapt CacheVerify, core/buffered-input/wrapper microbenchmarks,
   and TPCH from baibaichen/ch-filecache
-co_design_with: Task 017 observability/statistics
+co_design_with: Task 017A statistics/cancellation
 implementation_authorized: false
 ```
 
@@ -165,9 +183,9 @@ Velox read path.
 
 ## Cross-task boundaries
 
-- **016 vs 017:** Task 016 owns the Ephemeral writer; Task 017 owns real
-  observability and read-path cancellation. Writer cancellation requires a
-  separate explicit decision.
+- **016 vs 017:** Task 016 owns the Ephemeral writer; Task 017A owns statistics
+  and read-path cancellation; Task 017B owns logging/exception stacks. Writer
+  cancellation requires a separate explicit decision.
 - **018 vs 019:** Task 018 owns config, manager lifecycle wiring, and builder
   type selection. Task 019 owns real host-path miss/fill/hit and teardown E2E.
 - **Velox vs Gluten:** Tasks 018-019 consume the accepted Task-015 public API.
@@ -178,12 +196,11 @@ Velox read path.
 
 1. Leave Task 016 deferred until a real Velox spill consumer and shared-disk
    pressure requirement exist.
-2. Jointly redesign Tasks 017/018: additive metric storage, a benchmark-facing
-   snapshot/delta contract, cancellation ownership, and the deferred
-   F-CALLERID/recursive-mutex obligations.
+2. Rewrite Task 017A from the approved joint design; rewrite independent Task
+   017B for logging/exception stacks.
 3. Replace Task 018's configure/fixture/builder-test instructions with runnable
    `root-oss` commands, real builder assertions, and the adapted Velox
-   correctness/micro/wrapper/TPCH suite using the Task-017 statistics API.
+   correctness/micro/wrapper/TPCH suite using the Task-017A statistics API.
 4. Make Task 019's fixture and lifecycle evidence deterministic, then keep it
    blocked until Task 018 is accepted.
 

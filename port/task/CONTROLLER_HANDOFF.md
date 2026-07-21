@@ -74,7 +74,7 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after Task 010 acceptance:
+Current verified snapshot after Task 015 acceptance:
 
 environment_profile: root-oss
 
@@ -151,7 +151,7 @@ environment_profile: root-oss
    Velox-style filesystem exceptions without structured errno;
    a non-null name-only logger;
    ordinary-Release `chassert` non-evaluation of both expression and message;
-   and deferring non-empty current-exception formatting to Task 017.
+   and deferring non-empty current-exception formatting to Task 017B.
 
 Current task:
 
@@ -170,7 +170,7 @@ Current task:
     `port/task/fullreview/root-oss/1/evidence/003-010-full-review-result.md`.
 - Task 003 added the approved no-op `ProfileEvents` and `CurrentMetrics` name
   surfaces with compile-coverage and false-green evidence.
-- Task 006 remains accepted. F-CALLERID and SD8 are deferred to Task 017.
+- Task 006 remains accepted. F-CALLERID and SD8 are deferred to Task 017A.
 - Task 009 remains accepted. SD1 is an explicitly approved `F14FastMap`
   deviation; SD2 is confirmed as the Task-011 flat-container mapping.
 - SD6, SD7, and SD9 are approved platform mappings recorded by the decisions.
@@ -238,13 +238,14 @@ Current task:
        `port/task/fullreview/root-oss/3/016-019-task-review.md`;
     8. Task 016 was rewritten and re-reviewed, then explicitly deferred by the
        user as unnecessary/non-mainline;
-    9. Task 017 was selected by the user as mainline work, but design is deferred
-       to a later discussion and implementation remains unauthorized;
+    9. Task 017 was split: Task 017A owns statistics/cancellation/scheduler/
+       caller-id; independent Task 017B owns logging and exception stacks;
     10. Task 018 was selected as mainline work and now owns adaptation of
         `CacheVerify`, core/buffered-input/wrapper microbenchmarks, and TPCH from
         `baibaichen/ch-filecache`;
-    11. Tasks 017/018 must be jointly designed because benchmark output consumes
-        Task-017 statistics; Task 019 remains blocked and requires revision.
+    11. Tasks 017A/018 are jointly designed because benchmark output consumes
+        Task-017A statistics; Task 017B does not block Task 018; Task 019 remains
+        blocked and requires revision.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -269,9 +270,9 @@ Continuous execution target:
 
 - Current stop condition: user review of the Tasks 016-019 amendments and the
   autonomous-decision ledgers.
-- Tasks 003-015 are accepted. Task 016 is deferred. Tasks 017/018 are planned as
-  one design wave but are not authorized. Task 019 is blocked and not allowed
-  as currently written.
+- Tasks 003-015 are accepted. Task 016 is deferred. Tasks 017A/018 form one
+  design wave; Task 017B is independent. None is authorized. Task 019 is
+  blocked and not allowed as currently written.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

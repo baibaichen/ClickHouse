@@ -1,10 +1,10 @@
-# FileCache Tasks 017-018 Joint Design
+# FileCache Tasks 017A/017B-018 Joint Design
 
 ## Status
 
 ```text
 environment_profile: root-oss
-design_scope: Tasks 017 and 018
+design_scope: Tasks 017A, 017B, and 018
 task_016: deferred
 task_019: design deferred until Task 018 is accepted
 implementation_authorized: false
@@ -17,7 +17,7 @@ rewritten from this design before implementation.
 
 ## 1. Goals
 
-Task 017 makes the accepted Velox FileCache implementation production-visible
+Task 017A makes the accepted Velox FileCache implementation production-visible
 and cancellation-aware:
 
 ```text
@@ -25,11 +25,19 @@ real CH-compatible global metrics/events;
 real per-query Velox IO statistics;
 query cancellation propagated into FileCache waits and safe read boundaries;
 CH-compatible background caller identity;
-CH-compatible non-recursive scheduler locking;
-real logging behind the existing compatibility API.
+CH-compatible non-recursive scheduler locking.
 ```
 
-Task 018 consumes those APIs:
+Task 017B independently replaces the logging compatibility shell:
+
+```text
+lazy, attributed FileCache logging;
+current-exception formatting;
+optional Velox exception stack output;
+both logger and function-name exception logging overloads.
+```
+
+Task 018 consumes Task-017A APIs:
 
 ```text
 Gluten configuration and FileCacheManager ownership;
@@ -56,7 +64,7 @@ CachedReadBufferCacheWriteBytes
 ```
 
 Task 014 deliberately deferred raw-byte integration, but the debt was not made
-an explicit gate. Task 017 closes the Velox half; Task 018 proves propagation
+an explicit gate. Task 017A closes the Velox half; Task 018 proves propagation
 through Gluten.
 
 ### 2.2 Task-014 cancellation wiring
@@ -68,7 +76,7 @@ Task 012 already implemented cancellation-aware
 fileSegment.wait(offset, folly::CancellationToken{});
 ```
 
-Task 017 adds value-semantic token propagation and tests. Task 018 extracts the
+Task 017A adds value-semantic token propagation and tests. Task 018 extracts the
 real token from `ConnectorQueryCtx`.
 
 ### 2.3 Task-006 scheduler structure
@@ -78,7 +86,7 @@ continuation while holding the task lock. An already-ready future may run that
 continuation inline and reacquire the same lock.
 
 This is implementation-induced reentrancy, not a required Velox semantic.
-Task 017 restores the ClickHouse two-lock model and moves future attachment out
+Task 017A restores the ClickHouse two-lock model and moves future attachment out
 of the scheduling lock.
 
 ## 3. Statistics architecture
@@ -136,7 +144,7 @@ ProfileEvents:
 Use `std::memory_order_relaxed`, matching ClickHouse. Statistics never publish
 or synchronize production state.
 
-The existing 50-event Velox list is not the final reader contract. Task 017
+The existing 50-event Velox list is not the final reader contract. Task 017A
 must preserve it and add every event used by the current CH
 `CachedOnDiskReadBufferFromFile` consumer, including:
 
@@ -161,7 +169,7 @@ cumulative fields support subtraction;
 periodic/reporting consumers retain the previous snapshot and emit deltas.
 ```
 
-Task 017 provides a stable public FileCache stats type containing:
+Task 017A provides a stable public FileCache stats type containing:
 
 ```text
 snapshot gauges:
@@ -217,7 +225,7 @@ deltas, and exposes `/v1/info/metrics`.
 Use the same boundary, not the Presto server implementation:
 
 ```text
-Task 017:
+Task 017A:
   component-owned snapshot/delta provider compatible with StatsReporter.
 
 Task 018:
@@ -269,9 +277,9 @@ inside predownload after reservation.
 The existing wait loop checks once per second. No new cancellation callback or
 condition-variable registration mechanism is needed.
 
-## 5. Logging, caller identity, and scheduler
+## 5. Task 017B: logging and exception stacks
 
-### 5.1 Logging
+Task 017B is independent of Task 017A and does not block Task 018.
 
 Preserve the current logger type and both exception-logging call shapes:
 
@@ -283,7 +291,33 @@ tryLogCurrentException(const char * name, ...)
 `LOG_TEST` remains non-evaluating. Trace/debug/info formatting is lazy.
 Warning/error messages retain logger-name attribution.
 
-### 5.2 Caller identity
+`getCurrentExceptionMessage(with_stacktrace)` must:
+
+```text
+format the currently handled Velox/std exception without changing it;
+include the Velox exception stack only when requested and available;
+return a useful fallback for unknown exceptions;
+never throw while formatting/logging an existing exception.
+```
+
+`tryLogCurrentException` is `noexcept`, preserves the original exception, and
+logs through either the supplied `LoggerPtr` or function/log name.
+
+Task 017B owns only:
+
+```text
+logger_useful implementation;
+exception formatting and stack behavior;
+logger macro laziness and attribution;
+focused tests and mutation evidence.
+```
+
+It does not own metrics, cancellation, scheduler, caller identity, Gluten, or
+benchmark changes.
+
+## 6. Task 017A: caller identity and scheduler
+
+### 6.1 Caller identity
 
 Restore CH format:
 
@@ -295,7 +329,7 @@ no query context:  None:<thread-name>:<os-thread-id>
 Thread name improves background downloader diagnostics without changing the
 ownership comparison model.
 
-### 5.3 Scheduler lock model
+### 6.2 Scheduler lock model
 
 Replace the single recursive mutex with the CH two-lock structure:
 
@@ -320,9 +354,9 @@ thread holds `schedule_mutex`.
 Retain `weak_ptr + generation` as a Velox asynchronous-lifetime adaptation.
 ClickHouse's central queue owns a strong task reference; Folly futures do not.
 
-## 6. Gluten ownership and configuration
+## 7. Gluten ownership and configuration
 
-### 6.1 Configuration
+### 7.1 Configuration
 
 Use AsyncDataCache-style naming:
 
@@ -346,7 +380,7 @@ directory fail closed through initialization/status ownership.
 copy AsyncDataCache's startup check requiring all configured capacity to be
 currently free.
 
-### 6.2 Mutual exclusion
+### 7.2 Mutual exclusion
 
 If both existing `cacheEnabled` and new `fileCacheEnabled` are true, fail
 backend initialization with a clear configuration exception.
@@ -359,7 +393,7 @@ stack two cache layers;
 fall back to direct input after an initialization failure.
 ```
 
-### 6.3 Ownership and initialization
+### 7.3 Ownership and initialization
 
 `VeloxBackend` owns:
 
@@ -372,7 +406,7 @@ Initialize after the Velox memory manager and local filesystem are ready.
 Create and initialize all FileCache instances before publishing the process
 singleton. An exception leaves no global pointer and propagates to startup.
 
-### 6.4 Teardown
+### 7.4 Teardown
 
 Follow the accepted Manager contract:
 
@@ -385,7 +419,7 @@ fileCacheMemoryPool_.reset();
 
 This runs before Gluten executor and global memory-manager destruction.
 
-## 7. Builder selection
+## 8. Builder selection
 
 At the builder boundary:
 
@@ -409,9 +443,9 @@ from a temporary.
 Tests must call the real builder and assert the dynamic result type. Checking
 only that the singleton exists is false-green.
 
-## 8. Benchmark architecture
+## 9. Benchmark architecture
 
-### 8.1 Placement
+### 9.1 Placement
 
 All correctness and performance binaries live in Velox:
 
@@ -428,7 +462,7 @@ native integration tests.
 
 Task 019 later owns real Spark-to-Gluten end-to-end correctness/performance.
 
-### 8.2 Reuse policy
+### 9.2 Reuse policy
 
 Use `baibaichen/ch-filecache` and
 `/root/chang/OneDrive/share_data/local-cache/benchmark` as references.
@@ -447,7 +481,7 @@ filecache
 input modes and shared lifecycle/reset logic. Do not create a duplicate TPCH
 harness.
 
-### 8.3 Correctness gate
+### 9.3 Correctness gate
 
 Before performance:
 
@@ -460,7 +494,7 @@ do not publish performance output after a correctness failure.
 
 TPCH validates result rows and result checksum against direct input.
 
-### 8.4 Performance waves
+### 9.4 Performance waves
 
 Use a dedicated RelWithDebInfo benchmark build.
 
@@ -490,7 +524,7 @@ three rounds: one cold, two hot;
 all engines use the same queries/data/output schema.
 ```
 
-### 8.5 Cache-directory cleanup
+### 9.5 Cache-directory cleanup
 
 Orchestration scripts own run-specific cache directories.
 
@@ -506,7 +540,7 @@ clean validated leftovers on the next startup.
 
 Benchmark binaries never recursively delete an arbitrary user path.
 
-### 8.6 Acceptance
+### 9.6 Acceptance
 
 Stage one:
 
@@ -519,9 +553,9 @@ no arbitrary percentage regression threshold.
 Stage two begins only after repeated stable history and adds explicit
 performance thresholds.
 
-## 9. Testing and mutation gates
+## 10. Testing and mutation gates
 
-### 9.1 Task 017
+### 10.1 Task 017A
 
 Focused tests cover:
 
@@ -537,14 +571,31 @@ cancellation before lookup and during FileSegment wait;
 no cancellation while downloader lease/reserve-write is active;
 caller-id formats;
 plain two-lock scheduler behavior and ready-future inline completion;
-logger laziness, attribution, and both exception overloads.
 ```
 
 Every material behavior receives a buildable mutation RED. Both mono and
 non-mono builds must freshly rebuild every registered `velox_ch_*` target before
 accumulated CTest.
 
-### 9.2 Task 018
+### 10.2 Task 017B
+
+Focused tests cover:
+
+```text
+LOG_TEST argument non-evaluation;
+lazy trace/debug/info argument evaluation;
+warning/error logger attribution;
+VeloxException message with and without stack;
+std::exception formatting;
+unknown-exception fallback;
+LoggerPtr and function-name tryLogCurrentException overloads;
+formatting/logging failure never replaces the original exception.
+```
+
+Every behavior receives a buildable mutation RED. Task 017B must pass in mono
+and non-mono builds and preserve all Task-017A tests.
+
+### 10.3 Task 018
 
 Gluten native tests cover:
 
@@ -565,7 +616,7 @@ first-time root-oss configure uses the vcpkg toolchain and current Velox mono
 Benchmark correctness tests and smoke runs are separate from the Gluten native
 lifecycle tests.
 
-## 10. Error handling
+## 11. Error handling
 
 ```text
 configuration errors: fail startup;
@@ -580,19 +631,21 @@ cleanup validation failure: refuse deletion.
 
 No broad catch or success-shaped fallback is introduced.
 
-## 11. Implementation order
+## 12. Implementation order
 
-1. Rewrite Task 017 from this design.
-2. Implement and independently accept Task 017.
-3. Rewrite Task 018 against the accepted Task-017 API.
-4. Implement Velox benchmark adaptations and Gluten integration under Task 018.
-5. Independently accept Task 018.
-6. Only then design Task 019.
+1. Rewrite Task 017A and Task 017B from this design.
+2. Implement and independently accept Task 017A.
+3. Task 017B may be implemented/reviewed independently in parallel; it does not
+   gate Task 018.
+4. Rewrite Task 018 against the accepted Task-017A API.
+5. Implement Velox benchmark adaptations and Gluten integration under Task 018.
+6. Independently accept Task 018.
+7. Only then design Task 019.
 
 Real kernel `O_DIRECT` integration remains a recorded forward obligation but is
 deferred and does not block Tasks 017-018.
 
-## 12. Explicit exclusions
+## 13. Explicit exclusions
 
 ```text
 Task 016 Ephemeral writer;

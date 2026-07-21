@@ -1,6 +1,6 @@
 # Task 018: Gluten Host Integration — `FileCacheManager` Ownership and Builder Selection
 
-> **Planned mainline integration task; joint Task-017/018 design pending.**
+> **Planned mainline integration task; joint Task-017A/018 design pending.**
 >
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
 > modifies the Gluten checkout under `<gluten_repo>` and
@@ -14,7 +14,7 @@ environment_profile: root-oss
 disposition: planned
 task_018_allowed: false
 reason: user wants Gluten integration and the complete Velox benchmark suite, but the reviewed contract must be redesigned first
-co_design_with: Task 017 observability/statistics
+co_design_with: Task 017A statistics/cancellation
 benchmark_reference: baibaichen/ch-filecache
 ```
 
@@ -47,10 +47,10 @@ correctness verification
   -> TPCH macrobenchmark
 ```
 
-Task 017 and Task 018 form one design wave:
+Task 017A and Task 018 form one design wave:
 
 ```text
-Task 017 defines real counters and a stable snapshot/delta API.
+Task 017A defines real counters and a stable snapshot/delta API.
 Task 018 consumes that API across microbenchmark/wrapper/TPCH output and wires
 FileCache into Gluten.
 ```
@@ -62,7 +62,7 @@ the real `FileCacheBufferedInput` path must populate the existing
 
 Task 018 also owns the host half of the Task-014 cancellation wiring debt:
 extract the copied `folly::CancellationToken` from `ConnectorQueryCtx` at the
-builder boundary and pass it into the Task-017 FileCache API. The FileCache
+builder boundary and pass it into the Task-017A FileCache API. The FileCache
 library must not retain the query-context pointer.
 
 The joint design must decide the exact hit/miss/downloaded-byte/eviction/current

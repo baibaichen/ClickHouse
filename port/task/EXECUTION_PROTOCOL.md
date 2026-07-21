@@ -15,18 +15,20 @@ Next dispatch order:   Tasks 016-019 contract review completed. Run a task
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
-Tasks 017 and 018 are planned mainline work and must be redesigned together:
-Task 017 owns statistics/observability and Task 018 owns Gluten integration plus
+Tasks 017A and 018 are planned mainline work and must be redesigned together:
+Task 017A owns statistics/cancellation/scheduler/caller-id and Task 018 owns Gluten integration plus
 the adapted Velox correctness, core/buffered-input/wrapper microbenchmark, and
 TPCH suite. Implementation is not authorized. Task 019 is not allowed as
 currently written.
+Task 017B independently owns logging and exception stacks and does not block
+Task 018.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,
   and explicit stop conditions.
 Deferred Velox work:  Task 016
-Planned Velox work:   Task 017, redesign before implementation
-Planned Gluten work:  Task 018, joint design with Task 017
+Planned Velox work:   Task 017A; independent Task 017B
+Planned Gluten work:  Task 018, joint design with Task 017A
 Deferred Gluten:      Task 019, blocked on Task 018
 ```
 
