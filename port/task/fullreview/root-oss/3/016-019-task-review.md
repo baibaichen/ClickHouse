@@ -22,11 +22,11 @@ worktree.
 |---|---|---|
 | 016 — write buffer to segment | **DEFERRED** | The corrected contract is ready, but Velox has no temporary-data spill consumer and the user marked it non-mainline. |
 | 017 — observability/cancellation | **PLANNED; REVISE FIRST** | The user marked it mainline work, but the current shim/cancellation contract remains unsafe and must be redesigned before implementation. |
-| 018 — Gluten integration | **REVISE** | The prescribed fixture/configure path cannot run on `root-oss`, and the builder-selection test is false-green. |
+| 018 — Gluten integration | **PLANNED; REVISE FIRST** | The user marked Gluten integration and the Velox TPCH benchmark as mainline work; Task 017/018 require a joint statistics design first. |
 | 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
 
-Task 016 is deferred. Task 017 is selected for later design. No later
-implementation is authorized.
+Task 016 is deferred. Tasks 017 and 018 are selected for one joint design wave.
+No later implementation is authorized.
 
 ## Task 016 follow-up resolution
 
@@ -59,6 +59,7 @@ The contract is preserved for a future real consumer, but
 decision: do Task 017
 next_action: redesign the contract later
 implementation_authorized: false
+co_design_with: Task 018 TPCH statistics
 ```
 
 ### Critical
@@ -94,6 +95,15 @@ implementation_authorized: false
 - Preserve logger attribution in warning/error macros.
 
 ## Task 018 findings
+
+### User disposition
+
+```text
+decision: do Task 018
+scope_addition: adapt the Velox TPCH benchmark from baibaichen/ch-filecache
+co_design_with: Task 017 observability/statistics
+implementation_authorized: false
+```
 
 ### Critical
 
@@ -156,11 +166,12 @@ Velox read path.
 
 1. Leave Task 016 deferred until a real Velox spill consumer and shared-disk
    pressure requirement exist.
-2. Rewrite Task 017's shim replacements as additive storage implementations,
-   choose the cancellation-token ownership model, and resolve its deferred
+2. Jointly redesign Tasks 017/018: additive metric storage, a benchmark-facing
+   snapshot/delta contract, cancellation ownership, and the deferred
    F-CALLERID/recursive-mutex obligations.
 3. Replace Task 018's configure/fixture/builder-test instructions with runnable
-   `root-oss` commands and real builder assertions.
+   `root-oss` commands, real builder assertions, and an adapted Velox TPCH
+   benchmark using the Task-017 statistics API.
 4. Make Task 019's fixture and lifecycle evidence deterministic, then keep it
    blocked until Task 018 is accepted.
 

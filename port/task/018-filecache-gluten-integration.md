@@ -1,11 +1,42 @@
 # Task 018: Gluten Host Integration — `FileCacheManager` Ownership and Builder Selection
 
-> **Deferred Gluten task.** Do not dispatch in the current Velox-only phase.
+> **Planned mainline integration task; joint Task-017/018 design pending.**
 >
 > **For agentic workers:** read `port/task/ENVIRONMENT.md` first. This task
 > modifies the Gluten checkout under `<gluten_repo>` and
 > writes one result file under this ClickHouse checkout. Do not modify
 > ClickHouse source files. Do not commit or stage either repository.
+
+## Status and user disposition
+
+```text
+environment_profile: root-oss
+disposition: planned
+task_018_allowed: false
+reason: user wants Gluten integration and the Velox TPCH benchmark, but the reviewed contract must be redesigned first
+co_design_with: Task 017 observability/statistics
+benchmark_reference: baibaichen/ch-filecache
+```
+
+The user explicitly selected Task 018 as mainline work. This records priority
+and scope only; it does not approve the current contract or authorize
+implementation.
+
+The redesigned task must also adapt the Velox-side TPCH benchmark from
+`baibaichen/ch-filecache`. Copy behavior and harness structure, not files
+verbatim: the current FileCache lives under `velox/ch`, uses
+`FileCacheManager`, and has different `FileCacheBufferedInput` and statistics
+APIs.
+
+Task 017 and Task 018 form one design wave:
+
+```text
+Task 017 defines real counters and a stable snapshot/delta API.
+Task 018 consumes that API in TPCH output and wires FileCache into Gluten.
+```
+
+The joint design must decide the exact hit/miss/downloaded-byte/eviction/current
+size fields before either task is implemented.
 
 ## Goal
 
