@@ -1263,3 +1263,98 @@ velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp —— 加真正的跨段 skip RED 
 追加 `## Worker attempt` 到
 `port/task/result/014-filecache-buffered-input-result.md`（不 erase 原结果），
 EXECUTION_PROTOCOL worker-receipt 格式。
+
+---
+
+## Post-acceptance amendment 2 — 修 CACHED reader readUntil 冻结（output-buffer refill bug）（reopened 2026-07-21）
+
+```text
+state: reopened_by_contract_audit
+owner_task: 014
+environment_profile: home-chang
+severity: 真 bug（>1MiB 列顺序读在 filecache 路径 abort；SkipInt64 amendment 1 修复后仍崩，本 amendment 才是真凶）
+```
+
+### Why（真根因，Controller 已自验，非仅转述）
+
+`prepareReadFromFileSegmentState` 的 CACHED 分支
+（`velox/ch/Disks/IO/FileCacheInputStream.cpp:457-468`）把缓存 reader 的读上界设为
+**瞬时下载量**：
+```cpp
+const uint64_t downloadedSize = fileSegment.getDownloadedSize();  // :464
+state->reader->setReadUntilPosition(downloadedSize);              // :465  ← 缺陷
+```
+`getDownloadedSize()` 是**会随下载推进变化的瞬时值**。当段处于 DOWNLOADING（边下边读），
+prepare 那一刻它可能只有第一个 flush 的 chunk（`kDefaultOutputBufferSize` = 1 MiB），于是
+`readUntil_` 被**冻结在 1 MiB**。顺序读满 1 MiB 后第二次 `Next()`：
+`ReadBufferFromVeloxReadFile::nextImpl`（`velox/ch/IO/ReadBufferFromVeloxReadFile.cpp:178-181`）
+`startOffset(1MiB) >= readUntil_(1MiB)` → `return false` → `readFromCurrentSegment`
+（`FileCacheInputStream.cpp:723`）得 `size=0` → `Next` 走 `got==0` 分支（`:874-875`）在
+`position_ == 1048576` 提前 EOF，region 还剩 ~5 MiB → DWIO `StreamUtil.h:67 Reading past end`。
+`updateReadStateIfNeeded`（`:668-685`）不重新 bound（DOWNLOADED 走 no-op；DOWNLOADING 仅当
+`offset >= getCurrentWriteOffset()` 才重 prepare，读到 1 MiB 时前面已下载更多 → 不重 prepare），
+故冻结的 1 MiB 上界持续。
+
+**对完全 DOWNLOADED 段** `downloadedSize == range().size()`（`FileSegment.cpp:96`
+`downloaded_size = size_`），两者相等，故 16/22 query 正常；只有触及 DOWNLOADING 边下边读的
+6 query（q2/11/15/17/20/21）崩。
+
+**CH 权威**：`CachedOnDiskReadBufferFromFile.cpp:796` bound 到**段固定右边界**
+`std::min(range.right + 1, file_size_)`，**不是** downloadedSize——`:786` 注释明说"用段右边界
+而非 read_until，因为并发查询下…"。段右边界不随下载进度变，故 CH 无此冻结。
+
+### Scope（本修正）
+
+```text
+velox/ch/Disks/IO/FileCacheInputStream.cpp   —— :465 CACHED readUntil 改为段固定右边界
+velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp （或 buffered_input test）—— >1MiB 顺序读 RED
+```
+不碰其它文件、velox 主干、Gluten。
+
+### 契约（修法，逐字对齐 CH :796）
+
+`:465` 把 `setReadUntilPosition(downloadedSize)` 改为 bound 到**段固定长度**（段相对空间里
+CH `range.right + 1` 的等价）：
+```cpp
+// CH CachedOnDiskReadBufferFromFile.cpp:796 = std::min(range.right + 1, file_size_)（绝对坐标）
+// 我们缓存文件是段相对坐标 [0, segmentSize)，等价 bound = 段长：
+const uint64_t segmentSize = range.right - range.left + 1;
+state->reader->setReadUntilPosition(segmentSize);
+```
+- **务必核实**：对 DOWNLOADING 段，本地缓存文件此刻可能只有 downloadedSize 字节，reader 读到
+  段长可能读过实际文件尾。worker 须对着 CH nextImplStep（`:786-870` 及 DOWNLOADING/predownload
+  分支）确认：CH bound 到 range.right+1 的同时，靠 `getCurrentWriteOffset()` 边界 + reader 的
+  `file_size_`（`min(range.right+1, file_size_)`）双重约束，且 DOWNLOADING 时另有等待/续读逻辑。
+  **若我们的 reader 无对应的 file_size 约束或续读机制，仅改 :465 可能读过文件尾**——那时须
+  完整移植 CH 的 `min(段长, 本地文件实际大小)` 双约束 + DOWNLOADING 续读，不能只改一行。
+  worker 先对齐 CH 判定最小忠实修法，若发现单行不够则扩到完整对齐（记录理由）。
+- 不改 `Next()`/`readFromCurrentSegment`/`SkipInt64`（amendment 1 已改，勿动）。
+
+### RED（必须复现 refill 崩溃）
+
+新测试（或扩 e2e）：
+1. 造一个 **> 1 MiB 的单缓存段**（如段 6 MiB），enqueue region > 1 MiB，`remoteFsBufferSize=0`
+   → chunk = 1 MiB。**关键：让段处于会触发冻结的状态**（DOWNLOADING 边下边读，或按根因构造
+   readUntil 冻结在首 chunk 的场景）。
+2. **顺序读过 1 MiB**（连续 Next 读满整个 region）。
+3. 断言读出的**全部字节 == content**（修前：第二个 chunk got==0 / Reading past end → 红；
+   修后：完整读出 → 绿）。
+- 修前用 amendment-1 后的实现必须红（证明这是 SkipInt64 之外的独立 bug）；修后绿。
+
+### Acceptance
+
+- 新 RED 测试修前红、修后绿（记失败断言+行）。既有 skip 测试（amendment 1 的 3 个 + 旧的）
+  与 e2e 其余仍绿。
+- 回归全绿：e2e、buffered_input 19、manager 20、core_scc 47、observability 14、
+  cancellation 5、connector 4、hit_metrics 5。
+- **端到端验证（决定性）**：用修好的 release 二进制重跑 6 个曾崩 query
+  （q2/11/15/17/20/21）`--input_source=filecache --num_splits_per_file=1`，各 exit 0、
+  **0 error**（证明 filecache 全 22 通过）。数据集
+  `/home/chang/test/tpch-double/tpch-generated-100.0-parquet-decimal_as_double`。
+- velox 主干零改动（git diff 仅 velox/ch/；注意 TpchQueryBuilder.cpp 的 018b 未提交补丁保留不动）。
+  不 push；无 -j；日志入 build 目录。
+
+### Result receipt
+
+追加 `## Worker attempt`（amendment 2）到
+`port/task/result/014-filecache-buffered-input-result.md`（不 erase 前文）。

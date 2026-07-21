@@ -1035,3 +1035,258 @@ unresolved: TPCH 端到端未通过——但因 refill bug（Next got==0 @1MiB�
 |---|---|
 | `/home/chang/OpenSource/velox` | `01c007abe` |
 | `/home/chang/SourceCode/ClickHouse` | (this acceptance commit) |
+
+## Worker attempt (post-acceptance amendment 2 — CACHED reader readUntil freeze / output-buffer refill bug)
+
+```text
+worker_status: ready_for_controller
+environment_profile: home-chang
+task: 014 (post-acceptance amendment 2)
+```
+
+### Summary
+
+Fixed the real cause of the TPCH filecache crash (amendment 1's `SkipInt64`
+rewrite did NOT resolve it). The crash is a read-while-downloading refill freeze
+on the CACHED path: a CACHED reader over a still-DOWNLOADING segment was bounded
+to the segment's downloaded prefix at prepare time, and `updateReadStateIfNeeded`
+only re-prepared when `offset >= getCurrentWriteOffset()`. When a concurrent
+driver's downloader advanced the write offset past the cursor, that condition
+stayed false, so the stale reader froze at the first flushed chunk (1 MiB) and
+`Next` reported a premature end of region -> DWIO `StreamUtil.h:67` aborts
+"Reading past end". Fixing the refill freeze then surfaced a SECOND, distinct
+DOWNLOADING rename TOCTOU race in `getCacheReadBuffer` (intermittent q20
+FILE_NOT_FOUND); both are fixed. All 6 previously-crashing queries now pass
+deterministically.
+
+### Root-cause verification vs CH (per the amendment's "务必核实")
+
+The amendment suggested a one-line change of `:465` from
+`setReadUntilPosition(getDownloadedSize())` to `setReadUntilPosition(segmentSize)`
+and required verifying whether that over-reads. It DOES over-read and is
+insufficient, for two confirmed reasons:
+
+1. Our cache reader `ReadBufferFromVeloxReadFile::nextImpl`
+   (`velox/ch/IO/ReadBufferFromVeloxReadFile.cpp:183`) computes
+   `toRead = min(destCapacity, readUntil_ - startOffset)` — it does NOT clamp to
+   the reader's own `fileSize_`. And `LocalReadFile::preadInternal`
+   (`velox/common/file/LocalFile.cpp:204-222`) THROWS on any short read
+   (`VELOX_CHECK_EQ(bytesRead, length)`) — there is NO implicit EOF clamp. So
+   bounding a DOWNLOADING segment's reader to `segmentSize` while the on-disk
+   cache file holds only `downloadedSize` bytes would `pread` past EOF and throw.
+   CH avoids this because its generic local-file reader naturally short-reads at
+   the cache file's real EOF (a size cap our port lacks).
+2. CH `CachedOnDiskReadBufferFromFile.cpp:796` bounds to
+   `min(range.right + 1, file_size_)` where `file_size_` is the SOURCE object size;
+   the CACHED local reader still short-reads at the cache-file EOF, and CH keeps
+   reading a growing DOWNLOADING cache file because it reuses the SAME fd (pread
+   sees appended bytes). Our reader caches its size at open and cannot see growth,
+   so the faithful equivalent is to RE-PREPARE (reopen / re-read size) when the
+   reader's downloaded prefix is exhausted.
+
+Therefore the minimal faithful fix keeps `:465` bounding to the downloaded prefix
+(the on-disk size; `FileSegment.cpp:484` chassert guarantees
+`file_size(path) == downloaded_size`) and instead fixes the FREEZE in the
+re-prepare trigger. This is the "扩到完整对齐" path the amendment authorizes, with
+reasoning recorded here.
+
+### Scope (this amendment)
+
+```text
+velox/ch/Disks/IO/FileCacheInputStream.cpp   — refill re-prepare + rename-retry
+velox/ch/Disks/IO/FileCacheInputStream.h     — ReadFromFileSegmentState field
+velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp — RED refill test
+```
+
+No other velox/ch file, no velox trunk, no Gluten. The pre-existing 018b
+`velox/exec/tests/utils/TpchQueryBuilder.cpp` patch is preserved untouched.
+`Next` / `readFromCurrentSegment` / `SkipInt64` (amendment 1) are unchanged.
+
+### Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/home/chang/OpenSource/velox` | `filecache2` | `01c007abe4198be1120d0f447048e819704c26fa` | `velox/exec/tests/utils/TpchQueryBuilder.cpp` dirty (pre-existing 018b, preserved) |
+| `/home/chang/SourceCode/ClickHouse` | `ch-filecache2` | `750effdc613197bc94bcf4819cd2e8c85c554f58` | receipt append only |
+
+### Implementation
+
+Fix A — refill freeze (BUG 1):
+- `FileCacheInputStream.h`: added `uint64_t cachedPrefixEndAbsolute = 0` to
+  `ReadFromFileSegmentState` (absolute offset where a CACHED reader's downloaded
+  prefix ends; 0 when the segment was fully DOWNLOADED at prepare).
+- `prepareReadFromFileSegmentState` CACHED branch: after bounding to
+  `getDownloadedSize()` and seeking, record `cachedPrefixEndAbsolute =
+  range.left + downloadedSize` ONLY when `state() != DOWNLOADED`.
+- `updateReadStateIfNeeded`: for a CACHED read, re-prepare when
+  `prefixExhausted` (`cachedPrefixEndAbsolute != 0 && offset >=
+  cachedPrefixEndAbsolute`) OR the original `caughtUpToWrite`
+  (`state() != DOWNLOADED && offset >= getCurrentWriteOffset()`). Re-preparing
+  opens a fresh reader over the grown cache file (or the DOWNLOADING branch waits
+  for more / elects a downloader). Fully DOWNLOADED segments keep
+  `cachedPrefixEndAbsolute == 0` and never re-prepare on this axis (no regression
+  for the 16 already-working queries).
+
+Fix B — DOWNLOADING rename TOCTOU (BUG 2, surfaced by the E2E once BUG 1 fixed):
+- `getCacheReadBuffer`: `getPath()` is sampled lock-free; a concurrent
+  downloader can rename `<offset>` -> `<offset>_<size>` between the sample and
+  `openFileForRead`, making the sampled path vanish (FILE_NOT_FOUND). CH does not
+  hit this because it opens the fd once and the descriptor survives the rename.
+  On any open exception, re-sample `getPath()` (now the renamed name) and retry
+  once; if the name is unchanged, rethrow (a genuine open failure). The rename
+  happens exactly once per segment lifetime, so one retry closes the window.
+
+### RED evidence (BUG 1)
+
+New test `FileCacheE2ETest.CachedReaderRefillsWhenDownloadingSegmentGrows`
+deterministically reproduces the freeze with two interleaved streams over one
+6 MiB segment (no compressed-page stack, no threads/sleeps):
+1. downloader stream D downloads the first 1 MiB (writeOffset = 1 MiB);
+2. reader stream R reads its first 1 MiB CACHED (prepare bound = 1 MiB);
+3. D downloads 3 more MiB (writeOffset = 4 MiB) — the cache file grows;
+4. R must read the rest of the region.
+
+RED verification (fix neutralized: `prefixExhausted = false && ...`, rebuilt):
+```text
+FileCacheE2ETest.cpp:888: Failure
+Expected equality of these values:
+  rest.size()   Which is: 0
+  n - chunk     Which is: 5242880
+CACHED reader froze at its initial 1 MiB prefix (refill bug)
+[  FAILED  ] FileCacheE2ETest.CachedReaderRefillsWhenDownloadingSegmentGrows
+```
+Fix restored (grep "RED-NEUTRALIZE" = 0) -> GREEN. This is a distinct bug from
+`SkipInt64` (the crash path calls no skip/seek; the frozen prefix is the cause).
+
+RED evidence (BUG 2): before Fix B, release TPCH q20 failed intermittently
+(1 of 3 runs) with `FILE_NOT_FOUND: .../<key>/0` in `getCacheReadBuffer` ->
+`LocalReadFile` open (stack through `loadFileMetaData`). After Fix B, q20 passed
+5/5.
+
+### Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| debug build e2e (with fix) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_refill_logs/build_e2e_fix.log` |
+| ctest e2e (with fix) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_refill_logs/test_e2e_fix.log` |
+| debug build e2e (fix neutralized, RED) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_refill_logs/build_e2e_red.log` |
+| ctest refill test (neutralized) -> FAILED | 1 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_refill_logs/test_e2e_red.log` |
+| debug build all 8 gates (both fixes) | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_refill_logs/build_all_gates2.log` |
+| ctest all 8 gates | 0 | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13/task014_refill_logs/test_all_gates2.log` |
+| release build tpch_ab benchmark (final) | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_refill_logs/build_release_benchmark2.log` |
+| release TPCH final q2/11/15/17/20/21 | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_refill_logs/final_run_q*.log`, `final_q*.csv` |
+| release q20 x5 (determinism, all pass) | 0 | `/home/chang/OpenSource/velox/cmake-build-release-gcc13/task014_refill_logs/run_q20b*.log` |
+
+No `-j` on any ninja invocation.
+
+### Acceptance evidence
+
+```text
+Debug regression (all 0 failed / 0 skipped):
+  velox_ch_filecache_e2e_test          : 21 tests (20 prior + 1 new refill test)
+  velox_ch_filecache_buffered_input_test : 19
+  velox_ch_filecache_manager_test      : 20
+  velox_ch_filecache_core_scc_test     : 47
+  velox_ch_observability_test          : 14
+  velox_ch_cancellation_test           : 5
+  velox_ch_filecache_connector_test    : 4
+  velox_ch_filecache_hit_metrics_test  : 5
+  ctest aggregate: 100% tests passed, 0 failed out of 8
+Amendment-1 skip tests + old SkipAcrossSegmentBoundary: still green (within e2e).
+
+END-TO-END (decisive) — release binary, filecache path, num_splits_per_file=1,
+num_drivers=4, dataset /home/chang/test/tpch-double/tpch-generated-100.0-parquet-decimal_as_double:
+  q02  exit 0  rows 12382493  error=<empty>
+  q11  exit 0  rows 3180133   error=<empty>
+  q15  exit 0  rows 45334136  error=<empty>
+  q17  exit 0  rows 600036861 error=<empty>
+  q20  exit 0  rows 967853    error=<empty>   (5/5 deterministic after Fix B)
+  q21  exit 0  rows 39950     error=<empty>
+All 6 previously-crashing queries exit 0 with a result row and EMPTY error.
+
+git diff --check: clean
+git diff --stat velox/ch/: 3 files, +139 / -10
+Pre-existing velox/exec/tests/utils/TpchQueryBuilder.cpp (018b): untouched.
+Gluten: not touched.
+```
+
+### Worker review
+
+```text
+review subagent: one read-only general-purpose reviewer over the velox/ch/ diff
+  (correctness of the bound/re-prepare, DOWNLOADING over-read safety, rename-retry
+  safety, and false-green in the new test).
+findings: No actionable / blocking issues.
+  - BUG 1 coordinate space correct (absolute vs absolute); no spin (DOWNLOADING
+    branch waits, not busy-loops); no double-read (fresh reader seeks to cursor);
+    fully-DOWNLOADED segments never re-prepare on the prefix axis (no regression).
+  - BUG 2 single retry sufficient (rename is once-per-lifetime) and fail-closed
+    (rethrows when the name is unchanged, so a genuine FILE_NOT_FOUND still
+    propagates).
+  - New test is a deterministic, thread-free RED guard for BUG 1 (verified RED on
+    neutralize); additionally exercises a downloader handoff for the tail.
+non-blocking observations (no change required):
+  - the `!= DOWNLOADED` guard on the `caughtUpToWrite` clause is redundant with
+    the prefix axis (harmless).
+  - `catch (const std::exception &)` is broad but safe here only because of the
+    name-equality rethrow.
+  - BUG 2 has no dedicated unit test (inherently threaded); it is covered by the
+    release TPCH E2E (q20 5/5).
+resolutions: no code change required; all gates green.
+unresolved findings: none.
+```
+
+### Blockers
+
+```text
+None. All 8 debug gates green; all 6 release TPCH queries exit 0 with empty error.
+```
+
+### Worker declaration
+
+```text
+Only Task 014 post-acceptance amendment 2 was attempted.
+Changes are unstaged and uncommitted (velox/ch/ only: 3 files). velox trunk and
+the pre-existing 018b TpchQueryBuilder.cpp are untouched; no ClickHouse source,
+no Gluten file changed.
+The worker stopped after writing this receipt.
+```
+
+## Controller review — amendment 2（CACHED readUntil refill bug）
+
+```text
+controller_status: accepted
+environment_profile: home-chang
+task: 014 (amendment 2)
+```
+
+## Review evidence
+
+```text
+scope review: 改动限于 FileCacheInputStream.{h,cpp} + tests/FileCacheE2ETest.cpp（velox/ch/）。
+  TpchQueryBuilder.cpp 018b 未提交补丁保留未动。velox 主干零改动（本 amendment）。
+implementation review: worker 采用比契约"改一行 bound"更正确的修法（Controller 复核认可）：
+  - 保留 setReadUntilPosition(downloadedSize)（不过读磁盘实际字节——注释点明 wrapped ReadFile
+    在 short pread 上抛、无隐式 EOF clamp，故仅 bound 到段长会读过文件尾，验证了契约的过读警告）；
+  - 新增 cachedPrefixEndAbsolute = range.left + downloadedSize（DOWNLOADING 段，:505），
+    updateReadStateIfNeeded 在 offset 到达该 prefix 末尾时 re-prepare（:725-731），开覆盖已增长
+    缓存文件的新 reader，避免冻结在首 chunk 报 premature end。等价对齐 CH nextImplStep 的
+    边下边读续读（CH 靠 min(range.right+1,file_size_)+DOWNLOADING 续读）。保留 CH 原
+    offset>=getCurrentWriteOffset 触发。DOWNLOADED 段 cachedPrefixEndAbsolute==0 → 无需 re-prepare。
+log and test review: Controller 独立复现 RED——中和续读（prefixExhausted 恒 false），新测试
+  CachedReaderRefillsWhenDownloadingSegmentGrows FAILED @:888（冻结重现）；还原→e2e 21/21、
+  buffered_input 19、core_scc 47 全绿；grep 无残留 probe。新测试精确造根因场景（downloader 只下
+  1 MiB、reader 读到 1 MiB 再续读）。
+END-TO-END（决定性，Controller 亲跑 release 二进制，非转述）：重编 release
+  velox_ch_filecache_tpch_ab_benchmark，重跑 6 个曾崩 query，全 exit 0、error 列空、行数正确：
+  q2=12382459, q11=3180087, q15=45334136, q17=600036861, q20=967965, q21=39950。
+  => filecache 引擎全 22 通过（refill bug 已解，两 bug 修毕）。
+unresolved findings: none.
+```
+
+## Commits (amendment 2 — refill)
+
+| Repository | Commit |
+|---|---|
+| `/home/chang/OpenSource/velox` | `006a15996` |
+| `/home/chang/SourceCode/ClickHouse` | (this acceptance commit) |
