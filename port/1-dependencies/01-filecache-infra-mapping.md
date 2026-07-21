@@ -25,6 +25,7 @@
 | `ThreadFromGlobalPool` / `ThreadPool` | `FileCacheWorker` / `FileCacheThreadPool`；详见[线程池设计](04-filecache-thread-pool-design.md) | wrapper，保留 CH-style join/resize/shutdown |
 | `WriteBufferFromFile` / `ReadBufferFromFileBase` | `WriteFile` / `ReadFile` | `WriteBufferFromVeloxWriteFile` / `ReadBufferFromVeloxReadFile` |
 | `ConcurrentBoundedQueue` | CH-compatible `FileCacheBoundedQueue<T>` | mutex + condition variables；保留 blocking `push`/`pop`、timed/non-blocking `tryPush`/`tryPop`、capacity 0、`finish` wakeup/drain 和 CH move-or-copy exception safety |
+| `callOnce` / `OnceFlag` | `folly::call_once` / `folly::once_flag` | 直接替换；保留成功后只执行一次、并发安全发布和 callback 抛异常后可重试的语义；不使用静态 `libstdc++`/`glibc` 组合下经过 `pthread_once` 的 `std::call_once`，也不保留本地 mutex+completed-flag 实现 |
 | `fs::` 文件系统操作 | `std::filesystem` + 必要的 Velox local `FileSystem` API；详见[基础 shims](02-filecache-basic-shims-design.md) | compat shim |
 | `sipHash128` | 保留 CH cache key hash语义；详见[key/hash设计](../2-file-cache/03-filecache-key-hash-design.md) | 保留小 helper |
 | `absl::flat_hash_map` / `absl::flat_hash_set` | 默认用 `folly::F14FastMap` / `folly::F14FastSet`；需要 value地址稳定时使用 node variant | 按具体 ownership选择 |

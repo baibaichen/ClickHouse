@@ -247,3 +247,25 @@ D8: approve / modify / reject
 
 Until the user appends that record, this document remains
 `review_status: user_post_review` and does not block the current Task-015 plan.
+
+## User review record — 2026-07-21
+
+```text
+D2: modify
+D4: pending
+D6: pending
+```
+
+- **D2 modified:** replace the local mutex+completed-flag implementation with
+  `folly::once_flag` and `folly::call_once`. This preserves successful
+  exactly-once publication and retry after a throwing callback without using
+  the static-toolchain `std::call_once` path through `pthread_once`. The
+  canonical mapping is
+  `port/1-dependencies/01-filecache-infra-mapping.md`.
+- **D4 pending:** no approval, rejection, implementation change, or parity
+  reclassification is authorized yet.
+- **D6 pending:** no approval, rejection, implementation change, or parity
+  reclassification is authorized yet.
+
+The complete Review-4 decision record, including `G-CACHEBUF-01`, is
+`port/task/fullreview/root-oss/4/003-015-parity-user-decisions.md`.
