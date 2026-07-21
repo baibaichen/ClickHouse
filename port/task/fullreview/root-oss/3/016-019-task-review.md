@@ -22,7 +22,7 @@ worktree.
 |---|---|---|
 | 016 — write buffer to segment | **DEFERRED** | The corrected contract is ready, but Velox has no temporary-data spill consumer and the user marked it non-mainline. |
 | 017 — observability/cancellation | **PLANNED; REVISE FIRST** | The user marked it mainline work, but the current shim/cancellation contract remains unsafe and must be redesigned before implementation. |
-| 018 — Gluten integration | **PLANNED; REVISE FIRST** | The user marked Gluten integration and the Velox TPCH benchmark as mainline work; Task 017/018 require a joint statistics design first. |
+| 018 — Gluten integration | **PLANNED; REVISE FIRST** | The user marked Gluten integration and the complete Velox correctness/micro/wrapper/TPCH benchmark suite as mainline work; Task 017/018 require a joint statistics design first. |
 | 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
 
 Task 016 is deferred. Tasks 017 and 018 are selected for one joint design wave.
@@ -104,7 +104,8 @@ co_design_with: Task 018 TPCH statistics
 
 ```text
 decision: do Task 018
-scope_addition: adapt the Velox TPCH benchmark from baibaichen/ch-filecache
+scope_addition: adapt CacheVerify, core/buffered-input/wrapper microbenchmarks,
+  and TPCH from baibaichen/ch-filecache
 co_design_with: Task 017 observability/statistics
 implementation_authorized: false
 ```
@@ -174,8 +175,8 @@ Velox read path.
    snapshot/delta contract, cancellation ownership, and the deferred
    F-CALLERID/recursive-mutex obligations.
 3. Replace Task 018's configure/fixture/builder-test instructions with runnable
-   `root-oss` commands, real builder assertions, and an adapted Velox TPCH
-   benchmark using the Task-017 statistics API.
+   `root-oss` commands, real builder assertions, and the adapted Velox
+   correctness/micro/wrapper/TPCH suite using the Task-017 statistics API.
 4. Make Task 019's fixture and lifecycle evidence deterministic, then keep it
    blocked until Task 018 is accepted.
 

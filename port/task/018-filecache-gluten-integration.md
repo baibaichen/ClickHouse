@@ -13,7 +13,7 @@
 environment_profile: root-oss
 disposition: planned
 task_018_allowed: false
-reason: user wants Gluten integration and the Velox TPCH benchmark, but the reviewed contract must be redesigned first
+reason: user wants Gluten integration and the complete Velox benchmark suite, but the reviewed contract must be redesigned first
 co_design_with: Task 017 observability/statistics
 benchmark_reference: baibaichen/ch-filecache
 ```
@@ -22,17 +22,37 @@ The user explicitly selected Task 018 as mainline work. This records priority
 and scope only; it does not approve the current contract or authorize
 implementation.
 
-The redesigned task must also adapt the Velox-side TPCH benchmark from
-`baibaichen/ch-filecache`. Copy behavior and harness structure, not files
-verbatim: the current FileCache lives under `velox/ch`, uses
+The redesigned task must adapt the complete Velox benchmark suite from
+`baibaichen/ch-filecache`, not only TPCH. Copy behavior and harness structure,
+not files verbatim: the current FileCache lives under `velox/ch`, uses
 `FileCacheManager`, and has different `FileCacheBufferedInput` and statistics
 APIs.
+
+Required benchmark scope:
+
+```text
+CacheReadHarness and CacheVerify byte-level correctness gate;
+FileCacheBenchmark core/segment microbenchmark;
+FileCacheBufferedInputBenchmark assembled FileCache read microbenchmark;
+BufferedInputWrapperBenchmark same-process dbi/cbi/fcbi A/B;
+TPCH query-level cold/hot benchmark.
+```
+
+The execution order is binding:
+
+```text
+correctness verification
+  -> core and buffered-input microbenchmarks
+  -> wrapper A/B microbenchmark
+  -> TPCH macrobenchmark
+```
 
 Task 017 and Task 018 form one design wave:
 
 ```text
 Task 017 defines real counters and a stable snapshot/delta API.
-Task 018 consumes that API in TPCH output and wires FileCache into Gluten.
+Task 018 consumes that API across microbenchmark/wrapper/TPCH output and wires
+FileCache into Gluten.
 ```
 
 The joint design must decide the exact hit/miss/downloaded-byte/eviction/current

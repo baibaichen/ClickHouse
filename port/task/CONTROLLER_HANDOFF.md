@@ -240,8 +240,9 @@ Current task:
        user as unnecessary/non-mainline;
     9. Task 017 was selected by the user as mainline work, but design is deferred
        to a later discussion and implementation remains unauthorized;
-    10. Task 018 was selected as mainline work and now owns adaptation of the
-        Velox TPCH benchmark from `baibaichen/ch-filecache`;
+    10. Task 018 was selected as mainline work and now owns adaptation of
+        `CacheVerify`, core/buffered-input/wrapper microbenchmarks, and TPCH from
+        `baibaichen/ch-filecache`;
     11. Tasks 017/018 must be jointly designed because benchmark output consumes
         Task-017 statistics; Task 019 remains blocked and requires revision.
 - Tasks 003-015 are accepted.

@@ -20,7 +20,7 @@ environment_profile: root-oss
 disposition: planned
 task_017_allowed: false
 reason: user wants this capability, but the reviewed contract must be redesigned first
-co_design_with: Task 018 Velox TPCH benchmark statistics
+co_design_with: Task 018 Velox benchmark-suite statistics
 ```
 
 The user explicitly selected observability and cancellation as work that should
@@ -28,9 +28,9 @@ be completed. This records priority only; it does not approve the current
 contract or authorize implementation. Redesign is a separate step.
 
 Task 017 and Task 018 must be designed together at the statistics boundary.
-Task 017 owns the stable FileCache counters/snapshots; Task 018's Velox TPCH
-benchmark consumes them. Do not finalize metric storage or benchmark CSV
-columns independently.
+Task 017 owns the stable FileCache counters/snapshots; Task 018's correctness
+tool, microbenchmarks, wrapper A/B, and TPCH benchmark consume them. Do not
+finalize metric storage or benchmark output columns independently.
 
 ## Goal
 

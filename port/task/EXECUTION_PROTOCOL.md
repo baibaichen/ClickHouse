@@ -17,8 +17,9 @@ Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
 Tasks 017 and 018 are planned mainline work and must be redesigned together:
 Task 017 owns statistics/observability and Task 018 owns Gluten integration plus
-the adapted Velox TPCH benchmark. Implementation is not authorized. Task 019 is
-not allowed as currently written.
+the adapted Velox correctness, core/buffered-input/wrapper microbenchmark, and
+TPCH suite. Implementation is not authorized. Task 019 is not allowed as
+currently written.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,
