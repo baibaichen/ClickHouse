@@ -20,44 +20,34 @@ worktree.
 
 | Task | Verdict | Blocking reason |
 |---|---|---|
-| 016 — write buffer to segment | **REVISE** | Its compatibility amendment contradicts the still-binding numbered steps; required writer/swap-guard APIs and behavioral RED evidence are missing. |
+| 016 — write buffer to segment | **READY; not authorized** | Rewritten after this review with the real CH temporary-data history, a synthetic consumer boundary, one coherent Velox writer design, and behavioral mutation evidence. |
 | 017 — observability/cancellation | **REVISE** | Proposed shim replacements remove names used by accepted production code; cancellation scope and deferred obligations are incomplete. |
 | 018 — Gluten integration | **REVISE** | The prescribed fixture/configure path cannot run on `root-oss`, and the builder-selection test is false-green. |
 | 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
 
-No later task is ready for implementation as written.
+Only Task 016's rewritten contract is ready; no later implementation is
+authorized.
 
-## Task 016 findings
+## Task 016 follow-up resolution
 
-### Critical
+Task 016 was rewritten after this review and independently re-reviewed as
+**READY**. The corrected contract:
 
-1. **The pre-execution amendment and Steps 4-5 describe incompatible classes.**
-   The amendment requires `WriteBufferFromFileBase`, a pool-backed `BufferPtr`,
-   `nextImpl`/`finalizeImpl`/`syncImpl`/`cancelImpl`, a canceling destructor, and
-   `BufferStateSwapGuard`
-   (`016-filecache-write-buffer-segment.md:15-71`). The numbered steps still
-   prescribe a standalone `std::vector<char>` buffer and destructor flush
-   (`:327-427`, `:466-624`). Rewrite the steps before dispatch; do not rely on a
-   prose statement that they are superseded.
-2. **`BufferStateSwapGuard` does not exist and has no file owner.**
-   `FileCacheBufferState::swapWorkingState` exists for this post-MVP writer, but
-   no guard class is present under `velox/ch`. Add the chosen guard location to
-   file scope, preferably beside `WriteBufferFromFileBase` in
-   `WriteBufferFromVeloxWriteFile.h`.
-3. **The only current RED is a missing-header compile failure.** Add behavioral
-   RED/mutation rows for pool ownership, zero-copy append address, reserve
-   failure, write failure, swap restoration, and finalized read-back.
+- records ClickHouse `#40893`, `#43972`, and `#48664`;
+- states explicitly that Velox has no production `TemporaryDataOnDisk`
+  consumer;
+- adds synthetic `TemporaryDataOnDiskEquivalentLifecycle` and
+  `HttpTemporaryBufferEquivalentReadBack` scenarios without wiring a fake
+  spill/HTTP subsystem;
+- uses the accepted `WriteBufferFromFileBase` and pool-backed buffer state;
+- removes the obsolete `BufferStateSwapGuard` requirement because the Velox
+  local cache writer is external-only and is detached after every
+  `FileSegment::write`;
+- uses `velox_sources`, a non-mono header `FILE_SET`, focused mono/non-mono and
+  accumulated gates, and an eleven-row behavioral mutation matrix.
 
-### Important
-
-- Replace `target_sources` on `velox_ch_filecache` with the repository's
-  `velox_sources` pattern; in mono mode the target is an alias and cannot be
-  modified with `target_sources`.
-- Register the local filesystem in the `getReadBuffer` test fixture.
-- Specify a valid construction path for the two-segment holder rejection test;
-  public Ephemeral acquisition returns one unbounded segment.
-- Preserve CH's lost-downloader logic-error check in the release guard rather
-  than silently accepting that state.
+The contract is ready, but `task_016_allowed` remains false until implementation
+is explicitly approved.
 
 ## Task 017 findings
 
@@ -154,8 +144,7 @@ Velox read path.
 
 ## Required authoring wave before implementation
 
-1. Rewrite Task 016 Steps 4-6 from its compatibility amendment and add the
-   behavioral mutation matrix.
+1. Decide whether to authorize the now-ready Task 016 implementation.
 2. Rewrite Task 017's shim replacements as additive storage implementations,
    choose the cancellation-token ownership model, and resolve its deferred
    F-CALLERID/recursive-mutex obligations.

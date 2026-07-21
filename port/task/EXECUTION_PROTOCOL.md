@@ -13,7 +13,8 @@ Next dispatch order:   Tasks 016-019 contract review completed. Run a task
                        authoring wave only after the review amendments are
                        approved; do not implement Task 016.
 Task 015 is complete.
-Tasks 016-019 are not allowed as currently written.
+Task 016's rewritten contract is ready but implementation is not authorized.
+Tasks 017-019 are not allowed as currently written.
 Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   excerpts, structure-deviation registrations, RED matrices, false-green
   probe requirements, exact CH/Velox source citations, exact test owners,
