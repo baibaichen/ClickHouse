@@ -12,8 +12,10 @@
 ```text
 environment_profile: root-oss
 task_016_allowed: false
-reason: rewritten contract is review-ready; implementation requires explicit approval
+disposition: deferred
+reason: Velox has no temporary-data spill consumer; this is not a mainline feature
 prerequisite: Task 015 accepted
+revisit_trigger: a real Velox spill/temporary-data owner needs shared FileCache space
 ```
 
 ## Why this task exists
@@ -38,6 +40,51 @@ query-generated temporary bytes
 This is for sorting/aggregation/spill-style temporary data. It is **not**
 `cache_on_write_operations`, not write-through caching for ordinary files, and
 not part of the accepted FileCache read path.
+
+### Why ClickHouse uses FileCache for temporary data
+
+The design solves local-disk space arbitration, not cache acceleration.
+
+On a machine where remote-file cache entries occupy most of the local SSD, a
+sorting or aggregation query may still need temporary spill space. Failing the
+query while the disk is full of disposable cache entries would be wasteful:
+ordinary cache data can be evicted and downloaded again, while query-generated
+temporary data cannot be discarded without failing the query.
+
+ClickHouse therefore lets temporary data share FileCache's reservation and
+eviction budget:
+
+```text
+temporary spill needs local space
+  -> evict releasable ordinary cache entries
+  -> keep holder-owned temporary segments non-releasable
+  -> return the space when the query releases its last holder
+```
+
+`Ephemeral` follows directly from that policy: its final size is unknown, so it
+is one unbounded segment; it has a random non-reusable key; it is removed with
+the last holder and discarded on restart.
+
+Velox currently has neither the corresponding spill owner nor a demonstrated
+shared-disk pressure requirement. The contract is preserved for future use,
+but implementation is deferred and is not on the FileCache mainline.
+
+## User disposition
+
+```text
+decision: defer Task 016
+implementation_authorized: false
+reason: not currently needed and not a mainline FileCache feature
+```
+
+Reopen this task only when a concrete Velox consumer can prove all of:
+
+```text
+it generates temporary/spill data that must be read back;
+it shares local storage with FileCache;
+evicting disposable cache entries is preferable to failing the query;
+the consumer owns the Ephemeral holder for the complete temporary-data lifetime.
+```
 
 ## ClickHouse history and source of truth
 

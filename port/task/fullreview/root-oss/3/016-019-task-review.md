@@ -20,7 +20,7 @@ worktree.
 
 | Task | Verdict | Blocking reason |
 |---|---|---|
-| 016 — write buffer to segment | **READY; not authorized** | Rewritten after this review with the real CH temporary-data history, a synthetic consumer boundary, one coherent Velox writer design, and behavioral mutation evidence. |
+| 016 — write buffer to segment | **DEFERRED** | The corrected contract is ready, but Velox has no temporary-data spill consumer and the user marked it non-mainline. |
 | 017 — observability/cancellation | **REVISE** | Proposed shim replacements remove names used by accepted production code; cancellation scope and deferred obligations are incomplete. |
 | 018 — Gluten integration | **REVISE** | The prescribed fixture/configure path cannot run on `root-oss`, and the builder-selection test is false-green. |
 | 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
@@ -31,7 +31,9 @@ authorized.
 ## Task 016 follow-up resolution
 
 Task 016 was rewritten after this review and independently re-reviewed as
-**READY**. The corrected contract:
+technically ready. The user then explicitly deferred it because Velox has no
+temporary-data spill consumer and the feature is not on the mainline. The
+corrected contract:
 
 - records ClickHouse `#40893`, `#43972`, and `#48664`;
 - states explicitly that Velox has no production `TemporaryDataOnDisk`
@@ -46,8 +48,8 @@ Task 016 was rewritten after this review and independently re-reviewed as
 - uses `velox_sources`, a non-mono header `FILE_SET`, focused mono/non-mono and
   accumulated gates, and an eleven-row behavioral mutation matrix.
 
-The contract is ready, but `task_016_allowed` remains false until implementation
-is explicitly approved.
+The contract is preserved for a future real consumer, but
+`task_016_allowed: false` and `disposition: deferred` are binding.
 
 ## Task 017 findings
 
@@ -144,7 +146,8 @@ Velox read path.
 
 ## Required authoring wave before implementation
 
-1. Decide whether to authorize the now-ready Task 016 implementation.
+1. Leave Task 016 deferred until a real Velox spill consumer and shared-disk
+   pressure requirement exist.
 2. Rewrite Task 017's shim replacements as additive storage implementations,
    choose the cancellation-token ownership model, and resolve its deferred
    F-CALLERID/recursive-mutex obligations.
