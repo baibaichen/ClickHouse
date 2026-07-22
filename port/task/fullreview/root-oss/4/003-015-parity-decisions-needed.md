@@ -130,6 +130,20 @@ the read-path tests (including the post-fix refill/skip families).
 
 ---
 
+## Resolutions (user, 2026-07-23)
+
+| id | decision | note |
+|---|---|---|
+| PD-1 | **A** — page-cache-only for MVP; real kernel `O_DIRECT` stays a mandatory pre-release gate | deviation already registered (D3); still open as a forward gate, not a defect |
+| PD-2 | **A** — Task-015 contract + receipt accepted as provenance; this audit is the ratification | no standalone 015 decision file authored |
+| PD-3 | **B — DONE, aligned to CH** | `FileSegment::wait` now checks the query cancellation token once per 1s slice (CH `FileSegment.cpp:590-592`), so a cancel is observed within ~1s instead of up to 60s. Impl: velox `filecache2` commit `4ffdb6fa3` (cherry-picked to `filecache2-gluten` `1ad1238b3`). RED test `WaitObservesQueryCancellationPromptly` (~16ms cancel; removing the in-loop check blocks past 10s). This removes R-012-8 as a deviation — the wait path now matches CH. |
+| PD-4 | **A** — write-through parity confirmed as Task-016 scope; excluded from the 003-015 denominator | no MVP read path exercises write-through (R-010-3 / R-XC-6) |
+| PD-5 | **A** — both deviations confirmed accepted-as-registered (NOT aligned) | Investigated for CH-alignment; found alignment is not worthwhile: **R-014-12 `readBigAt`** is a design-03 deliberate exclusion — Velox's read path never calls `supportsReadAt`/`readBigAt`, so porting it would add dead, consumer-less code. **R-014-14 CACHED read-until** uses segment-relative coordinates as a *necessary adaptation* to the wrapped `ReadFile` semantics (short pread throws, no implicit EOF clamp) and underpins the just-fixed refill mechanism (`cachedPrefixEndAbsolute` + re-prepare); forcing CH's absolute coordinate would trip the short-read exception and break refill, requiring a Task-007 IO-primitive rewrite. Behavior is equivalent and verified by the refill/skip test families. |
+
+**Net effect:** PD-3 aligned to CH (deviation removed). PD-1/2/4/5 confirmed as
+already-registered dispositions. The only remaining open forward gate is PD-1
+(real kernel `O_DIRECT`, pre-release) plus the standing errno-producer gate.
+
 ## Non-decision reminders (no user choice needed, listed for completeness)
 
 - Structured errno **producer** remains a pre-release gate (round-1 §3): the

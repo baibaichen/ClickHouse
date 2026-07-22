@@ -210,16 +210,25 @@ cycle. Outstanding obligations are forward gates, not reopens (see §10-11).
 ## 12. Final verdict
 
 ```text
-PARITY_ACCEPTED_WITH_DECISIONS
+PARITY_ACCEPTED  (decisions resolved 2026-07-23)
 ```
 
 Rationale: semantic parity 57/64 (89.1%) and accepted coverage 64/64 (100%) with
 zero `MISSING`, zero `UNPROVEN`, zero unapproved deviations, zero Critical
-findings, and all 7 deviations signed. The verdict is `WITH_DECISIONS` rather
-than plain `ACCEPTED` solely because of the outstanding user-facing ratification
-items in `003-015-parity-decisions-needed.md` — chiefly the real-O_DIRECT forward
-gate (Important) and the absence of an independent Task-015 decision record. None
-of these is a correctness defect in the accepted 003-015 implementation.
+findings, and all 7 deviations signed. The `WITH_DECISIONS` items in
+`003-015-parity-decisions-needed.md` have now been resolved by the user
+(2026-07-23):
+- **PD-3 aligned to CH** — `FileSegment::wait` now observes query cancellation
+  once per 1s slice (velox `filecache2` `4ffdb6fa3`, cherry-picked to
+  `filecache2-gluten` `1ad1238b3`), removing R-012-8 as a deviation.
+- **PD-1/2/4/5 confirmed** as already-registered dispositions (PD-5's readBigAt
+  is a deliberate design-03 exclusion; PD-5's CACHED read-until is a necessary
+  wrapped-`ReadFile` adaptation underpinning the refill fix — aligning would add
+  dead code / break refill, so both stay accepted-as-registered).
+
+The one remaining open forward gate is **PD-1: real kernel `O_DIRECT`**
+(pre-release), plus the standing structured-errno-producer pre-release gate.
+Neither is a correctness defect in the accepted 003-015 implementation.
 
 ## Artifacts
 
