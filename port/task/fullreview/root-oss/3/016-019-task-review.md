@@ -1,5 +1,10 @@
 # Tasks 016-019 Contract Review — `root-oss` Review 3
 
+> **Post-review ownership amendment (2026-07-22):**
+> `port/design/filecache-task-018-019-hard-split.md` supersedes this review's
+> Task-018/019 ownership. Task 018 is Velox-only; former 018-E/F/G and all
+> Gluten/Spark E2E work belong to Task 019.
+
 ## Status
 
 ```text
@@ -22,9 +27,9 @@ worktree.
 |---|---|---|
 | 016 — write buffer to segment | **DEFERRED** | The corrected contract is ready, but Velox has no temporary-data spill consumer and the user marked it non-mainline. |
 | 017A — statistics/cancellation/scheduler | **PLANNED; DESIGN APPROVED** | Supplies the global/query statistics and cancellation APIs required by Task 018. |
-| 017B — logging/exception stacks | **PLANNED AFTER REVIEW 5** | Independent scope; Task 018 is followed by the Tasks 003–018 whole-port Review 5; accepted Review 5 gates Task 017B, which then gates Task 019 design/production readiness. |
-| 018 — Gluten integration | **PLANNED; DESIGN APPROVED** | Gluten integration and the complete Velox correctness/micro/wrapper/TPCH benchmark suite consume accepted Task-017A APIs. |
-| 019 — Gluten E2E | **REVISE; dependency-blocked** | Task 018 must be accepted first; lifecycle ordering and real fixture setup are under-specified. |
+| 017B — logging/exception stacks | **PLANNED AFTER REVIEW 5** | Independent scope; Task 018 is followed by the Tasks 003–018 whole-port Review 5; accepted Review 5 gates Task 017B, which then gates Task 019 implementation/production readiness. |
+| 018 — Velox correctness and benchmarks | **PLANNED; DESIGN APPROVED** | The complete Velox correctness/micro/wrapper/TPCH benchmark suite consumes accepted Task-017A APIs. |
+| 019 — Gluten integration and Spark E2E | **REVISE; dependency-blocked** | Accepted Task 018, Review 5, and Task 017B are prerequisites; the post-review hard-split design and rewritten Task-019 plan supersede this review's former scope. |
 
 Task 016 is deferred. User-selected order is Task 017A, Task 018, then Task
 017B. No implementation is authorized.
@@ -122,7 +127,7 @@ Task 017B:
 
 Task 018 depends only on Task 017A. After Task 018, dispatch stops for Review 5
 over Tasks 003–018. Task 017B runs after accepted Review 5 and must be accepted
-before Task 019 design.
+before Task 019 implementation.
 ```
 
 ## Task 018 findings
@@ -188,8 +193,9 @@ Velox read path.
 - **016 vs 017:** Task 016 owns the Ephemeral writer; Task 017A owns statistics
   and read-path cancellation; Task 017B owns logging/exception stacks. Writer
   cancellation requires a separate explicit decision.
-- **018 vs 019:** Task 018 owns config, manager lifecycle wiring, and builder
-  type selection. Task 019 owns real host-path miss/fill/hit and teardown E2E.
+- **018 vs 019:** Task 018 is Velox-only and owns correctness and benchmarks.
+  Task 019 owns config, manager lifecycle, builder selection, the metric bridge,
+  and native/Spark E2E. The hard-split design is the binding decomposition.
 - **Velox vs Gluten:** Tasks 018-019 consume the accepted Task-015 public API.
   They must not reopen the FileCache core or modify the existing dirty Gluten
   worktree until their corrected contracts are approved.

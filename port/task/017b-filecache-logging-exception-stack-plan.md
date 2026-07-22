@@ -6,8 +6,8 @@
 > - **Task ID:** 017B
 > - **Binding design:** `port/design/filecache-task-017-018-joint-design.md` §5
 > - **Prerequisite:** Tasks 003–018 and Review 5 accepted
-> - **Successor:** Task 019 design begins after 017B acceptance
-> - **Execution order:** 017A → 018 → Review 5 → 017B → 019 design
+> - **Successor:** Task 019 implementation begins after 017B acceptance
+> - **Execution order:** 017A → 018 → Review 5 → 017B → 019
 > - **Environment:** `root-oss` (`/root/oss/velox`, branch `filecache`)
 > - **Commit policy:** Worker never commits (`worker_commits: false`); Controller commits after independent review (`controller_commits: true`).
 
@@ -1103,8 +1103,8 @@ control capture at throw-time; we never override them at format-time.
 
 - Worker never stages or commits; Controller commits after independent task review.
 - Execution is authorized only after Task 018 and Review 5 are accepted.
-- Execution order: 017A → 018 → Review 5 → **017B** → 019 design.
-- After Task 017B acceptance, Task 019 design may begin.
+- Execution order: 017A → 018 → Review 5 → **017B** → 019.
+- After Task 017B acceptance, Task 019 implementation may begin.
 - Every redirected build/test log (`ninja`/`ctest`/`cmake` output captured to a
   `.log` file) is analyzed by a `task` subagent that returns only a concise
   summary; the Worker never pastes full build/test logs into its context or the

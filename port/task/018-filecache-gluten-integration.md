@@ -1,82 +1,71 @@
-# Task 018: `FileCache` Gluten Integration and Velox Benchmark Suite
+# Task 018: `FileCache` Velox Correctness and Benchmark Suite
 
 ## Status
 
 ```text
 environment_profile: root-oss
-disposition: implementation_plan_ready
+disposition: implementation_in_progress
+scope: Velox only
 implementation_authorized: true
 authorization_scope: non-TPCH phase through 018-P
 tpch_authorized: false
 prerequisite: accepted Task 017A at a856d836c
-execution_after: Task 017A
-execution_before: Review 5, then Task 017B
-task_019_dependency: Task 019 design waits for accepted Task 017B
+execution_before: Review 5, then Task 017B, then Task 019
 implementation_plan: port/task/018-filecache-gluten-benchmark-plan.md
+result: port/task/result/018-filecache-velox-benchmark-result.md
 ```
 
-Binding design:
+The filename is retained for handoff compatibility, but Task 018 no longer owns
+or modifies Gluten. The hard split is binding:
 
 ```text
-port/design/filecache-task-017-018-joint-design.md
+port/design/filecache-task-018-019-hard-split.md
 ```
-
-The executable contract is:
-
-```text
-port/task/018-filecache-gluten-benchmark-plan.md
-```
-
-It passed source-level and independent plan review. The plan supersedes the old
-Task-018 contract. Do not implement until Task 017A is accepted and the
-Controller records explicit authorization.
-
-After Task 018 is accepted, stop implementation dispatch and run Review 5 over
-Tasks 003–018. Task 017B remains blocked until that review is accepted.
 
 ## Scope
 
 Task 018 owns:
 
 ```text
-Velox byte-level `CacheVerify`;
-FileCache core and `FileCacheBufferedInput` microbenchmarks;
-same-process direct/CBI/FCBI wrapper A/B;
-Velox TPCH correctness and baseline performance;
-Gluten configuration and `FileCacheManager` lifecycle ownership;
-canonical `GlutenBufferedInputBuilder` selection and cancellation propagation;
-`fileCacheWriteBytes` propagation through native, JNI, Java, Scala, and
-Spark `SQLMetric`;
-safe benchmark orchestration and result receipts.
+018-A byte-exact direct/CBI/FCBI correctness;
+018-B FileCache core and FileCacheBufferedInput micros plus wrapper A/B;
+018-D sentinel-safe benchmark orchestration;
+018-H1 non-TPCH RelWithDebInfo/Release baseline waves;
+018-P mandatory user checkpoint;
+018-C TPCH result correctness after approval;
+018-H2 TPCH baseline performance after correctness.
+```
+
+Current accepted Velox commits:
+
+```text
+9850a70fa  018-A correctness harness
+df9091e78  018-B FileCacheBufferedInput micro
+5ae39651b  018-D safe orchestration
 ```
 
 ## Binding constraints
 
 ```text
-Use an isolated Gluten worktree; never modify the dirty `/root/oss/gluten`
-working tree.
-Use a dedicated leaf `MemoryPool` for FileCache allocations.
-Reject simultaneous AsyncDataCache/FileCache configuration before either cache
-is initialized.
-Use `FileCacheFileIdentity::deriveKey`; do not duplicate path/etag hashing.
-Correctness gates run before performance.
-Every benchmark is freshly built and run with RelWithDebInfo or Release; Debug
-benchmark binaries and results are invalid.
-TPCH uses one split per file for mode fairness.
-After non-TPCH correctness, micro, wrapper, Gluten lifecycle, Builder, metrics,
-and baseline Waves 1–3 complete, stop for explicit user approval before copying,
-building, or running TPCH.
-The first performance wave establishes a baseline/noise band and has no hard
-percentage threshold.
-Worker does not stage or commit; Controller owns acceptance commits.
+No Gluten, JNI, Java, Scala, or Spark build/change belongs to Task 018.
+Every benchmark binary is freshly built and run with RelWithDebInfo or Release.
+Debug benchmark evidence is invalid.
+No TPCH source copy/build/data inspection/run occurs before explicit 018-P
+approval.
+Correctness precedes performance.
+TPCH correctness uses one driver and one split per file; performance may use
+multiple drivers but keeps one split per file.
 ```
 
-## Exclusions
+## Moved to Task 019
+
+Task 019 is the full Gluten integration owner:
 
 ```text
-Task 017B logging and exception stacks;
-Task 019 Spark end-to-end design or implementation;
-Task 016 ephemeral writer;
-real kernel `O_DIRECT` integration;
-a Gluten HTTP or Prometheus reporter.
+compatible Velox baseline;
+VeloxBackend/FileCacheManager config and lifecycle;
+GlutenBufferedInputBuilder selection and cancellation token;
+native/JNI/Java/Scala/Spark metric bridge;
+native Gluten E2E;
+Spark -> Gluten -> Velox -> FileCache E2E.
 ```

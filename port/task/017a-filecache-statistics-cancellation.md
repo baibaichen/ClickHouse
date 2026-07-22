@@ -71,8 +71,8 @@ continuations outside the scheduling lock.
 
 ```text
 logger implementation and exception stack formatting (Task 017B);
-Gluten configuration/Builder/lifecycle and benchmarks (Task 018);
-Spark end-to-end work (Task 019, designed later);
+Velox correctness and benchmarks (Task 018);
+Gluten configuration/Builder/lifecycle/metrics and Spark E2E (Task 019);
 real kernel O_DIRECT integration (deferred);
 Task 016 Ephemeral writer.
 ```

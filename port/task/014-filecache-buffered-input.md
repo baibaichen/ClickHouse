@@ -1165,7 +1165,7 @@ Task 015: run Velox-only FileCache E2E tests and the basic random-seek benchmark
 Do not implement in this task:
 
 ```text
-GlutenBufferedInputBuilder extension (edits Gluten; belongs to Task 018)
+GlutenBufferedInputBuilder extension (edits Gluten; belongs to Task 019)
 CachedReadFile / CacheFileSystem fallback
 AsyncDataCache raw-bytes path sharing with FileCacheBufferedInput
 FileCacheSettingsLoader Gluten config parsing

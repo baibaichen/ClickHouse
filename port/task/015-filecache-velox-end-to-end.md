@@ -1128,9 +1128,9 @@ None
 
 ```text
 Task 016 (optional post-MVP): WriteBufferToFileSegment for Ephemeral segments.
-Task 017 (optional post-MVP): Observability and cancellation hardening.
-Task 018 (future): Gluten host integration.
-Task 019 (future): Gluten builder and lifecycle E2E validation.
+Task 017A/017B (post-MVP): statistics/cancellation and logging/exception hardening.
+Task 018: Velox correctness and benchmark suite.
+Task 019: Gluten host integration, Builder/lifecycle, metrics, and Spark E2E.
 ```
 ````
 
@@ -1153,7 +1153,7 @@ Per-query cache limit tests — those depend on QueryLimit (task 011) and the
 SsdCache / checkpoint tests — the E2E suite uses a memory-backed cache only;
   SsdCache durability tests belong to a dedicated cache-persistence task.
 
-Gluten builder and lifecycle integration — deferred to Tasks 018-019.
+Gluten builder and lifecycle integration — deferred to Task 019.
 
 CH's rename-race lock+retry (`CachedOnDiskReadBufferFromFile.cpp:366-394`) and
   the externally-truncated-segment bypass (`CachedOnDiskReadBufferFromFile.cpp:448-477`)

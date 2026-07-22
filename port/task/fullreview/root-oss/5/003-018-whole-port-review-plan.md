@@ -4,9 +4,9 @@
 
 **Goal:** Review the accepted Tasks 003–018 implementation as one `FileCache` system, close or disposition Review-4 debt, and decide whether Task 017B may start.
 
-**Architecture:** Freeze exact ClickHouse, Velox, and isolated-Gluten baselines after Task 018. First reconcile every unresolved Review-4 decision/finding against the accepted implementation, then trace Task-017A statistics/cancellation/scheduler contracts through Task-018 Gluten lifecycle, Builder, metrics, correctness, and benchmark consumers. An independent reviewer validates the evidence and verdict.
+**Architecture:** Freeze exact ClickHouse and Velox baselines after Task 018. First reconcile every unresolved Review-4 decision/finding against the accepted implementation, then trace Task-017A statistics/cancellation/scheduler contracts through the Velox-only Task-018 correctness and benchmark consumers. An independent reviewer validates the evidence and verdict. Gluten integration belongs to Task 019 and is excluded.
 
-**Tech Stack:** Git, ClickHouse and Velox source-contract analysis, C++/CMake, Folly, Gluten C++/JNI/Java/Scala, GTest, CTest, Maven/ScalaTest, benchmark artifacts.
+**Tech Stack:** Git, ClickHouse and Velox source-contract analysis, C++/CMake, Folly, GTest, CTest, and benchmark artifacts.
 
 ## Global Constraints
 
@@ -18,6 +18,8 @@
 - Any corrective implementation uses a separately reopened numbered task, a fresh Worker, and new commits; never amend or rebase.
 - Real kernel `O_DIRECT` is deferred and non-blocking, but no real-`O_DIRECT` claim is permitted.
 - Task 017B remains blocked until this review records `review_status: accepted`.
+- Task 019 Gluten/Spark integration is excluded and is reviewed only after its
+  own implementation.
 
 ---
 
@@ -30,7 +32,7 @@
 
 **Interfaces:**
 - Consumes: accepted implementation and receipt commits through Task 018
-- Produces: immutable baseline table for all three repositories
+- Produces: immutable baseline table for ClickHouse and Velox
 
 - [ ] **Step 1: Record repository state**
 
@@ -39,8 +41,6 @@ git -C /root/oss/clickhouse --no-pager status --short --branch
 git -C /root/oss/clickhouse --no-pager log -5 --oneline
 git -C /root/oss/velox --no-pager status --short --branch
 git -C /root/oss/velox --no-pager log -5 --oneline
-git -C /root/oss/gluten-018 --no-pager status --short --branch
-git -C /root/oss/gluten-018 --no-pager log -5 --oneline
 ```
 
 Expected: exact accepted Task-018 SHAs are identifiable and no unexplained task-owned changes remain.
@@ -91,21 +91,21 @@ evidence for every changed parity row.
 
 **Interfaces:**
 - Consumes: Task-017A global/query statistics, cancellation, caller identity, scheduler APIs
-- Consumes: Task-018 Velox benchmarks and Gluten lifecycle/Builder/metric carriers
+- Consumes: Task-018 Velox correctness and benchmark artifacts
 - Produces: integrated contract and evidence matrix
 
 - [ ] **Step 1: Trace statistics facts**
 
 Trace cache hits, source reads, predownloads, cache writes, logical bytes, and
 timings from their completion points through `ProfileEvents`,
-`IoStatistics`/`IoStats`, `RuntimeMetric`, JNI, Java, Scala, and Spark
-`SQLMetric`. Require one failing mutation per independent carrier.
+`IoStatistics`/`IoStats`, `FileCacheStatsSnapshot`, and benchmark output.
+Require one failing mutation per independent Velox carrier.
 
 - [ ] **Step 2: Trace cancellation and ownership**
 
 Verify copied token ownership, safe cancellation points, `FileSegment::wait`,
-downloader lease completion, query-pool lifetime, Builder lifetime, Manager
-shutdown, dedicated leaf pool lifetime, and executor ordering.
+downloader lease completion, reader/query-pool lifetime, FileCacheManager
+shutdown, and scheduler ordering.
 
 - [ ] **Step 3: Trace correctness and benchmark claims**
 

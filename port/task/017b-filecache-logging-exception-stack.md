@@ -9,7 +9,7 @@ implementation_authorized: false
 prerequisite: Tasks 003-015 accepted
 task_017a_dependency: none
 execution_after: accepted Review 5 for Tasks 003-018
-task_019_dependency: Task 019 design requires accepted Task 017B
+task_019_dependency: Task 019 implementation requires accepted Task 017B
 implementation_plan: port/task/017b-filecache-logging-exception-stack-plan.md
 ```
 
@@ -47,7 +47,7 @@ focused mono/non-mono tests and mutation evidence.
 
 Task 017B is independent of Task 017A and does not block Task 018. Per user
 decision it is executed after Task 018 and accepted Review 5, and becomes a
-mandatory gate before Task 019 design and production readiness.
+mandatory gate before Task 019 implementation and production readiness.
 
 ## Exclusions
 

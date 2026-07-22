@@ -1,191 +1,120 @@
-# Task 019: Gluten `FileCache` Builder and Lifecycle End-to-End Validation
+# Task 019: Gluten `FileCache` Integration + Spark End-to-End — Index / Status / Ownership
 
-> **Deferred Gluten task.** Do not dispatch in the current Velox-only phase.
->
-> Read `port/task/ENVIRONMENT.md` first. This task modifies only Gluten tests
-> and writes one result file under the ClickHouse checkout. Do not stage or
-> commit either repository.
+> **Deferred Gluten task.** Do not dispatch during the Velox-only phase. Read
+> `port/task/ENVIRONMENT.md` and `port/design/filecache-task-018-019-hard-split.md`
+> first.
 
-## Goal
-
-Validate the Task-018 Gluten integration through the real
-`GlutenBufferedInputBuilder` and `VeloxBackend` lifecycle:
+This document is the **index, status, and ownership record** for Task 019. The
+complete executable implementation plan lives in:
 
 ```text
-FileCache Manager installed -> FileCacheBufferedInput
-no FileCache + AsyncDataCache -> CachedBufferedInput
-no cache -> GlutenDirectBufferedInput
-miss -> fill -> later hit through Builder
-FileCache takes precedence over AsyncDataCache on the same scan path
-VeloxBackend tearDown shuts Manager before executors and memory pool
+port/task/019-filecache-gluten-integration-spark-e2e-plan.md
 ```
+
+## Status
+
+```text
+disposition: planned (blocked)
+blocked_on:
+  - 019-A compatible Velox baseline (hard gate; see below)
+  - Task 017A accepted
+  - accepted Velox-only Task 018
+  - accepted Review 5 (Tasks 003-018 Velox whole-port review)
+  - accepted Task 017B
+plan: port/task/019-filecache-gluten-integration-spark-e2e-plan.md
+worktree: /root/oss/gluten-019 (branch task-019-filecache-gluten), isolated
+```
+
+## Ownership
+
+Task 019 is the **full Gluten integration owner** — not a small test-only
+follow-up to an already-integrated Task 018. After the 2026-07-22 hard split
+(`port/design/filecache-task-018-019-hard-split.md`), Task 018 is **Velox-only**
+and does not build or modify Gluten. Every Gluten C++/JNI/Java/Scala change and
+the Spark end-to-end validation belong to Task 019.
+
+## Subtask map
+
+The plan decomposes Task 019 into six subtasks (executed in order):
+
+```text
+019-A  Compatible Velox baseline for the selected Gluten commit (HARD GATE)
+019-B  Gluten config + VeloxBackend/FileCacheManager lifecycle   (former 018-E)
+019-C  GlutenBufferedInputBuilder selection + canonical identity + copied token (former 018-F)
+019-D  fileCacheWriteBytes native/JNI/Java/Scala/Spark SQLMetric bridge (former 018-G)
+019-E  Native Gluten Builder/lifecycle miss-fill-hit E2E GTest
+019-F  Spark -> Gluten -> Velox -> FileCache correctness + performance E2E
+```
+
+Execution order: `019-A -> 019-B -> 019-C -> 019-D -> 019-E -> 019-F`.
 
 ## Prerequisites
 
-```text
-Task 015 Velox E2E/benchmark succeeded.
-Task 018 Gluten integration succeeded.
-Gluten CMakeCache points VELOX_HOME and VELOX_BUILD_PATH at
-<velox_repo> and its <velox_build_dir> build.
-```
-
-Read:
+Task 019 starts only after **all** of the following are accepted:
 
 ```text
-port/task/ENVIRONMENT.md
-port/task/015-filecache-velox-end-to-end.md
-port/task/018-filecache-gluten-integration.md
-port/task/result/015-filecache-velox-e2e-result.md
-port/task/result/018-filecache-gluten-integration-result.md
+Task 017A (statistics, cancellation, caller identity, scheduler parity)
+Velox-only Task 018 (correctness harness + benchmarks; no Gluten)
+Review 5 (Tasks 003-018 Velox whole-port review)
+Task 017B (logging + exception stack formatting)
 ```
 
-## File scope
+## Compatible Velox hard gate (019-A)
 
-Modify:
+Task 019 must not build Gluten against a mismatched Velox merely because
+`FileCache` compiles there. The selected Gluten commit `4017ec94d` is built
+against its paired `IBM/velox` fork (`ep/build-velox/src/get-velox.sh`
+names `dft-2026_07_03`; the public ref is tag
+`refs/tags/dft-2026_07_03`),
+while the accepted `FileCache` lives on `/root/oss/velox` branch `filecache`.
+Building Gluten `cpp` against `filecache` fails to compile Gluten's own
+operators — observed at `cpp/velox/operators/hashjoin/HashTableSerializer.cc`,
+which calls `HashTable<T>::serializedSize` / `serializeTo` / `deserializeFrom`
+that do not exist on the `FileCache` baseline. The observed missing Velox APIs
+include:
 
 ```text
-<gluten_repo>/cpp/velox/tests/CMakeLists.txt
+HashTable serialization (serializedSize / serializeTo / deserializeFrom)
+OpaqueHashTable
+Parquet session key
+Iceberg constructor surface
 ```
 
-Create:
+019-A must identify or construct one Velox branch containing **both** the
+accepted `FileCache` commits and every Velox API the selected Gluten baseline
+requires, with **no** Gluten source fallback, feature removal, or out-of-scope
+shim. It produces a reviewed compatibility contract
+(`port/task/result/019a-compatible-velox-baseline-contract.md`) consumed by
+019-B..019-F. If a compatible baseline cannot be constructed without a fallback
+or feature deletion, 019-A stops the whole Task-019 pipeline and redispatches to
+design — it stops explicitly instead of deferring the decision.
+
+## Existing work in progress
+
+The uncommitted former-018-E files in `/root/oss/gluten-018` are preserved as
+Task-019 WIP; they are **not** accepted Task-018 changes. Before execution:
 
 ```text
-<gluten_repo>/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
-<clickhouse_repo>/port/task/result/019-filecache-gluten-e2e-result.md
+move/rename the worktree and branch to Task-019 naming (git worktree move + git branch -m);
+rebase and amend are forbidden — new commits only;
+review the retained WIP against the 019-A compatible Velox baseline before building;
+rerun all lifecycle tests, including the real cold FileCacheBufferedInput read.
 ```
 
-## Steps
+## Worktree isolation and commit rule
 
-> **Environment setup:** Before running any configure, build, or test command in this task,
-> follow the selected profile's environment setup from `ENVIRONMENT.md`. For `root-oss`, source
-> `<velox_env>` first.
-
-- [ ] **Step 1: Confirm both repository baselines**
-
-```bash
-cd <velox_repo>
-git --no-pager status --short --branch
-git --no-pager log -1 --oneline
-
-cd <gluten_repo>
-git --no-pager status --short --branch
-git --no-pager log -1 --oneline
-
-grep -E '^(VELOX_HOME|VELOX_BUILD_PATH):' \
-  <gluten_repo>/cpp/build/CMakeCache.txt
-```
-
-Stop if Gluten still points at its bundled `ep/build-velox` checkout.
-
-- [ ] **Step 2: Register the focused Gluten test**
-
-Append to `cpp/velox/tests/CMakeLists.txt`:
-
-```cmake
-add_velox_test(
-  velox_file_cache_e2e_gluten_test
-  SOURCES FileCacheE2EGlutenTest.cpp)
-```
-
-- [ ] **Step 3: Implement real Builder fixtures and tests**
-
-Create `FileCacheE2EGlutenTest.cpp` with the ASF license and real
-`FileHandle`, `ConnectorQueryCtx`, memory pool, optional `AsyncDataCache`,
-`FileCacheManager`, and `GlutenBufferedInputBuilder` objects.
-
-Implement these tests without `GTEST_SKIP`, `DISABLED_`, fake connectors, or
-empty assertions:
-
-```text
-BuilderProducesFileCacheInputWhenManagerInstalled
-BuilderFallsBackToCachedInputWhenNoFileCache
-BuilderFallsBackToDirectInputWhenNoCache
-MissFillHitViaBuilder
-FileCacheExcludesAsyncDataCacheOnSamePath
-VeloxBackendTearDownStopsManagerBeforeRuntimeResources
-```
-
-Every test owns its memory-pool `shared_ptr` for at least as long as its
-Manager. `TearDown` must call Manager shutdown and clear the singleton before
-releasing the pool.
-
-- [ ] **Step 4: Reject false-green tests**
-
-```bash
-if rg -n 'GTEST_SKIP|DISABLED_' \
-  <gluten_repo>/cpp/velox/tests/FileCacheE2EGlutenTest.cpp
-then
-  echo "ERROR: skipped Gluten FileCache test remains"
-  exit 1
-fi
-```
-
-- [ ] **Step 5: Build the external Velox library and Gluten test**
-
-```bash
-<ninja> \
-  -C <velox_build_dir> \
-  velox \
-  > <velox_build_dir>/build_task_019_external_velox.log 2>&1
-
-<cmake> --build <gluten_repo>/cpp/build \
-  --target velox_file_cache_e2e_gluten_test \
-  > <gluten_repo>/cpp/build/build_task_019_gluten_e2e.log 2>&1
-```
-
-Do not add `-j`.
-
-- [ ] **Step 6: Run the focused Gluten test**
-
-```bash
-ctest \
-  --test-dir <gluten_repo>/cpp/build \
-  -R '^velox_file_cache_e2e_gluten_test$' \
-  --output-on-failure \
-  > <gluten_repo>/cpp/build/test_task_019_gluten_e2e.log 2>&1
-```
-
-Expected:
-
-```text
-100% tests passed, 0 tests failed.
-```
-
-- [ ] **Step 7: Inspect task-owned changes**
-
-```bash
-cd <gluten_repo>
-git --no-pager diff --check
-git --no-pager status --short
-git --no-pager diff -- \
-  cpp/velox/tests/CMakeLists.txt \
-  cpp/velox/tests/FileCacheE2EGlutenTest.cpp
-```
-
-Changes remain unstaged and uncommitted.
-
-- [ ] **Step 8: Write the result handoff**
-
-Create `port/task/result/019-filecache-gluten-e2e-result.md` with:
-
-```text
-status: success / blocked / failed
-Velox and Gluten branch, HEAD, dirty status
-files changed
-commands run
-three log paths
-test count and failures
-first actionable error if blocked/failed
-recommended next task: none; Gluten integration acceptance complete
-```
-
-Stop after writing the result file.
+Task 019 uses an isolated Gluten worktree (`/root/oss/gluten-019`). The original
+dirty `/root/oss/gluten` (branch `main`) is never modified. The Worker never
+stages or commits; the Controller reviews the complete Velox and isolated-Gluten
+diffs together and commits accepted work.
 
 ## Explicit exclusions
 
 ```text
-Spark/Scala application-level integration suite
 write-through cache
 overcommit priority
-new FileCache production behavior
+new FileCache production behavior beyond the accepted Task 017A/018 surface
 ```
+
+The Spark/Scala application-level integration suite is **no longer excluded** —
+it is delivered by 019-F in the plan.

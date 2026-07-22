@@ -2,22 +2,25 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Execute the remaining mainline `FileCache` work in the binding order `017A -> 018 -> Review 5 -> 017B`, then open Task 019 design only after all implementation tasks and the whole-port review are accepted.
+**Goal:** Execute the remaining mainline `FileCache` work in the binding order `017A -> 018 -> Review 5 -> 017B -> 019`, with Task 018 Velox-only and Task 019 owning all Gluten/Spark integration.
 
-**Architecture:** Task 017A first establishes the Velox statistics, cancellation, caller identity, and scheduler APIs. Task 018 consumes those accepted APIs in Velox benchmarks and an isolated Gluten worktree. Execution then stops for Review 5, which reviews Tasks 003–018 as one system and closes the deferred Review-4 findings before Task 017B replaces the independent logging/exception shim; no Task 019 implementation is included.
+**Architecture:** Task 017A establishes the Velox statistics, cancellation, caller identity, and scheduler APIs. Task 018 consumes those APIs only in Velox correctness and benchmark binaries. Review 5 reviews Tasks 003–018 as a Velox system and closes Review-4 findings; Task 017B then replaces the logging/exception shim. Task 019 finally establishes a Gluten-compatible Velox baseline and owns lifecycle, Builder, metric bridge, native E2E, and Spark E2E.
 
 **Tech Stack:** C++20, Folly, Velox, Gluten C++/JNI/Java/Scala, CMake/Ninja, GoogleTest, Maven/ScalaTest, shell benchmark orchestration.
 
 ## Global Constraints
 
 - Environment profile: `root-oss`.
-- Binding design: `port/design/filecache-task-017-018-joint-design.md`.
+- Binding designs: `port/design/filecache-task-017-018-joint-design.md` and the
+  ownership amendment `port/design/filecache-task-018-019-hard-split.md`.
 - Worker never stages or commits; Controller reviews and commits accepted work.
 - Never rebase or amend; corrective work uses new commits.
-- Preserve the dirty `/root/oss/gluten` checkout; Task 018 uses an isolated worktree.
+- Preserve the dirty `/root/oss/gluten` checkout; only Task 019 uses an isolated Gluten worktree.
 - No C++ sleeps, no Ninja `-j`, no `nproc`, and all build/test output goes to build-directory logs.
 - A task is not accepted until focused tests, mutations, mono/non-mono or integration gates, accumulated gates, and one read-only task-diff review are green.
-- Real kernel `O_DIRECT`, Task 016, and Task 019 implementation remain excluded.
+- Real kernel `O_DIRECT` and Task 016 remain excluded. Task 019 implementation is
+  excluded from Tasks 017A/018, Review 5, and Task 017B; it begins only in Task 5
+  after all prerequisites are accepted.
 - Review 4 remains `PARITY_BLOCKED` during Tasks 017A/018 but is explicitly non-blocking for those two tasks by user decision. No complete-parity or production-ready claim is allowed before Review 5 closes or dispositionally accepts its remaining rows.
 
 ---
@@ -59,13 +62,12 @@ Expected: Task 017A is accepted before any Task-018 implementation starts.
 
 **Files:**
 - Execute: `port/task/018-filecache-gluten-benchmark-plan.md`
-- Write: `port/task/result/018-filecache-gluten-benchmark-result.md`
+- Write: `port/task/result/018-filecache-velox-benchmark-result.md`
 - Update after acceptance: `port/task/CONTROLLER_HANDOFF.md`
 
 **Interfaces:**
 - Consumes: every Task-017A interface listed in Task 1
-- Produces: Velox correctness/micro/wrapper/TPCH benchmark targets and scripts
-- Produces: Gluten `FileCacheManager` lifecycle, Builder selection, cancellation token boundary, and `fileCacheWriteBytes` SQL metric
+- Produces: Velox correctness, micro, wrapper, orchestration, and TPCH benchmark artifacts
 
 - [ ] **Step 1: Confirm Task 017A is accepted**
 
@@ -76,22 +78,20 @@ grep -n 'controller_status: accepted' \
 
 Expected: one accepted Controller review and no later reopening.
 
-- [ ] **Step 2: Create the isolated Gluten worktree**
+- [ ] **Step 2: Confirm the Velox workspace**
 
-Follow the exact worktree and baseline commands in
-`port/task/018-filecache-gluten-benchmark-plan.md`. Do not copy dirty changes
-from `/root/oss/gluten`.
+Use `/root/oss/velox` only. Task 018 does not create or modify a Gluten worktree.
 
 - [ ] **Step 3: Execute the non-TPCH Task-018 phase**
 
-Run `018-A -> 018-B -> 018-D -> 018-E -> 018-F -> 018-G -> 018-H1`.
+Run `018-A -> 018-B -> 018-D -> 018-H1`.
 Every benchmark target is freshly built in RelWithDebInfo or Release; Debug
 benchmark output is invalid.
 
 - [ ] **Step 4: Stop at the mandatory pre-TPCH checkpoint**
 
 The Worker records non-TPCH evidence and stops. The Controller reviews the
-Velox/Gluten changes and Waves 1–3 artifacts. No TPCH source is copied, no TPCH
+Velox changes and Waves 1–3 artifacts. No TPCH source is copied, no TPCH
 target is built, and no TPCH command runs before explicit user approval.
 
 - [ ] **Step 5: After approval, execute TPCH and finish Task 018**
@@ -99,14 +99,14 @@ target is built, and no TPCH command runs before explicit user approval.
 Dispatch a fresh Task-018 Worker for `018-C -> 018-H2`. Build and run TPCH only
 from RelWithDebInfo or Release.
 
-- [ ] **Step 6: Run the Task-018 cross-repository acceptance gate**
+- [ ] **Step 6: Run the Task-018 Velox acceptance gate**
 
-Review the complete Velox and isolated-Gluten diffs together. Verify the
-dedicated leaf pool, fail-before-allocation mutual exclusion, canonical file
-identity, query token copy, every native/JNI/Java/Scala metric carrier, sentinel
-cleanup, and benchmark result artifacts.
+Review the complete Velox diff. Verify byte/content correctness, physical/logical
+statistics, sentinel cleanup, benchmark build type, result schema, one-split
+fairness, and benchmark artifacts.
 
-Expected: Task 018 is accepted in both repositories, then execution stops for Review 5. Task 017B must not start yet.
+Expected: Velox-only Task 018 is accepted, then execution stops for Review 5.
+Task 017B must not start yet.
 
 ---
 
@@ -120,13 +120,13 @@ Expected: Task 018 is accepted in both repositories, then execution stops for Re
 - Produce: `port/task/fullreview/root-oss/5/003-018-review-decisions-needed.md`
 
 **Interfaces:**
-- Consumes: accepted Tasks 003–018 implementation commits, receipts, designs, tests, and benchmark evidence
+- Consumes: accepted Tasks 003–018 Velox commits, receipts, designs, tests, and benchmark evidence
 - Produces: Review-4 corrective disposition plus an integrated Tasks 017A/018 contract/parity verdict
 
 - [ ] **Step 1: Stop dispatch after Task 018**
 
-Do not start Task 017B. Freeze exact ClickHouse, Velox, and isolated-Gluten
-baselines and run the Review-5 plan.
+Do not start Task 017B. Freeze exact ClickHouse and Velox baselines and run the
+Review-5 plan.
 
 - [ ] **Step 2: Close the Review-5 gate**
 
@@ -155,7 +155,7 @@ Expected: Review 5 records an accepted verdict and explicitly authorizes Task
 
 ```bash
 grep -n 'controller_status: accepted' \
-  port/task/result/018-filecache-gluten-benchmark-result.md
+  port/task/result/018-filecache-velox-benchmark-result.md
 grep -n 'review_status: accepted' \
   port/task/fullreview/root-oss/5/003-018-whole-port-review.md
 ```
@@ -177,31 +177,41 @@ Expected: Task 017B is accepted with zero unresolved findings.
 
 ---
 
-### Task 5: Open Task 019 design only
+### Task 5: Execute Task 019 Gluten integration and Spark E2E
 
 **Files:**
-- Modify after Task 017B acceptance: `port/task/019-filecache-gluten-end-to-end.md`
-- Create after Task 017B acceptance: a dedicated Task-019 design/implementation plan
+- Execute: `port/task/019-filecache-gluten-integration-spark-e2e-plan.md`
+- Write: `port/task/result/019-filecache-gluten-integration-spark-e2e-result.md`
+- Update after acceptance: `port/task/CONTROLLER_HANDOFF.md`
 
 **Interfaces:**
-- Consumes: accepted Tasks 017A, 018, and 017B
-- Produces: reviewed Spark end-to-end correctness/performance design; no implementation in this execution plan
+- Consumes: accepted Tasks 017A/018/017B and accepted Review 5
+- Produces: compatible Velox baseline, Gluten lifecycle/Builder/metric bridge,
+  native E2E, and Spark correctness/performance E2E
 
-- [ ] **Step 1: Verify all three prerequisite receipts**
+- [ ] **Step 1: Verify all prerequisites**
 
 ```bash
 for task in \
   017a-filecache-statistics-cancellation \
-  018-filecache-gluten-benchmark \
+  018-filecache-velox-benchmark \
   017b-filecache-logging-exception-stack; do
   grep -n 'controller_status: accepted' "port/task/result/${task}-result.md"
 done
+grep -n 'review_status: accepted' \
+  port/task/fullreview/root-oss/5/003-018-whole-port-review.md
 ```
 
-Expected: all three receipts are accepted and none has a later reopening.
+Expected: all three receipts and Review 5 are accepted and none has a later
+reopening.
 
-- [ ] **Step 2: Start brainstorming and design for Task 019**
+- [ ] **Step 2: Execute Task 019-A compatibility hard gate**
 
-Task 019 must cover real Spark correctness and performance on the accepted
-Gluten FileCache path. Stop after the reviewed design and executable plan; do not
-implement Task 019 under this plan.
+Do not continue to Gluten implementation until a Velox baseline containing both
+the accepted FileCache and every selected-Gluten API compiles and links the
+Gluten native targets.
+
+- [ ] **Step 3: Execute Task 019-B through 019-F**
+
+Use fresh Workers and task reviews for lifecycle, Builder, metrics, native E2E,
+and Spark E2E. Task 019 is accepted only after all six subtasks are green.

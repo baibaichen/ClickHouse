@@ -79,9 +79,10 @@ Port execution commands must source `<velox_env>` and use the same
 configuration. Keep the port protocol's stricter rules: no `-j` argument and
 configure/build/test logs under `<velox_build_dir>`.
 
-`root-oss` uses Gluten's vcpkg dependencies even before Tasks 018-019, but
+`root-oss` uses Gluten's vcpkg dependencies even before Task 019, but
 selecting this profile does not authorize modifying the existing dirty Gluten
-worktree. Tasks 018-019 are still the only tasks that modify Gluten.
+worktree. Task 018 is Velox-only; Task 019 is the only remaining task that
+modifies Gluten.
 
 ## Rules
 
@@ -95,8 +96,9 @@ worktree. Tasks 018-019 are still the only tasks that modify Gluten.
 - Benchmark binaries must be freshly built and run from a RelWithDebInfo or
   Release build directory. Debug is allowed for functional tests only and
   cannot supply benchmark evidence.
-- Task 018 stops after its non-TPCH phase. Do not copy TPCH sources, build the
-  TPCH target, require TPCH data, or run TPCH before explicit user approval.
+- Task 018 pauses after its non-TPCH phase. Do not copy TPCH sources, build the
+  TPCH target, require TPCH data, or run TPCH before explicit user approval;
+  after approval, a fresh Worker resumes with 018-C/H2.
 - If a command fails, stop and report the first actionable error plus the log
   path.
 - Result files under `port/task/result/` are handoff artifacts. Do not commit
@@ -174,10 +176,10 @@ Run tasks in this order in the same Velox `filecache` worktree:
 | 015 | Velox-only E2E and random-seek benchmark | current MVP acceptance gate |
 | 016 | deferred `WriteBufferToFileSegment` | not dispatched |
 | 017A | statistics, cancellation, caller identity, scheduler parity | focused + mono/non-mono accumulated gates |
-| 018 | Gluten lifecycle/Builder/metrics plus Velox benchmark suite | correctness, native/JNI/Java/Scala, and benchmark gates |
-| Review 5 | Tasks 003–018 whole-port review plus Review-4 corrective closure | accepted review verdict |
+| 018 | Velox correctness, micro/wrapper, orchestration, and TPCH benchmark suite | Velox correctness and benchmark gates |
+| Review 5 | Tasks 003–018 Velox whole-port review plus Review-4 corrective closure | accepted review verdict |
 | 017B | logging and exception stack formatting | focused + mono/non-mono accumulated gates |
-| 019 | Spark end-to-end design after accepted Task 017B | design gate only |
+| 019 | compatible Velox baseline, Gluten lifecycle/Builder/metrics, native and Spark E2E | native/JNI/Java/Scala/Spark integration gates |
 
 Tasks 011 and 012 are one atomic implementation stage. Task 011 must not create
 fake center-SCC definitions or claim a build; Task 012 immediately completes
@@ -193,6 +195,6 @@ findings and the user explicitly approves.
 
 Tasks 003-015 are accepted. Task 016 and real kernel `O_DIRECT` integration are
 deferred by user decision. The reviewed mainline order is Task 017A, Task 018,
-Review 5, then Task 017B; Task 019 design starts only after Task 017B is accepted.
+Review 5, Task 017B, then full Task 019 Gluten/Spark integration.
 Implementation remains gated by `EXECUTION_PROTOCOL.md` and the current
 Controller authorization.

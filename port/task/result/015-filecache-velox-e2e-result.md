@@ -339,3 +339,10 @@ Mock-only coverage is not meaningful final acceptance.
 This remains open until a supported local filesystem test exercises the actual
 kernel path, including aligned reads, EOF tail handling, background tail skip,
 and absence of buffered fallback.
+
+## Post-acceptance Task-018/019 ownership amendment
+
+The accepted receipt above is immutable historical evidence. The later approved
+hard split in `port/design/filecache-task-018-019-hard-split.md` makes Task 018
+the Velox-only correctness/benchmark owner and moves all Gluten host, Builder,
+lifecycle, metrics, native E2E, and Spark E2E work to Task 019.

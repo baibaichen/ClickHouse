@@ -4,16 +4,16 @@
 
 ```text
 environment_profile: root-oss
-design_scope: Tasks 017A, 017B, and 018
+design_scope: Tasks 017A, 017B, and shared statistics/benchmark inputs
 task_016: deferred
-task_019: design deferred until Task 018 is accepted
-implementation_authorized: false
+hard_split: port/design/filecache-task-018-019-hard-split.md
+implementation_authorized: per numbered task status
 ```
 
-This design replaces the current executable instructions in
-`port/task/017-filecache-observability-cancellation.md` and
-`port/task/018-filecache-gluten-integration.md`. The numbered tasks must be
-rewritten from this design before implementation.
+The 2026-07-22 hard split supersedes this document's ownership assignment:
+Task 018 owns only Velox correctness/benchmarks, while Task 019 owns every
+Gluten/Spark item formerly described here. The statistics and benchmark
+architecture remains valid.
 
 ## 1. Goals
 
@@ -40,15 +40,12 @@ both logger and function-name exception logging overloads.
 Task 018 consumes Task-017A APIs:
 
 ```text
-Gluten configuration and FileCacheManager ownership;
-real GlutenBufferedInputBuilder selection;
-query statistics propagated through RuntimeMetric -> Spark SQLMetric;
 the complete Velox correctness/micro/wrapper/TPCH benchmark suite.
 ```
 
-Task 019 is explicitly excluded. Spark end-to-end correctness and performance
-remain required, but they will be designed only after Task 018, Review 5, and
-Task 017B are accepted.
+Task 019 owns Gluten configuration/lifecycle, Builder selection, the
+RuntimeMetric-to-Spark SQLMetric bridge, native Gluten E2E, and Spark E2E after
+Task 018, Review 5, and Task 017B are accepted.
 
 ## 2. Existing debts closed by this design
 
@@ -65,7 +62,7 @@ CachedReadBufferCacheWriteBytes
 ```
 
 Task 014 deliberately deferred raw-byte integration, but the debt was not made
-an explicit gate. Task 017A closes the Velox half; Task 018 proves propagation
+an explicit gate. Task 017A closes the Velox half; Task 019 proves propagation
 through Gluten.
 
 ### 2.2 Task-014 cancellation wiring
@@ -77,7 +74,7 @@ Task 012 already implemented cancellation-aware
 fileSegment.wait(offset, folly::CancellationToken{});
 ```
 
-Task 017A adds value-semantic token propagation and tests. Task 018 extracts the
+Task 017A adds value-semantic token propagation and tests. Task 019 extracts the
 real token from `ConnectorQueryCtx`.
 
 ### 2.3 Task-006 scheduler structure
@@ -216,11 +213,11 @@ bytes are included in both the global source total and query `read`, additionall
 increment query `prefetch`, and never increment `incRawBytesRead`. A failed
 reserve may record source bytes but records zero cache-write bytes.
 
-Task 018 extends Gluten's metric bridge for `fileCacheWriteBytes`; existing
+Task 019 extends Gluten's metric bridge for `fileCacheWriteBytes`; existing
 `storageReadBytes` and `localReadBytes` continue through their current path.
 
 The existing Gluten `pageLoadTimeNs` versus Velox `pageLoadTimeNanos` mismatch
-is a separate bug and is outside Task 018.
+is a separate bug and is outside Task 019.
 
 ### 3.5 Global export
 
@@ -235,14 +232,16 @@ Task 017A:
   component-owned snapshot/delta provider compatible with StatsReporter.
 
 Task 018:
-  benchmark reads snapshots directly;
+  benchmark reads snapshots directly.
+
+Task 019:
   teardown logs a final snapshot.
 
 Deferred:
   concrete Gluten Prometheus/Spark-executor process-global Reporter.
 ```
 
-Task 018 does not add a native HTTP metrics server.
+Task 019 does not add a native HTTP metrics server.
 
 ## 4. Cancellation
 
@@ -288,7 +287,7 @@ condition-variable registration mechanism is needed.
 Task 017B is independent of Task 017A and does not block Task 018. By user
 decision Task 018 acceptance is followed by Review 5, a Tasks 003–018 whole-port
 review that also closes Review-4 debt. Task 017B runs only after Review 5 is
-accepted, and must complete before Task 019 design and before the overall
+accepted, and must complete before Task 019 implementation and before the overall
 FileCache integration is declared production-ready.
 
 Preserve the current logger type and both exception-logging call shapes:
@@ -364,7 +363,7 @@ thread holds `schedule_mutex`.
 Retain `weak_ptr + generation` as a Velox asynchronous-lifetime adaptation.
 ClickHouse's central queue owns a strong task reference; Folly futures do not.
 
-## 7. Gluten ownership and configuration
+## 7. Gluten ownership and configuration (moved to Task 019)
 
 ### 7.1 Configuration
 
@@ -429,7 +428,7 @@ fileCacheMemoryPool_.reset();
 
 This runs before Gluten executor and global memory-manager destruction.
 
-## 8. Builder selection
+## 8. Builder selection (moved to Task 019)
 
 At the builder boundary:
 
@@ -615,24 +614,22 @@ and non-mono builds and preserve all Task-017A tests.
 
 ### 10.3 Task 018
 
-Gluten native tests cover:
+Velox tests and benchmark gates cover:
 
 ```text
-disabled config leaves FileCache absent;
-missing/invalid path and conflicting cache configs fail startup;
-initialization failure publishes no singleton;
-real builder returns FileCacheBufferedInput;
-AsyncDataCache and direct paths remain correct when FileCache is absent;
-key derivation uses FileCacheFileIdentity;
-IoStatistics, IoStats, cancellation token, executor, and options reach the
-  constructed input;
-teardown order and idempotence;
-first-time root-oss configure uses the vcpkg toolchain and current Velox mono
-  build.
+byte-exact direct/CBI/FCBI cold and hot reads;
+FileCache core seek and FileCacheBufferedInput micro paths;
+wrapper all-mode A/B with sentinel-safe cleanup;
+mandatory pre-TPCH approval;
+TPCH rows, result hash, empty error field, one driver, and one split per file;
+RelWithDebInfo/Release-only benchmark evidence.
 ```
 
-Benchmark correctness tests and smoke runs are separate from the Gluten native
-lifecycle tests.
+### 10.4 Task 019
+
+Gluten native/JNI/Java/Scala/Spark tests cover the lifecycle, Builder, metric
+bridge, native miss-fill-hit, and Spark E2E contracts described in the hard
+split design and Task-019 plan.
 
 ## 11. Error handling
 
@@ -653,11 +650,10 @@ No broad catch or success-shaped fallback is introduced.
 
 1. Rewrite Task 017A and Task 017B from this design.
 2. Implement and independently accept Task 017A.
-3. Rewrite Task 018 against the accepted Task-017A API.
-4. Implement Velox benchmark adaptations and Gluten integration under Task 018.
-5. Independently accept Task 018.
-6. Implement and independently accept Task 017B.
-7. Only after Task 017B is accepted, design Task 019.
+3. Implement and independently accept Velox-only Task 018.
+4. Run and accept Review 5 over Tasks 003–018 Velox.
+5. Implement and independently accept Task 017B.
+6. Execute Task 019 compatible-baseline, Gluten, and Spark integration.
 
 Real kernel `O_DIRECT` integration remains a recorded forward obligation but is
 deferred and does not block Tasks 017-018.
@@ -666,7 +662,6 @@ deferred and does not block Tasks 017-018.
 
 ```text
 Task 016 Ephemeral writer;
-Task 019 Spark end-to-end design or implementation;
 concrete Gluten Prometheus/native HTTP metrics server;
 existing Gluten pageLoadTimeNs/pageLoadTimeNanos bug;
 real kernel O_DIRECT integration;

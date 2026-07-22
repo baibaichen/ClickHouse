@@ -132,3 +132,9 @@ Velox HEAD: a856d836c
 Next task: Task 018 non-TPCH phase.
 TPCH remains blocked by checkpoint 018-P.
 ```
+
+## Post-acceptance Task-018/019 ownership amendment
+
+The accepted receipt above is immutable historical evidence. The later approved
+hard split in `port/design/filecache-task-018-019-hard-split.md` moves the
+DataSource-to-Spark consumer from Task 018 to Task 019; Task 018 is Velox-only.

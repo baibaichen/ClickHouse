@@ -1,18 +1,20 @@
-# Task 018: FileCache Gluten Integration + Velox Benchmark Suite — Implementation Plan
+# Task 018: FileCache Velox Benchmark Suite — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Integrate FileCache into Gluten (lifecycle, Builder, metrics bridge) and deliver Velox-side benchmark suite (correctness gate, micro, wrapper A/B, TPCH) consuming accepted Task 017A APIs.
+**Goal:** Deliver a Velox-native FileCache benchmark suite — byte-exact correctness gate, dedicated `FileCacheBufferedInput` micro, wrapper A/B, and TPCH baseline — consuming accepted Task 017A APIs.
 
-**Architecture:** Velox benchmark binaries reuse the `baibaichen/ch-filecache` commit `45387d564` harness with a thin adapter to the current `FileCacheManager` API. Gluten integration lives in an isolated worktree (`/root/oss/gluten-018`) and wires config → lifecycle → Builder → full metric propagation through C++ → JNI → Java → Scala. No code committed by the worker.
+**Architecture:** Velox benchmark binaries reuse the `baibaichen/ch-filecache` commit `45387d564` harness with a thin adapter to the current `FileCacheManager` API, covering byte-exact correctness verification, a dedicated `FileCacheBufferedInput` micro, the wrapper A/B across `direct`/`cbi`/`filecache`, and the TPCH baseline. No code is committed by the worker.
 
-**Tech Stack:** C++20 (Velox — `CMAKE_CXX_STANDARD 20` in `CMakeLists.txt:16`), CMake/Ninja, vcpkg, GTest, folly, Java 8/11 (Gluten JNI), Scala 2.12 (Gluten Spark), gflags.
+**Tech Stack:** C++20 (Velox — `CMAKE_CXX_STANDARD 20` in `CMakeLists.txt:16`), CMake/Ninja, vcpkg, GTest, folly, gflags.
 
 ## Global Constraints
 
 ```text
+Task 018 is Velox-only: no Gluten or Spark integration is in scope.
 Task 017A: accepted; Task 018 consumes its APIs only.
-Task 017B: independent; executes after Task 018 and accepted Review 5.
+Task 017B: independent; executes after Task 018 and accepted Review 5 (Review 5
+reviews Tasks 003-018 as a Velox-only FileCache system).
 Task 019: excluded from this plan entirely.
 No hard performance regression threshold (baseline only).
 No commit by worker; controller commits accepted subtasks.
@@ -22,7 +24,6 @@ Release build directory; Debug benchmark binaries are forbidden.
 External dataset: ${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}
 is required only after 018-P approval; it is not a pre-checkpoint blocker.
 All temp/cache directories use tmp/ relative to CWD or build dirs; never /tmp.
-Gluten dirty worktree (/root/oss/gluten branch main) is never modified.
 All build/test output redirected to log files in the build directory.
 Build/test logs are analyzed by task subagents per protocol.
 No -j or nproc arguments to ninja.
@@ -46,7 +47,7 @@ namespace facebook::velox::ch
 
 /// RuntimeMetric key for bytes written to the FileCache. Used in IoStats
 /// free-form counters; flows through FileDataSource -> RuntimeMetric ->
-/// OperatorStats -> TaskStats -> Gluten JNI -> Spark SQLMetric.
+/// OperatorStats -> TaskStats.
 inline constexpr const char * kFileCacheWriteBytes = "fileCacheWriteBytes";
 
 /// Point-in-time snapshot of FileCache gauges + cumulative counters.
@@ -110,7 +111,7 @@ ioStats_->addCounter(std::string(kFileCacheWriteBytes),
 void addCounter(const std::string& name, RuntimeCounter counter);
 ```
 
-### `FileCacheBufferedInput` constructor (current live, no token yet)
+### `FileCacheBufferedInput` constructor (accepted Task 017A)
 
 ```cpp
 // velox/ch/Disks/IO/FileCacheBufferedInput.h:65-80
@@ -126,29 +127,16 @@ FileCacheBufferedInput(
     std::shared_ptr<velox::IoStats> ioStats,
     folly::Executor * executor,
     const dwio::common::ReaderOptions & readerOptions,
-    folly::F14FastMap<std::string, std::string> fileReadOps = {});
-```
-
-Task 017A appends one parameter at the end:
-```cpp
+    folly::F14FastMap<std::string, std::string> fileReadOps = {},
     folly::CancellationToken cancellationToken = {});
 ```
 
 The **complete** Task-017A constructor order is:
 `readFile, cache, cacheKey, origin, cacheOptions, requestContext, metricsLog, ioStatistics, ioStats, executor, readerOptions, fileReadOps, cancellationToken`
 
-Task 017A also produces the public accessor (consumed by the 018-F builder test):
-```cpp
-const folly::CancellationToken & cancellationToken() const; // returns the stored token
-```
-
-### `ConnectorQueryCtx::cancellationToken` (live at `velox/connectors/Connector.h:558`)
-
-```cpp
-const folly::CancellationToken& cancellationToken() const {
-    return cancellationToken_;
-}
-```
+The appended `cancellationToken` has a default (`= {}`), so the benchmark's
+`FileCacheBufferedInput` construction (via the test helper `makeInput`) needs no
+change; it constructs with the default token.
 
 ---
 
@@ -198,20 +186,17 @@ code is near-copy from the reference commit.
 | ID | Title | Scope | Hard Gate | BLOCKED if |
 |---|---|---|---|---|
 | 018-A | Benchmark adapter + correctness verify | Velox repo | `velox_cache_verify` PASS all modes | Task 017A APIs absent |
-| 018-B | Dedicated FCBI micro target + wrapper A/B smoke | Velox repo | FCBI micro exits 0, 3 CSVs produced with no error rows | 018-A not green |
-| 018-C | TPCH benchmark correctness (post-checkpoint) | Velox repo | `rows` AND `result_hash` identical across modes for q01 | pre-TPCH approval absent or `${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}` unset |
+| 018-B | Dedicated FCBI micro target + wrapper A/B smoke | Velox repo | FCBI micro exits 0; three wrapper Markdown tables produced with cbi/fcbi/dbi rows | 018-A not green |
 | 018-D | Orchestration scripts | Velox repo | `bash -n` clean + sentinel tests pass | 018-A not green |
-| 018-E | Gluten lifecycle + config | Gluten worktree | Lifecycle GTest green | Worktree creation fails |
-| 018-F | Gluten Builder adapter | Gluten worktree | `dynamic_cast<FileCacheBufferedInput*>` succeeds | 018-E not green |
-| 018-G | Complete Gluten metric bridge | Gluten worktree | native `sumRuntimeMetric` + Java carrier + Scala updater tests green, JNI/Java/Scala compile | 018-F not green |
-| 018-H1 | Non-TPCH performance waves 1–3 | Velox repo | RelWithDebInfo/Release outputs collected for core, FCBI, and wrapper modes | 018-B/018-D/018-G not green |
-| 018-P | Mandatory pre-TPCH checkpoint | Controller/user | non-TPCH receipt reviewed and user explicitly approves TPCH | 018-A/B/D/E/F/G/H1 incomplete |
+| 018-H1 | Non-TPCH performance waves 1–3 | Velox repo | RelWithDebInfo/Release outputs collected for core, FCBI, and wrapper modes | 018-B or 018-D not green |
+| 018-P | Mandatory pre-TPCH checkpoint | Controller/user | non-TPCH receipt reviewed and user explicitly approves TPCH | 018-A/B/D/H1 incomplete |
+| 018-C | TPCH benchmark correctness (post-checkpoint) | Velox repo | `rows`, `result_hash`, empty `error`, and zero exit status agree across all three modes for all 22 queries; q01 has rows > 0 | pre-TPCH approval absent or `${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}` unset |
 | 018-H2 | TPCH performance wave 4 (post-checkpoint) | Velox repo | RelWithDebInfo/Release TPCH CSVs collected | 018-P approval absent or 018-C not green |
 
 Execution order:
 
 ```text
-018-A -> 018-B -> 018-D -> 018-E -> 018-F -> 018-G -> 018-H1
+018-A -> 018-B -> 018-D -> 018-H1
   -> STOP at 018-P for user approval
   -> 018-C -> 018-H2
 ```
@@ -223,7 +208,7 @@ Task 017B is independent and scheduled after Task 018 plus accepted Review 5
 
 ## Environment Setup
 
-### Velox benchmark build (RelWithDebInfo)
+### Velox non-TPCH benchmark build (RelWithDebInfo)
 
 ```bash
 source /root/oss/velox-helper/env.sh
@@ -237,7 +222,7 @@ cmake -S /root/oss/velox -B /root/oss/velox/_build/relwithdebinfo -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE" \
   -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
   -DVELOX_ENABLE_BENCHMARKS=ON \
-  -DVELOX_ENABLE_PARQUET=ON \
+  -DVELOX_ENABLE_PARQUET=OFF \
   -DVELOX_BUILD_TESTING=ON \
   -DVELOX_MONO_LIBRARY=ON \
   -DVELOX_GFLAGS_TYPE=static \
@@ -245,30 +230,18 @@ cmake -S /root/oss/velox -B /root/oss/velox/_build/relwithdebinfo -G Ninja \
 echo "exit: $?"
 ```
 
-### Gluten isolated worktree
-
-```bash
-cd /root/oss/gluten
-# Create worktree from current HEAD of main on an explicit new branch
-git worktree add -b task-018-filecache /root/oss/gluten-018 HEAD
-cd /root/oss/gluten-018
-
-source /root/oss/velox-helper/env.sh
-cmake -S cpp -B cpp/build -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE" \
-  -DVELOX_HOME=/root/oss/velox \
-  -DVELOX_BUILD_PATH=/root/oss/velox/_build/debug \
-  > cpp/build/configure_018.log 2>&1
-echo "exit: $?"
-```
-
-This preserves the dirty `/root/oss/gluten` (branch `main`) untouched. The worktree
-has its own branch `task-018-filecache` from the same HEAD commit.
+This RelWithDebInfo tree starts with `-DVELOX_ENABLE_PARQUET=OFF` and is used for
+Tasks 018-A/B/H1. Only after 018-P approval, Task 018-C reconfigures this same
+tree with `-DVELOX_ENABLE_PARQUET=ON` for 018-C/H2.
 
 ---
 
 ## Task 018-A: Benchmark Adapter + Correctness Verify
+
+**Status: COMPLETE** — Velox commit `9850a70fa` ("Task 018: Add `FileCache`
+correctness harness"), branch `filecache`, on top of accepted Task 017A
+(`a856d836c`). The step checkboxes below are retained as the reproducible
+procedure; they are not re-executed unless the harness is rebuilt.
 
 **Files:**
 - Near-copy from `baibaichen/ch-filecache` (commit `45387d564`):
@@ -586,17 +559,16 @@ Re-run:
 
 Remove mutation after confirming RED.
 
-- [ ] **Step 9: Statistics mutation is owned by Task 018-G, not here**
+- [ ] **Step 9: The FileCache statistics carrier is Task 017A-owned; Task 018 does not mutate it**
 
-The only statistics carrier line inside `velox_cache_verify`'s reach is
+The only statistics-carrier line inside `velox_cache_verify`'s reach is
 `FileCacheInputStream.cpp`'s `ioStats_->addCounter(kFileCacheWriteBytes, ...)`,
 which is **Task 017A-owned source** — Task 018 owns no line there, so this plan
 must not mutate it (see Global Constraints: Task 018 consumes Task 017A APIs
-only). The 018-owned statistics carrier and its dedicated RED mutation live in
-Task 018-G (the Gluten `Metrics.getOperatorMetrics` `fileCacheWriteBytes` pass,
-proven by `MetricsCarrierTest`). The content-corruption mutation in Step 8
-above (over the 018-owned `CacheReadHarness.cpp`) is the correctness gate for
-this subtask.
+only). The content-corruption mutation in Step 8 above (over the 018-owned
+`CacheReadHarness.cpp`) is the correctness gate for this subtask. The downstream
+metric-bridge consumer of `kFileCacheWriteBytes` is out of scope for Task 018
+(see *Explicit Exclusions*).
 
 **Gate:** `velox_cache_verify` PASS all modes; Step 8 content-corruption
 mutation confirmed RED then restored.
@@ -604,6 +576,10 @@ mutation confirmed RED then restored.
 ---
 
 ## Task 018-B: Dedicated FCBI Micro + Wrapper A/B Smoke
+
+**Status: COMPLETE** — Velox commit `df9091e78` ("Task 018: Add
+`FileCacheBufferedInput` microbenchmark"), branch `filecache`. The step
+checkboxes below are retained as the reproducible procedure.
 
 **Files:**
 - Already created in 018-A: `velox/dwio/common/benchmarks/BufferedInputWrapperBenchmark.cpp`
@@ -947,121 +923,6 @@ echo "exit: $?"
 **Gate:** All three wrapper Markdown outputs contain the common table header and
 the expected wrapper row. Dedicated FCBI micro and seek micro exit 0. Every
 binary path is under `_build/relwithdebinfo`.
-
----
-
-## Task 018-C: TPCH Benchmark Correctness
-
-**Authorization gate:** This entire section is post-checkpoint. Before the user
-approves 018-P, do not copy the TPCH reference sources, add/build the TPCH
-target, inspect `${TPCH_DATA}`, or run any TPCH command.
-
-**Files:**
-- Near-copy from reference: `velox/benchmarks/tpch/TpchBenchmark.h`, `velox/benchmarks/tpch/TpchBenchmark.cpp`, `velox/benchmarks/tpch/TpchBenchmarkMain.cpp`
-- Modify: `velox/benchmarks/tpch/CMakeLists.txt` (link `velox_benchmark_ab`)
-
-**Interfaces:**
-- Consumes: `AbBenchmarkBase` (from 018-A), `dispatchAbMain`, `QueryBenchmarkBase`
-- Produces: `velox_tpch_benchmark` binary with `--input_source={direct,cbi,filecache}`, `--num_splits_per_file=1`, `--include_results`
-
-**BLOCKED semantics:** If `${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}` is unset, this task cannot run. The variable must point to a directory containing TPC-H SF1+ Parquet files.
-
-- [ ] **Step 1: Copy TPCH benchmark from reference**
-
-```bash
-cd /root/oss/velox
-mkdir -p velox/benchmarks/tpch
-git show baibaichen/ch-filecache:velox/benchmarks/tpch/TpchBenchmark.h > velox/benchmarks/tpch/TpchBenchmark.h
-git show baibaichen/ch-filecache:velox/benchmarks/tpch/TpchBenchmark.cpp > velox/benchmarks/tpch/TpchBenchmark.cpp
-git show baibaichen/ch-filecache:velox/benchmarks/tpch/TpchBenchmarkMain.cpp > velox/benchmarks/tpch/TpchBenchmarkMain.cpp
-git show baibaichen/ch-filecache:velox/benchmarks/tpch/CMakeLists.txt > velox/benchmarks/tpch/CMakeLists.txt
-```
-
-- [ ] **Step 2: Build TPCH benchmark**
-
-```bash
-source /root/oss/velox-helper/env.sh
-ninja -C /root/oss/velox/_build/relwithdebinfo velox_tpch_benchmark \
-  > /root/oss/velox/_build/relwithdebinfo/build_018c.log 2>&1
-echo "exit: $?"
-```
-
-- [ ] **Step 3: Run q01 in all three modes with `num_splits_per_file=1`**
-
-```bash
-mkdir -p tmp
-for MODE in direct cbi filecache; do
-  /root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_benchmark \
-    --input_source=$MODE \
-    --data_path="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
-    --data_format=parquet \
-    --query_id=1 \
-    --rounds=1 \
-    --num_splits_per_file=1 \
-    --num_drivers=4 \
-    --filecache_root=tmp/fc_tpch_$MODE \
-    --filecache_disk_gib=10 \
-    --cache_gb=4 \
-    --out=tmp/tpch_q01_$MODE.csv \
-    > /root/oss/velox/_build/relwithdebinfo/test_018c_$MODE.log 2>&1
-  echo "$MODE exit: $?"
-done
-```
-
-- [ ] **Step 4: Verify row-count AND result-checksum correctness**
-
-Row count alone is insufficient (two different result sets can share a
-cardinality). Compare BOTH `rows` (CSV field 4) and `result_hash` (CSV field 5,
-the commutative `hashValueAt` checksum added to the harness in 018-A):
-
-```bash
-check_row() { awk -F, -v r=2 'NR==r{print $4}' "$1"; }
-check_hash() { awk -F, -v r=2 'NR==r{print $5}' "$1"; }
-ROWS_DIRECT=$(check_row tmp/tpch_q01_direct.csv); HASH_DIRECT=$(check_hash tmp/tpch_q01_direct.csv)
-ROWS_CBI=$(check_row tmp/tpch_q01_cbi.csv);       HASH_CBI=$(check_hash tmp/tpch_q01_cbi.csv)
-ROWS_FC=$(check_row tmp/tpch_q01_filecache.csv);  HASH_FC=$(check_hash tmp/tpch_q01_filecache.csv)
-echo "rows: direct=$ROWS_DIRECT cbi=$ROWS_CBI fc=$ROWS_FC"
-echo "hash: direct=$HASH_DIRECT cbi=$HASH_CBI fc=$HASH_FC"
-if [ "$ROWS_DIRECT" = "$ROWS_CBI" ] && [ "$ROWS_DIRECT" = "$ROWS_FC" ] \
-   && [ "$HASH_DIRECT" = "$HASH_CBI" ] && [ "$HASH_DIRECT" = "$HASH_FC" ] \
-   && [ -n "$HASH_DIRECT" ]; then echo "PASS"; else echo "FAIL"; fi
-```
-
-Expected: PASS — identical row count AND identical result checksum across all
-three modes for q01.
-
-- [ ] **Step 5: Run all 22 queries correctness (rows + checksum)**
-
-```bash
-for Q in $(seq 1 22); do
-  for MODE in direct filecache; do
-    /root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_benchmark \
-      --input_source=$MODE \
-      --data_path="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
-      --data_format=parquet \
-      --query_id=$Q \
-      --rounds=1 \
-      --num_splits_per_file=1 \
-      --num_drivers=4 \
-      --filecache_root=tmp/fc_tpch_correctness_$MODE \
-      --filecache_disk_gib=10 \
-      --cache_gb=4 \
-      --out=tmp/tpch_correctness_q${Q}_$MODE.csv \
-      > /root/oss/velox/_build/relwithdebinfo/test_018c_all_q${Q}_$MODE.log 2>&1
-  done
-  ROWS_D=$(awk -F, 'NR==2{print $4}' tmp/tpch_correctness_q${Q}_direct.csv)
-  ROWS_F=$(awk -F, 'NR==2{print $4}' tmp/tpch_correctness_q${Q}_filecache.csv)
-  HASH_D=$(awk -F, 'NR==2{print $5}' tmp/tpch_correctness_q${Q}_direct.csv)
-  HASH_F=$(awk -F, 'NR==2{print $5}' tmp/tpch_correctness_q${Q}_filecache.csv)
-  if [ "$ROWS_D" != "$ROWS_F" ] || [ "$HASH_D" != "$HASH_F" ] || [ -z "$HASH_D" ]; then
-    echo "FAIL q$Q: rows direct=$ROWS_D fc=$ROWS_F | hash direct=$HASH_D fc=$HASH_F"
-    exit 1
-  fi
-  echo "q$Q PASS ($ROWS_D rows, hash=$HASH_D)"
-done
-```
-
-**Gate:** `rows` AND `result_hash` identical across direct and filecache for all 22 queries (checksum comparison, not row count alone).
 
 ---
 
@@ -1759,7 +1620,7 @@ each one:
 
 ---
 
-**Gate (018-D):** All of the following must be GREEN before proceeding to Task 018-E:
+**Gate (018-D):** All of the following must be GREEN before proceeding to Task 018-H1:
 
 - `bash -n` exits 0 for all three scripts (Step 5).
 - Sentinel safety cases all print `OK` (Step 6): `SENTINEL_REGULAR_OK`,
@@ -1777,1279 +1638,27 @@ each one:
 
 ---
 
-## Task 018-E: Gluten Lifecycle + Config (Fail-Close)
+## Task 018-H1: Non-TPCH Performance Waves (Baseline, No Threshold)
 
-**Files (in `/root/oss/gluten-018`):**
-- Modify: `cpp/velox/config/VeloxConfig.h` — add the five FileCache config keys
-- Create: `cpp/velox/compute/FileCacheSupport.h` — testable `validateFileCacheConfig` + `buildFileCacheManager`
-- Create: `cpp/velox/compute/FileCacheSupport.cc`
-- Modify: `cpp/velox/CMakeLists.txt` — add `compute/FileCacheSupport.cc` to `VELOX_SRCS`
-- Modify: `cpp/velox/compute/VeloxBackend.h` — add `fileCacheManager_` + `fileCacheTimekeeper_` fields and `initFileCache()` declaration
-- Modify: `cpp/velox/compute/VeloxBackend.cc` — implement `initFileCache()`, add mutual-exclusion dispatch in `init()`, extend `tearDown()`
-- Create: `cpp/velox/tests/FileCacheSupportTest.cc` — helper unit tests (no `VeloxBackend`, no global re-init)
-- Create: `cpp/velox/tests/FileCacheGlutenLifecycleTest.cc` — one end-to-end lifecycle test through `VeloxBackend`
-- Modify: `cpp/velox/tests/CMakeLists.txt` — register both test targets
-
-**Interfaces:**
-- Consumes: `FileCacheManager::create` (`:108`), `setInstance` (`:122`), `getInstance` (`:110`), `getDefault` (`:127`), `shutdown` (`:132`), `refreshStats` (`:134`); `FileCacheManager::Options` fields `localFileSystem`/`memoryPool`/`timekeeper` (`:102-104`); `VeloxMemoryManager::getAggregateMemoryPool` (`cpp/velox/memory/VeloxMemoryManager.h:70`); `AllocationListener::noop` (`cpp/core/memory/AllocationListener.h:28`); `filesystems::getFileSystem`; `folly::ThreadWheelTimekeeper`
-- Produces: `gluten::validateFileCacheConfig`, `gluten::buildFileCacheManager`, `VeloxBackend::initFileCache`, the five config keys
-
-**All five approved configuration keys (exact, `namespace gluten`, after `kVeloxSsdCheckSumReadVerificationEnabled` at `VeloxConfig.h:148`):**
-
-```cpp
-const std::string kVeloxFileCacheEnabled =
-    "spark.gluten.sql.columnar.backend.velox.fileCacheEnabled";
-const bool kVeloxFileCacheEnabledDefault = false;
-
-const std::string kVeloxFileCachePath =
-    "spark.gluten.sql.columnar.backend.velox.fileCachePath";
-
-const std::string kVeloxFileCacheSize =
-    "spark.gluten.sql.columnar.backend.velox.fileCacheSize";
-const uint64_t kVeloxFileCacheSizeDefault = 10ULL << 30;
-
-const std::string kVeloxFileCacheMaxSegmentSize =
-    "spark.gluten.sql.columnar.backend.velox.fileCacheMaxSegmentSize";
-const uint64_t kVeloxFileCacheMaxSegmentSizeDefault = 8ULL << 20;
-
-const std::string kVeloxFileCacheBackgroundDownloadThreads =
-    "spark.gluten.sql.columnar.backend.velox.fileCacheBackgroundDownloadThreads";
-const uint64_t kVeloxFileCacheBackgroundDownloadThreadsDefault = 4;
-```
-
-**Testable helper (`cpp/velox/compute/FileCacheSupport.h`):**
-
-Factored out of `VeloxBackend` so the config→manager path is unit-testable
-without constructing a `VeloxBackend` (which would re-init glog + the global
-Velox memory manager on every test — invalid global state). `VeloxBackend`
-becomes a thin caller that supplies production values.
-
-```cpp
-#pragma once
-
-#include <folly/futures/Timekeeper.h>
-
-#include <memory>
-
-namespace facebook::velox {
-namespace config { class ConfigBase; }
-namespace memory { class MemoryPool; }
-namespace filesystems { class FileSystem; }
-namespace ch { class FileCacheManager; }
-} // namespace facebook::velox
-
-namespace gluten {
-
-/// Throws (`VELOX_USER_FAIL`) if the FileCache config is invalid: both
-/// AsyncDataCache and FileCache enabled, or FileCache enabled with empty path.
-/// No-op when FileCache is disabled. Called before either cache is allocated.
-void validateFileCacheConfig(const facebook::velox::config::ConfigBase& conf);
-
-/// Builds and initializes a `FileCacheManager` from `conf`, mapping all five
-/// keys into `FileCacheConfig`/`Options`. Returns nullptr if FileCache is
-/// disabled. Does NOT install the process singleton. The caller keeps
-/// `memoryPool`/`localFileSystem`/`timekeeper` alive for the manager's lifetime.
-std::shared_ptr<facebook::velox::ch::FileCacheManager> buildFileCacheManager(
-    const facebook::velox::config::ConfigBase& conf,
-    facebook::velox::memory::MemoryPool* memoryPool,
-    std::shared_ptr<facebook::velox::filesystems::FileSystem> localFileSystem,
-    std::shared_ptr<folly::Timekeeper> timekeeper);
-
-} // namespace gluten
-```
-
-**`cpp/velox/compute/FileCacheSupport.cc`:**
-
-```cpp
-#include "compute/FileCacheSupport.h"
-
-#include "config/VeloxConfig.h"
-
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheSettings.h"
-#include "velox/common/config/Config.h"
-#include "velox/common/memory/MemoryPool.h"
-
-#include <filesystem>
-
-namespace gluten {
-
-void validateFileCacheConfig(const facebook::velox::config::ConfigBase& conf) {
-  if (!conf.get<bool>(kVeloxFileCacheEnabled, kVeloxFileCacheEnabledDefault)) {
-    return;
-  }
-  // Mutual exclusion: reject both caches enabled BEFORE either is allocated.
-  VELOX_USER_CHECK(
-      !conf.get<bool>(kVeloxCacheEnabled, false),
-      "Cannot enable both AsyncDataCache ({}) and FileCache ({}) simultaneously",
-      kVeloxCacheEnabled,
-      kVeloxFileCacheEnabled);
-  const auto path = conf.get<std::string>(kVeloxFileCachePath, "");
-  VELOX_USER_CHECK(
-      !path.empty(), "{} must be set when FileCache is enabled", kVeloxFileCachePath);
-}
-
-std::shared_ptr<facebook::velox::ch::FileCacheManager> buildFileCacheManager(
-    const facebook::velox::config::ConfigBase& conf,
-    facebook::velox::memory::MemoryPool* memoryPool,
-    std::shared_ptr<facebook::velox::filesystems::FileSystem> localFileSystem,
-    std::shared_ptr<folly::Timekeeper> timekeeper) {
-  validateFileCacheConfig(conf);
-  if (!conf.get<bool>(kVeloxFileCacheEnabled, kVeloxFileCacheEnabledDefault)) {
-    return nullptr;
-  }
-  VELOX_CHECK_NOT_NULL(memoryPool);
-  VELOX_CHECK(
-      memoryPool->kind() == facebook::velox::memory::MemoryPool::Kind::kLeaf,
-      "FileCache requires a leaf memory pool for direct buffer allocations");
-
-  // Stable, dedicated, absolute directory (no random cache.<uuid> suffix): the
-  // FileCache reloads metadata across restarts.
-  const auto cachePath =
-      std::filesystem::absolute(conf.get<std::string>(kVeloxFileCachePath, "")).string();
-  const auto cacheSize = conf.get<uint64_t>(kVeloxFileCacheSize, kVeloxFileCacheSizeDefault);
-  const auto maxSegmentSize =
-      conf.get<uint64_t>(kVeloxFileCacheMaxSegmentSize, kVeloxFileCacheMaxSegmentSizeDefault);
-  const auto bgThreads = conf.get<uint64_t>(
-      kVeloxFileCacheBackgroundDownloadThreads, kVeloxFileCacheBackgroundDownloadThreadsDefault);
-
-  facebook::velox::ch::FileCacheConfig cfg;
-  cfg.path = cachePath;
-  cfg.maxSize = cacheSize; // logical upper bound; no all-free-space precheck.
-  cfg.maxFileSegmentSize = maxSegmentSize;
-  cfg.backgroundDownloadThreads = bgThreads; // maps the 5th key into FileCacheConfig.
-
-  facebook::velox::ch::FileCacheManager::Options opts;
-  opts.caches = {{.name = "default", .config = cfg, .configPath = cachePath}};
-  opts.defaultCacheName = "default";
-  opts.commonUserId = "gluten";
-  opts.cachePathPrefix = cachePath;
-  opts.allowedCacheRoot = cachePath;
-  opts.localFileSystem = std::move(localFileSystem); // validateOptions: non-null.
-  opts.memoryPool = memoryPool;                      // validateOptions: non-null.
-  opts.timekeeper = std::move(timekeeper);           // validateOptions: non-null.
-  opts.initializeOnCreate = true;
-  return facebook::velox::ch::FileCacheManager::create(std::move(opts));
-}
-
-} // namespace gluten
-```
-
-**`VeloxBackend.h` additions:**
-
-Forward-declare the manager and memory pool, and include the timekeeper header
-(the fields are `shared_ptr`, so forward declarations suffice even with the
-inline destructor).
-Near the top:
-```cpp
-#include <folly/futures/ThreadWheelTimekeeper.h>
-
-namespace facebook::velox::ch {
-class FileCacheManager;
-}
-
-namespace facebook::velox::memory {
-class MemoryPool;
-}
-```
-In the private data section, after
-`std::shared_ptr<facebook::velox::config::ConfigBase> backendConf_;`:
-```cpp
-  std::shared_ptr<facebook::velox::ch::FileCacheManager> fileCacheManager_;
-  // Dedicated leaf pool: FileCache performs direct allocations and Velox
-  // rejects allocations on aggregate pools.
-  std::shared_ptr<facebook::velox::memory::MemoryPool> fileCacheMemoryPool_;
-  // Owned production timekeeper (real HHWheelTimer thread) the manager co-owns.
-  std::shared_ptr<folly::ThreadWheelTimekeeper> fileCacheTimekeeper_;
-```
-In the private methods, after `void initCache();`:
-```cpp
-  void initFileCache();
-```
-
-**`initFileCache()` (`VeloxBackend.cc`), supplying exact production values:**
-
-```cpp
-#include "compute/FileCacheSupport.h"
-
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-#include "velox/ch/Common/FileCacheStats.h"
-#include "velox/common/file/FileSystems.h"
-
-#include <folly/futures/ThreadWheelTimekeeper.h>
-
-void VeloxBackend::initFileCache() {
-  if (!backendConf_->get<bool>(kVeloxFileCacheEnabled, kVeloxFileCacheEnabledDefault)) {
-    return;
-  }
-  const auto cachePath = std::filesystem::absolute(
-      backendConf_->get<std::string>(kVeloxFileCachePath, "")).string();
-
-  // Registered local filesystem for the cache path (registerLocalFileSystem()
-  // already ran earlier in init()).
-  auto localFs = facebook::velox::filesystems::getFileSystem(cachePath, nullptr);
-  // Owned production timekeeper.
-  fileCacheTimekeeper_ = std::make_shared<folly::ThreadWheelTimekeeper>();
-  fileCacheMemoryPool_ =
-      globalMemoryManager_->getAggregateMemoryPool()->addLeafChild("filecache");
-
-  fileCacheManager_ = buildFileCacheManager(
-      *backendConf_,
-      fileCacheMemoryPool_.get(),
-      localFs,
-      fileCacheTimekeeper_);
-  facebook::velox::ch::FileCacheManager::setInstance(fileCacheManager_.get());
-  LOG(INFO) << "FileCache is ready at " << cachePath;
-}
-```
-
-**Mutual-exclusion dispatch in `init()` (item: fail BEFORE `initCache()`):**
-
-Replace the single `initCache();` call at `VeloxBackend.cc:295` with a validated
-one-path dispatch. Validation runs before either cache is allocated, so a
-misconfiguration fails fast with no partial startup state, and exactly one cache
-path is initialized:
-
-```cpp
-  // Validate FileCache/AsyncDataCache mutual exclusion BEFORE allocating either
-  // cache. On conflict this throws and no AsyncDataCache is ever constructed.
-  validateFileCacheConfig(*backendConf_);
-  if (backendConf_->get<bool>(kVeloxFileCacheEnabled, kVeloxFileCacheEnabledDefault)) {
-    initFileCache(); // exactly the FileCache path
-  } else {
-    initCache();     // existing AsyncDataCache path (no-op when disabled)
-  }
-```
-
-**Teardown (`VeloxBackend::tearDown`), strict order, before `globalMemoryManager_.reset()`:**
-
-Insert at the very start of `tearDown()` (before `executor_.reset()` and the
-existing `globalMemoryManager_.reset()` at `VeloxBackend.cc:450`):
-
-```cpp
-  // FileCache shutdown BEFORE executors, AsyncDataCache, and the global memory
-  // manager: the manager holds a raw pointer to fileCacheMemoryPool_ and co-owns
-  // fileCacheTimekeeper_. Documented strict order is
-  //   shutdown -> setInstance(nullptr) -> drop the owning shared_ptr.
-  if (fileCacheManager_) {
-    const auto snapshot = facebook::velox::ch::takeFileCacheStatsSnapshot();
-    LOG(INFO) << "FileCache teardown: cacheSize=" << snapshot.cacheSize
-              << " cacheReadBytes=" << snapshot.cacheReadBytes
-              << " sourceReadBytes=" << snapshot.sourceReadBytes
-              << " cacheWriteBytes=" << snapshot.cacheWriteBytes
-              << " hitCount=" << snapshot.cacheHitCount
-              << " missCount=" << snapshot.cacheMissCount;
-    fileCacheManager_->shutdown();
-    facebook::velox::ch::FileCacheManager::setInstance(nullptr);
-    fileCacheManager_.reset();
-    // The manager's raw pool pointer is gone, so the dedicated leaf can now be
-    // released before its aggregate parent/global memory manager.
-    fileCacheMemoryPool_.reset();
-    fileCacheTimekeeper_.reset();
-  }
-```
-
-The existing teardown body (executors, AsyncDataCache dump, `globalMemoryManager_.reset()`) is unchanged and still runs after this block.
-
-- [ ] **Step 1: Add the five config keys to `cpp/velox/config/VeloxConfig.h`**
-
-Insert the exact block above after `kVeloxSsdCheckSumReadVerificationEnabled` (line 148), inside `namespace gluten`.
-
-- [ ] **Step 2: Create `cpp/velox/compute/FileCacheSupport.h` and `.cc`**
-
-Create both files with the exact contents shown above, then add
-`compute/FileCacheSupport.cc` to `VELOX_SRCS` in `cpp/velox/CMakeLists.txt`
-(after `compute/VeloxBackend.cc`, line 159).
-
-- [ ] **Step 3: Add fields + `initFileCache()` declaration + includes to `cpp/velox/compute/VeloxBackend.h`**
-
-- [ ] **Step 4: Implement `initFileCache()` in `cpp/velox/compute/VeloxBackend.cc`** (exact code above)
-
-- [ ] **Step 5: Replace the `initCache();` call at `VeloxBackend.cc:295` with the validated one-path dispatch** (exact code above)
-
-- [ ] **Step 6: Extend `VeloxBackend::tearDown()` with the FileCache shutdown block** (exact code above, at the start of `tearDown`)
-
-- [ ] **Step 7: Create `cpp/velox/tests/FileCacheSupportTest.cc` (helper unit tests, no `VeloxBackend`)**
-
-These tests exercise the factored helpers directly with a test-constructed
-pool/filesystem/timekeeper, so they never re-init glog or the global memory
-manager. `deprecatedAddDefaultLeafMemoryPool` lazily initializes the default
-memory manager (same approach as `FileCacheSeekBenchmark.cpp`).
-
-```cpp
-#include <gtest/gtest.h>
-
-#include <filesystem>
-
-#include "compute/FileCacheSupport.h"
-#include "config/VeloxConfig.h"
-
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-#include "velox/common/config/Config.h"
-#include "velox/common/file/FileSystems.h"
-#include "velox/common/memory/Memory.h"
-
-#include <folly/futures/ThreadWheelTimekeeper.h>
-
-namespace fs = std::filesystem;
-using facebook::velox::config::ConfigBase;
-
-class FileCacheSupportTest : public ::testing::Test {
- protected:
-  std::string testDir_;
-  std::shared_ptr<facebook::velox::memory::MemoryPool> pool_;
-  std::shared_ptr<facebook::velox::filesystems::FileSystem> fs_;
-  std::shared_ptr<folly::ThreadWheelTimekeeper> tk_;
-
-  void SetUp() override {
-    facebook::velox::filesystems::registerLocalFileSystem();
-    testDir_ = fs::absolute("tmp/fc_support_test").string();
-    fs::create_directories(testDir_);
-    pool_ = facebook::velox::memory::deprecatedAddDefaultLeafMemoryPool("fc_support_test");
-    fs_ = facebook::velox::filesystems::getFileSystem(testDir_, nullptr);
-    tk_ = std::make_shared<folly::ThreadWheelTimekeeper>();
-  }
-
-  void TearDown() override {
-    facebook::velox::ch::FileCacheManager::setInstance(nullptr);
-    fs::remove_all(testDir_);
-  }
-
-  std::shared_ptr<ConfigBase> conf(
-      bool fc, bool adc, const std::string& path, uint64_t bgThreads = 4) {
-    return std::make_shared<ConfigBase>(std::unordered_map<std::string, std::string>{
-        {gluten::kVeloxFileCacheEnabled, fc ? "true" : "false"},
-        {gluten::kVeloxCacheEnabled, adc ? "true" : "false"},
-        {gluten::kVeloxFileCachePath, path},
-        {gluten::kVeloxFileCacheSize, std::to_string(64ULL << 20)},
-        {gluten::kVeloxFileCacheBackgroundDownloadThreads, std::to_string(bgThreads)}});
-  }
-};
-
-TEST_F(FileCacheSupportTest, DisabledReturnsNull) {
-  auto c = conf(false, false, testDir_);
-  EXPECT_EQ(gluten::buildFileCacheManager(*c, pool_.get(), fs_, tk_), nullptr);
-}
-
-TEST_F(FileCacheSupportTest, MissingPathThrows) {
-  auto c = conf(true, false, "");
-  EXPECT_ANY_THROW(gluten::validateFileCacheConfig(*c));
-  EXPECT_ANY_THROW(gluten::buildFileCacheManager(*c, pool_.get(), fs_, tk_));
-}
-
-TEST_F(FileCacheSupportTest, BothCachesEnabledThrows) {
-  auto c = conf(true, true, testDir_);
-  EXPECT_ANY_THROW(gluten::validateFileCacheConfig(*c));
-}
-
-TEST_F(FileCacheSupportTest, ValidConfigBuildsManager) {
-  auto c = conf(true, false, testDir_ + "/valid");
-  ASSERT_EQ(
-      pool_->kind(),
-      facebook::velox::memory::MemoryPool::Kind::kLeaf);
-  auto mgr = gluten::buildFileCacheManager(*c, pool_.get(), fs_, tk_);
-  ASSERT_NE(mgr, nullptr);
-  ASSERT_NE(mgr->getDefault(), nullptr);
-  mgr->shutdown();
-}
-
-TEST_F(FileCacheSupportTest, AggregatePoolIsRejectedBeforeManagerCreation) {
-  auto c = conf(true, false, testDir_ + "/aggregate");
-  ASSERT_NE(pool_->parent(), nullptr);
-  ASSERT_NE(
-      pool_->parent()->kind(),
-      facebook::velox::memory::MemoryPool::Kind::kLeaf);
-  EXPECT_ANY_THROW(
-      gluten::buildFileCacheManager(*c, pool_->parent(), fs_, tk_));
-}
-
-TEST_F(FileCacheSupportTest, BackgroundThreadsMappedToConfig) {
-  // backgroundDownloadThreads feeds FileCacheFactory::computeCacheWorkerMax
-  // (velox/ch/Interpreters/FileCache/FileCacheFactory.cpp:411), so it shows up
-  // in refreshStats().workerPoolMax. Two builds differing only in the thread
-  // count must differ in workerPoolMax by exactly that delta.
-  auto c2 = conf(true, false, testDir_ + "/two", /*bgThreads=*/2);
-  auto c8 = conf(true, false, testDir_ + "/eight", /*bgThreads=*/8);
-  auto m2 = gluten::buildFileCacheManager(*c2, pool_.get(), fs_, tk_);
-  auto m8 = gluten::buildFileCacheManager(*c8, pool_.get(), fs_, tk_);
-  ASSERT_NE(m2, nullptr);
-  ASSERT_NE(m8, nullptr);
-  EXPECT_EQ(m8->refreshStats().workerPoolMax - m2->refreshStats().workerPoolMax, 6u);
-  m8->shutdown();
-  m2->shutdown();
-}
-```
-
-- [ ] **Step 8: Create `cpp/velox/tests/FileCacheGlutenLifecycleTest.cc` (one end-to-end lifecycle test)**
-
-Exactly one `VeloxBackend::create` call (in the single test), so glog and the
-global memory manager are initialized once. Uses `AllocationListener::noop()`,
-following the live pattern at `cpp/velox/tests/BufferOutputStreamTest.cc:32` and
-`cpp/velox/tests/MemoryManagerTest.cc:53`.
-
-```cpp
-#include <gtest/gtest.h>
-
-#include <filesystem>
-
-#include "compute/VeloxBackend.h"
-#include "config/VeloxConfig.h"
-
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-
-namespace fs = std::filesystem;
-
-// Single test: create the backend once with FileCache enabled, assert the
-// manager is installed with a default cache, tear down, assert it is withdrawn.
-TEST(FileCacheGlutenLifecycleTest, InstallAndTeardownThroughBackend) {
-  const std::string dir = fs::absolute("tmp/fc_lifecycle_test").string();
-  fs::create_directories(dir);
-
-  std::unordered_map<std::string, std::string> conf{
-      {gluten::kVeloxFileCacheEnabled, "true"},
-      {gluten::kVeloxFileCachePath, dir},
-      {gluten::kVeloxFileCacheSize, std::to_string(64ULL << 20)}};
-
-  gluten::VeloxBackend::create(gluten::AllocationListener::noop(), conf);
-  EXPECT_NE(facebook::velox::ch::FileCacheManager::getInstance(), nullptr);
-  EXPECT_NE(facebook::velox::ch::FileCacheManager::getInstance()->getDefault(), nullptr);
-
-  gluten::VeloxBackend::get()->tearDown();
-  EXPECT_EQ(facebook::velox::ch::FileCacheManager::getInstance(), nullptr);
-
-  fs::remove_all(dir);
-}
-```
-
-- [ ] **Step 9: Register both tests in `cpp/velox/tests/CMakeLists.txt`**
-
-```cmake
-add_velox_test(velox_file_cache_support_test SOURCES FileCacheSupportTest.cc)
-add_velox_test(velox_file_cache_gluten_lifecycle_test SOURCES FileCacheGlutenLifecycleTest.cc)
-```
-
-- [ ] **Step 10: Build and run both test targets**
-
-```bash
-cd /root/oss/gluten-018
-ninja -C cpp/build velox_file_cache_support_test velox_file_cache_gluten_lifecycle_test \
-  > cpp/build/build_018e.log 2>&1
-ctest --test-dir cpp/build \
-  -R '^velox_file_cache_(support|gluten_lifecycle)_test$' --output-on-failure \
-  > cpp/build/test_018e.log 2>&1
-echo "exit: $?"
-```
-
-A subagent analyzes `build_018e.log`/`test_018e.log` and returns a concise summary.
-
-- [ ] **Step 11: Mutation — remove the mutual-exclusion check**
-
-**File:** `cpp/velox/compute/FileCacheSupport.cc`
-**Function:** `gluten::validateFileCacheConfig`
-
-Comment out the `VELOX_USER_CHECK(!conf.get<bool>(kVeloxCacheEnabled, false), ...)`
-mutual-exclusion check (2 lines).
-
-Re-run: `ctest --test-dir cpp/build -R '^velox_file_cache_support_test$' --output-on-failure`
-
-**Expected failed assertion:** `FileCacheSupportTest.BothCachesEnabledThrows`'s
-`EXPECT_ANY_THROW(gluten::validateFileCacheConfig(*c))` sees no throw — test
-reports FAILED. Restore after confirming RED.
-
-- [ ] **Step 12: Mutation — drop the background-threads mapping**
-
-**File:** `cpp/velox/compute/FileCacheSupport.cc`
-**Function:** `gluten::buildFileCacheManager`
-
-Comment out `cfg.backgroundDownloadThreads = bgThreads;`.
-
-Re-run: `ctest --test-dir cpp/build -R '^velox_file_cache_support_test$' --output-on-failure`
-
-**Expected failed assertion:** `FileCacheSupportTest.BackgroundThreadsMappedToConfig`'s
-`EXPECT_EQ(delta, 6u)` fails (both builds now report the default thread count).
-Restore after confirming RED.
-
-**Gate:** Both test targets pass; the two mutations prove mutual-exclusion and
-the 5th-key mapping are covered. The `MissingPathThrows` and
-`ValidConfigBuildsManager` cases cover path validation and successful
-construction; the lifecycle test covers end-to-end install/teardown ordering.
-
----
-
-## Task 018-F: Gluten Builder Adapter
-
-**Files (in `/root/oss/gluten-018`):**
-- Modify: `cpp/velox/memory/GlutenBufferedInputBuilder.h` — add FileCache selection logic
-- Create: `cpp/velox/tests/FileCacheGlutenBuilderTest.cc`
-- Modify: `cpp/velox/tests/CMakeLists.txt`
-
-**Interfaces:**
-- Consumes: `FileCacheManager::getInstance` (`:110`), `FileCacheManager::getDefault` (`:127`), `FileCacheManager::commonUserId` (`:128`), `FileCacheFileIdentity::deriveKey` (`FileCacheFileIdentity.h:44`), `ReaderOptions::cacheable` (`Options.h:857`), `FileCacheRequestContext::segmentType`/`FileCacheOriginInfo::segment_type`, `FileCacheBufferedInput` constructor + `cancellationToken()` accessor (Task 017A version with token), `ConnectorQueryCtx::cancellationToken` (`:558`)
-- Produces: Builder that returns `FileCacheBufferedInput` when the manager is installed, preserving the CBI and direct paths unchanged
-
-**Builder implementation (exact, based on live `GlutenBufferedInputBuilder.h:27-62`):**
-
-The `create` method signature is:
-```cpp
-std::unique_ptr<facebook::velox::dwio::common::BufferedInput> create(
-    const facebook::velox::FileHandle& fileHandle,
-    const facebook::velox::dwio::common::ReaderOptions& readerOpts,
-    const facebook::velox::connector::ConnectorQueryCtx* connectorQueryCtx,
-    std::shared_ptr<facebook::velox::io::IoStatistics> ioStatistics,
-    std::shared_ptr<facebook::velox::IoStats> ioStats,
-    folly::Executor* executor,
-    const folly::F14FastMap<std::string, std::string>& fileReadOps = {}) override
-```
-
-Add FileCache branch BEFORE the existing CBI check:
-
-```cpp
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-#include "velox/ch/Disks/IO/FileCacheFileIdentity.h"
-#include "velox/ch/Disks/IO/FileCacheBufferedInput.h"
-#include "velox/ch/Disks/IO/FileCacheRequestContext.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheReadOptions.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheOriginInfo.h"
-
-// In GlutenBufferedInputBuilder::create(), as first branch:
-auto* fcManager = facebook::velox::ch::FileCacheManager::getInstance();
-if (fcManager != nullptr)
-{
-    auto defaultCache = fcManager->getDefault();
-    VELOX_CHECK_NOT_NULL(defaultCache.get(), "FileCacheManager has no default cache");
-
-    const std::string path = fileHandle.file->getName();
-    auto cacheKey = facebook::velox::ch::FileCacheFileIdentity::deriveKey({path, ""});
-
-    facebook::velox::ch::FileCacheRequestContext reqCtx;
-    reqCtx.queryId = connectorQueryCtx->queryId();
-    reqCtx.userId = fcManager->commonUserId();
-    reqCtx.cacheable = readerOpts.cacheable(); // ReaderOptions::cacheable (Options.h:857)
-    // reqCtx.segmentType stays FileSegmentKeyType::Data (default).
-
-    facebook::velox::ch::FileCacheReadOptions cacheOpts;
-    cacheOpts.remoteFsBufferSize = readerOpts.loadQuantum();
-    cacheOpts.localFsBufferSize = readerOpts.loadQuantum();
-
-    // Origin: weight left as std::nullopt; segment type taken from the request.
-    // (The 3-arg FileCacheOriginInfo ctor would force a concrete weight, so set
-    // the field directly to keep weight == std::nullopt.)
-    facebook::velox::ch::FileCacheOriginInfo origin(reqCtx.userId);
-    origin.segment_type = reqCtx.segmentType;
-
-    folly::CancellationToken token = connectorQueryCtx->cancellationToken();
-
-    // Constructor order (Task 017A): readFile, cache, key, origin, cacheOptions,
-    // requestContext, metricsLog, ioStatistics, ioStats, executor,
-    // readerOptions, fileReadOps, cancellationToken
-    return std::make_unique<facebook::velox::ch::FileCacheBufferedInput>(
-        fileHandle.file,
-        std::move(defaultCache),
-        std::move(cacheKey),
-        std::move(origin),
-        std::move(cacheOpts),
-        std::move(reqCtx),
-        facebook::velox::dwio::common::MetricsLog::voidLog(),
-        std::move(ioStatistics),
-        std::move(ioStats),
-        executor,
-        readerOpts,
-        fileReadOps,
-        std::move(token));
-}
-// --- Existing CBI and direct paths below are the current live create() body,
-// --- copied verbatim so the non-FileCache behavior is preserved exactly. ---
-if (connectorQueryCtx->cache())
-{
-    return std::make_unique<facebook::velox::dwio::common::CachedBufferedInput>(
-        fileHandle.file,
-        dwio::common::MetricsLog::voidLog(),
-        fileHandle.uuid,
-        connectorQueryCtx->cache(),
-        facebook::velox::connector::Connector::getTracker(connectorQueryCtx->scanId(), readerOpts.loadQuantum()),
-        fileHandle.groupId,
-        std::move(ioStatistics),
-        std::move(ioStats),
-        executor,
-        readerOpts,
-        fileReadOps);
-}
-return std::make_unique<GlutenDirectBufferedInput>(
-    fileHandle.file,
-    dwio::common::MetricsLog::voidLog(),
-    fileHandle.uuid,
-    facebook::velox::connector::Connector::getTracker(connectorQueryCtx->scanId(), readerOpts.loadQuantum()),
-    fileHandle.groupId,
-    std::move(ioStatistics),
-    std::move(ioStats),
-    executor,
-    readerOpts,
-    fileReadOps);
-```
-
-`FileCacheManager::commonUserId()` is a public accessor
-(`velox/ch/Interpreters/FileCache/FileCacheManager.h:128`), returning the
-`commonUserId` supplied to `Options`.
-
-- [ ] **Step 1: Add FileCache selection logic to `cpp/velox/memory/GlutenBufferedInputBuilder.h`**
-- [ ] **Step 2: Create `cpp/velox/tests/FileCacheGlutenBuilderTest.cc`**
-
-```cpp
-#include <gtest/gtest.h>
-
-#include <filesystem>
-#include <fstream>
-
-#include "memory/GlutenBufferedInputBuilder.h"
-
-#include "velox/ch/Disks/IO/FileCacheBufferedInput.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheManager.h"
-#include "velox/ch/Interpreters/FileCache/FileCacheSettings.h"
-#include "velox/common/caching/FileHandle.h"
-#include "velox/common/caching/FileIds.h"
-#include "velox/common/file/FileSystems.h"
-#include "velox/common/file/LocalFile.h"
-#include "velox/common/io/IoStatistics.h"
-#include "velox/common/memory/Memory.h"
-#include "velox/connectors/Connector.h"
-
-#include <folly/CancellationToken.h>
-#include <folly/futures/ThreadWheelTimekeeper.h>
-
-namespace fs = std::filesystem;
-using namespace facebook::velox;
-
-class FileCacheGlutenBuilderTest : public ::testing::Test {
- protected:
-  std::string testDir_;
-  std::string testFile_;
-  std::string cacheDir_;
-  std::shared_ptr<memory::MemoryPool> pool_;
-  std::shared_ptr<filesystems::FileSystem> fs_;
-  std::shared_ptr<folly::ThreadWheelTimekeeper> tk_;
-  std::shared_ptr<config::ConfigBase> sessionProps_;
-  std::shared_ptr<ch::FileCacheManager> fcManager_;
-
-  void SetUp() override {
-    filesystems::registerLocalFileSystem();
-    testDir_ = fs::absolute("tmp/fc_builder_test").string();
-    cacheDir_ = testDir_ + "/cache";
-    testFile_ = testDir_ + "/data.bin";
-    fs::create_directories(testDir_);
-    {
-      std::ofstream ofs(testFile_, std::ios::binary);
-      const std::string data(4096, 'X');
-      ofs.write(data.data(), data.size());
-    }
-    pool_ = memory::deprecatedAddDefaultLeafMemoryPool("fc_builder_test");
-    fs_ = filesystems::getFileSystem(cacheDir_, nullptr);
-    tk_ = std::make_shared<folly::ThreadWheelTimekeeper>();
-    // Non-null session properties: ConnectorQueryCtx VELOX_CHECK_NOT_NULLs it.
-    sessionProps_ =
-        std::make_shared<config::ConfigBase>(std::unordered_map<std::string, std::string>{});
-  }
-
-  void TearDown() override {
-    ch::FileCacheManager::setInstance(nullptr);
-    fcManager_.reset();
-    fs::remove_all(testDir_);
-  }
-
-  void installFileCache() {
-    ch::FileCacheConfig cfg;
-    cfg.path = cacheDir_;
-    cfg.maxSize = 64ULL << 20;
-    ch::FileCacheManager::Options opts;
-    opts.caches = {{.name = "default", .config = cfg, .configPath = cacheDir_}};
-    opts.defaultCacheName = "default";
-    opts.commonUserId = "test";
-    opts.cachePathPrefix = cacheDir_;
-    opts.allowedCacheRoot = cacheDir_;
-    opts.localFileSystem = fs_;
-    opts.memoryPool = pool_.get();
-    opts.timekeeper = tk_;
-    opts.initializeOnCreate = true;
-    fcManager_ = ch::FileCacheManager::create(std::move(opts));
-    ch::FileCacheManager::setInstance(fcManager_.get());
-  }
-
-  // Single shared helper: builds a real FileHandle + ConnectorQueryCtx (real
-  // constructor order; cancellationToken is the 14th ctor arg) and runs the
-  // builder. The returned input copies what it needs, so the local connCtx may
-  // be destroyed on return.
-  std::unique_ptr<dwio::common::BufferedInput> runBuilder(
-      folly::CancellationToken token = {}) {
-    gluten::GlutenBufferedInputBuilder builder;
-    auto readFile = std::make_shared<facebook::velox::LocalReadFile>(testFile_);
-    FileHandle fileHandle;
-    fileHandle.file = readFile;
-    fileHandle.uuid = StringIdLease(fileIds(), testFile_);
-    fileHandle.groupId = StringIdLease(fileIds(), testFile_);
-    dwio::common::ReaderOptions readerOpts(pool_.get());
-    auto ioStats = std::make_shared<io::IoStatistics>();
-    auto ioStatsObj = std::make_shared<velox::IoStats>();
-    connector::ConnectorQueryCtx connCtx(
-        pool_.get(),                // operatorPool
-        pool_.get(),                // connectorPool
-        sessionProps_.get(),        // sessionProperties (non-null)
-        nullptr,                    // spillConfig
-        common::PrefixSortConfig{}, // prefixSortConfig
-        nullptr,                    // expressionEvaluator
-        nullptr,                    // cache (no AsyncDataCache)
-        "test-query",               // queryId
-        "task-0",                   // taskId
-        "plan-0",                   // planNodeId
-        0,                          // driverId
-        "UTC",                      // sessionTimezone
-        /*adjustTimestampToTimezone=*/false,
-        token);                     // cancellationToken (14th param)
-    return builder.create(fileHandle, readerOpts, &connCtx, ioStats, ioStatsObj, nullptr);
-  }
-};
-
-TEST_F(FileCacheGlutenBuilderTest, ReturnsFileCacheBufferedInputWhenManagerInstalled) {
-  installFileCache();
-  auto result = runBuilder();
-  auto* fcbi = dynamic_cast<ch::FileCacheBufferedInput*>(result.get());
-  ASSERT_NE(fcbi, nullptr);
-}
-
-TEST_F(FileCacheGlutenBuilderTest, ReturnsDirectWhenNoCache) {
-  // No FileCacheManager installed and no AsyncDataCache: expect the direct path.
-  auto result = runBuilder();
-  ASSERT_NE(result.get(), nullptr);
-  EXPECT_EQ(dynamic_cast<ch::FileCacheBufferedInput*>(result.get()), nullptr);
-}
-
-TEST_F(FileCacheGlutenBuilderTest, CopiedCancellationTokenReachesInput) {
-  installFileCache();
-  folly::CancellationSource src;
-  auto result = runBuilder(src.getToken());
-  auto* fcbi = dynamic_cast<ch::FileCacheBufferedInput*>(result.get());
-  ASSERT_NE(fcbi, nullptr);
-  // The token is stored by value; cancelling the source is observed through the
-  // FCBI accessor (FileCacheBufferedInput::cancellationToken(), Task 017A).
-  EXPECT_FALSE(fcbi->cancellationToken().isCancellationRequested());
-  src.requestCancellation();
-  EXPECT_TRUE(fcbi->cancellationToken().isCancellationRequested());
-}
-```
-
-- [ ] **Step 3: Register test target in CMakeLists.txt**
-
-```cmake
-add_velox_test(velox_file_cache_gluten_builder_test SOURCES FileCacheGlutenBuilderTest.cc)
-```
-
-- [ ] **Step 4: Build and run**
-
-```bash
-cd /root/oss/gluten-018
-ninja -C cpp/build velox_file_cache_gluten_builder_test \
-  > cpp/build/build_018f.log 2>&1
-ctest --test-dir cpp/build -R '^velox_file_cache_gluten_builder_test$' \
-  --output-on-failure > cpp/build/test_018f.log 2>&1
-echo "exit: $?"
-```
-
-- [ ] **Step 5: Mutation — remove FileCache branch**
-
-**File:** `cpp/velox/memory/GlutenBufferedInputBuilder.h`
-**Function:** `GlutenBufferedInputBuilder::create`
-
-Comment out the entire `if (fcManager != nullptr)` block.
-
-Re-run: `ctest --test-dir cpp/build -R '^velox_file_cache_gluten_builder_test$' --output-on-failure`
-
-**Expected failed assertions:** `ReturnsFileCacheBufferedInputWhenManagerInstalled` and `CopiedCancellationTokenReachesInput` both `dynamic_cast` to `ch::FileCacheBufferedInput*` and get `nullptr` — their `ASSERT_NE(fcbi, nullptr)` report FAILED.
-
-Restore after confirming RED.
-
-**Gate:** All three builder tests pass (FCBI selection, direct fallback, and
-copied-cancellation-token observed via `fcbi->cancellationToken()`); the
-mutation proves the FileCache branch is covered.
-
----
-
-## Task 018-G: Complete Gluten Metric Bridge
-
-**Goal:** Wire `fileCacheWriteBytes` end-to-end from C++ `IoStats` through JNI to Spark `SQLMetric`.
-
-**Metric propagation path (traced from live code):**
-
-```text
-FileCacheInputStream::read
-  -> ioStats_->addCounter("fileCacheWriteBytes", RuntimeCounter(bytesWritten, RuntimeCounter::Unit::kBytes))
-     [velox/common/file/File.h:57, Task 017A code]
-
-FileDataSource collects RuntimeMetrics from IoStats into operator customStats
-  -> OperatorStats.customStats["fileCacheWriteBytes"]
-
-exec::toPlanStats aggregates per-node
-  -> PlanNodeStats.operatorStats[i].customStats["fileCacheWriteBytes"]
-
-WholeStageResultIterator::collectMetrics  [cpp/velox/compute/WholeStageResultIterator.cc, collectMetrics()]
-  -> metrics_->get(Metrics::kFileCacheWriteBytes)[metricIndex] =
-       gluten::sumRuntimeMetric(second->customStats, kFileCacheWriteBytes);
-     [extracted testable helper, cpp/velox/compute/RuntimeMetricUtil.h]
-
-JniWrapper.cc NewObject call  [cpp/core/jni/JniWrapper.cc:637-685]
-  -> longArray[Metrics::kFileCacheWriteBytes],
-  (after kLoadLazyVectorTime, before the taskStats string)
-
-Java Metrics.java constructor  [backends-velox/src/main/java/org/apache/gluten/metrics/Metrics.java:120]
-  -> receives long[] fileCacheWriteBytes parameter (after loadLazyVectorTime, before taskStats)
-  -> stores in public long[] fileCacheWriteBytes field
-
-Java Metrics.getOperatorMetrics  [backends-velox/src/main/java/org/apache/gluten/metrics/Metrics.java:219]
-  -> passes fileCacheWriteBytes[index] to OperatorMetrics constructor (after loadLazyVectorTime[index])
-
-Java OperatorMetrics.java  [backends-velox/src/main/java/org/apache/gluten/metrics/OperatorMetrics.java:112]
-  -> constructor receives long fileCacheWriteBytes (after long loadLazyVectorTime)
-  -> stores in public long fileCacheWriteBytes field
-
-Scala MetricsUtil.mergeMetrics  [backends-velox/src/main/scala/org/apache/gluten/metrics/MetricsUtil.scala:185]
-  -> a SECOND `new OperatorMetrics(...)` call site: accumulate fileCacheWriteBytes
-     across the merged suites and pass it as the last constructor argument
-     (mandatory — otherwise backends-velox fails to compile once OperatorMetrics
-     gains the parameter)
-
-Scala FileSourceScanMetricsUpdater.updateNativeMetrics  [backends-velox/src/main/scala/org/apache/gluten/metrics/FileSourceScanMetricsUpdater.scala:92]
-  -> ScanMetricsUtil.inc(fileCacheWriteBytes, operatorMetrics.fileCacheWriteBytes)
-
-Scala VeloxMetricsApi.genFileSourceScanTransformerMetricsFull  [backends-velox/src/main/scala/org/apache/gluten/backendsapi/velox/VeloxMetricsApi.scala:266]
-  -> "fileCacheWriteBytes" -> SQLMetrics.createSizeMetric(sparkContext, "file cache write bytes")
-```
-
-**Files (in `/root/oss/gluten-018`):**
-
-| Layer | File | Change |
-|---|---|---|
-| C++ enum | `cpp/core/utils/Metrics.h` | Add `kFileCacheWriteBytes` before `kEnd` (after `kLoadLazyVectorTime`) |
-| C++ helper | `cpp/velox/compute/RuntimeMetricUtil.h` / `.cc` (NEW) | Testable `gluten::sumRuntimeMetric(customStats, key)` used by `collectMetrics` |
-| C++ constant | `cpp/velox/compute/WholeStageResultIterator.cc` | Add `const std::string kFileCacheWriteBytes = "fileCacheWriteBytes";` at file scope |
-| C++ collect | `cpp/velox/compute/WholeStageResultIterator.cc` | Add propagation line in `collectMetrics` using `gluten::sumRuntimeMetric` |
-| C++ build | `cpp/velox/CMakeLists.txt` | Add `compute/RuntimeMetricUtil.cc` to `VELOX_SRCS` |
-| JNI call | `cpp/core/jni/JniWrapper.cc` | Add `longArray[Metrics::kFileCacheWriteBytes],` after `kLoadLazyVectorTime` line |
-| JNI signature | `cpp/core/jni/JniWrapper.cc` | Update `"<init>"` signature (one more `[J` before `Ljava/lang/String;`) |
-| Java Metrics | `backends-velox/src/main/java/org/apache/gluten/metrics/Metrics.java` | Add `public long[] fileCacheWriteBytes;` field, constructor param, assignment, getOperatorMetrics pass |
-| Java OperatorMetrics | `backends-velox/src/main/java/org/apache/gluten/metrics/OperatorMetrics.java` | Add `public long fileCacheWriteBytes;` field, constructor param, assignment |
-| Scala MetricsUtil | `backends-velox/src/main/scala/org/apache/gluten/metrics/MetricsUtil.scala` | `mergeMetrics`: accumulate `fileCacheWriteBytes`, pass to the 2nd `new OperatorMetrics` |
-| Scala VeloxMetricsApi | `backends-velox/src/main/scala/org/apache/gluten/backendsapi/velox/VeloxMetricsApi.scala` | Add entry in `genFileSourceScanTransformerMetricsFull` Map |
-| Scala FileSourceScanMetricsUpdater | `backends-velox/src/main/scala/org/apache/gluten/metrics/FileSourceScanMetricsUpdater.scala` | Add field + `ScanMetricsUtil.inc` call |
-| C++ test | `cpp/velox/tests/FileCacheGlutenMetricsTest.cc` (NEW) | Native carrier gate: `sumRuntimeMetric` + enum order |
-| Java test | `backends-velox/src/test/java/org/apache/gluten/metrics/MetricsCarrierTest.java` (NEW) | Java carrier gate: `getOperatorMetrics` carries the exact value |
-| Scala test | `backends-velox/src/test/scala/org/apache/gluten/metrics/FileSourceScanMetricsUpdaterSuite.scala` (NEW) | Scala gate: updater increments the `SQLMetric` |
-
-Every `new OperatorMetrics` / `new Metrics` call site in `backends-velox` was
-searched; the two `new OperatorMetrics` sites are `Metrics.java:175`
-(`getOperatorMetrics`) and `MetricsUtil.scala:185` (`mergeMetrics`) — both are
-updated. (`TestSparkDataFile.java:286`'s `new Metrics(...)` is Iceberg's own
-`org.apache.iceberg.Metrics`, unrelated.)
-
-**Detailed changes:**
-
-### 1. C++ `Metrics.h` — add enum entry (after `kLoadLazyVectorTime`, before `kEnd`)
-
-```cpp
-    kLoadLazyVectorTime,
-
-    // FileCache metrics.
-    kFileCacheWriteBytes,
-
-    // The end of enum items.
-    kEnd,
-```
-
-### 2. C++ `RuntimeMetricUtil` helper + `WholeStageResultIterator.cc` constant and propagation
-
-`WholeStageResultIterator::collectMetrics` and `runtimeMetric` are private, so
-the FileCache carrier is exercised through a small extracted free helper that
-`collectMetrics` also uses. Create `cpp/velox/compute/RuntimeMetricUtil.h`:
-```cpp
-#pragma once
-
-#include <cstdint>
-#include <string>
-#include <unordered_map>
-
-namespace facebook::velox {
-struct RuntimeMetric;
-}
-
-namespace gluten {
-
-/// Sum aggregation of a named Velox runtime metric from operator customStats,
-/// returning 0 when the key is absent. Extracted from
-/// WholeStageResultIterator::collectMetrics so the FileCache byte-counter
-/// propagation is unit-testable without constructing a Task/plan.
-int64_t sumRuntimeMetric(
-    const std::unordered_map<std::string, facebook::velox::RuntimeMetric>& customStats,
-    const std::string& key);
-
-} // namespace gluten
-```
-and `cpp/velox/compute/RuntimeMetricUtil.cc`:
-```cpp
-#include "compute/RuntimeMetricUtil.h"
-
-#include "velox/common/base/RuntimeMetrics.h"
-
-namespace gluten {
-
-int64_t sumRuntimeMetric(
-    const std::unordered_map<std::string, facebook::velox::RuntimeMetric>& customStats,
-    const std::string& key) {
-  const auto it = customStats.find(key);
-  return it == customStats.end() ? 0 : it->second.sum;
-}
-
-} // namespace gluten
-```
-Add `compute/RuntimeMetricUtil.cc` to `VELOX_SRCS` in `cpp/velox/CMakeLists.txt`
-(after `compute/WholeStageResultIterator.cc`, line 162).
-
-In `WholeStageResultIterator.cc`, at file scope (alongside `kLocalReadBytes` at
-line 67):
-```cpp
-const std::string kFileCacheWriteBytes = "fileCacheWriteBytes";
-```
-Add `#include "compute/RuntimeMetricUtil.h"` to the includes. In `collectMetrics`,
-after the `kWriteIOTime` line (~line 592):
-```cpp
-      metrics_->get(Metrics::kFileCacheWriteBytes)[metricIndex] =
-          gluten::sumRuntimeMetric(second->customStats, kFileCacheWriteBytes);
-```
-
-### 3. JNI `JniWrapper.cc` — add to NewObject call and update signature
-
-After `longArray[Metrics::kLoadLazyVectorTime],` (line 684), add:
-```cpp
-      longArray[Metrics::kFileCacheWriteBytes],
-```
-
-Update the `"<init>"` signature string (line 316) from:
-```
-"([J[J[J[J[J[J[J[J[J[JJ[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[JLjava/lang/String;)V"
-```
-to (one additional `[J` inserted before `Ljava/lang/String;`, taking the array
-count from 44 to 45; the single scalar `J` for `veloxToArrow` is unchanged):
-```
-"([J[J[J[J[J[J[J[J[J[JJ[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[JLjava/lang/String;)V"
-```
-
-Verify the new signature has 45 array parameters (must equal the number of
-`long[]` args passed to `NewObject`):
-`printf '%s' '<new signature>' | grep -o '\[J' | wc -l` → 45.
-
-### 4. Java `Metrics.java` — field, constructor param, assignment, getOperatorMetrics
-
-Field declaration (after `public long[] loadLazyVectorTime;`, before `public SingleMetric singleMetric`):
-```java
-  public long[] fileCacheWriteBytes;
-```
-
-Constructor parameter (after `long[] loadLazyVectorTime`, before `String taskStats`):
-```java
-      long[] loadLazyVectorTime,
-      long[] fileCacheWriteBytes,
-      String taskStats) {
-```
-
-Assignment in constructor body (after `this.loadLazyVectorTime = loadLazyVectorTime;`):
-```java
-    this.fileCacheWriteBytes = fileCacheWriteBytes;
-```
-
-In `getOperatorMetrics` method (after `loadLazyVectorTime[index]`):
-```java
-        loadLazyVectorTime[index],
-        fileCacheWriteBytes[index]);
-```
-
-### 5. Java `OperatorMetrics.java` — field and constructor param
-
-Field (after `public long loadLazyVectorTime;`):
-```java
-  public long fileCacheWriteBytes;
-```
-
-Constructor parameter (after `long loadLazyVectorTime`):
-```java
-      long loadLazyVectorTime,
-      long fileCacheWriteBytes) {
-```
-
-Assignment (after `this.loadLazyVectorTime = loadLazyVectorTime;`):
-```java
-    this.fileCacheWriteBytes = fileCacheWriteBytes;
-```
-
-### 6. Scala `MetricsUtil.scala` — `mergeMetrics` aggregation (2nd `new OperatorMetrics`)
-
-`mergeMetrics` (`MetricsUtil.scala:91-231`) is the SECOND `new OperatorMetrics`
-call site. It MUST also pass `fileCacheWriteBytes` or `backends-velox` fails to
-compile once `OperatorMetrics` gains the parameter.
-
-Accumulator (after `var loadLazyVectorTime: Long = 0` at line 144):
-```scala
-    var fileCacheWriteBytes: Long = 0
-```
-
-Inside the `while (metricsIterator.hasNext)` loop (after
-`loadLazyVectorTime += metrics.loadLazyVectorTime` at line 182):
-```scala
-      fileCacheWriteBytes += metrics.fileCacheWriteBytes
-```
-
-In the `new OperatorMetrics(...)` argument list (after `loadLazyVectorTime` at
-line 229 — the last argument):
-```scala
-      loadLazyVectorTime,
-      fileCacheWriteBytes
-    )
-```
-
-### 7. Scala `VeloxMetricsApi.scala` — register SQLMetric
-
-In `genFileSourceScanTransformerMetricsFull` Map (after the `"loadLazyVectorTime"` entry at approx line 265):
-```scala
-      "fileCacheWriteBytes" -> SQLMetrics.createSizeMetric(sparkContext, "file cache write bytes")
-```
-
-### 8. Scala `FileSourceScanMetricsUpdater.scala` — field + update
-
-Field (after `private val loadLazyVectorTime`):
-```scala
-  private val fileCacheWriteBytes: Option[SQLMetric] = metric("fileCacheWriteBytes")
-```
-
-In `updateNativeMetrics`, after existing `ScanMetricsUtil.inc(loadLazyVectorTime, operatorMetrics.loadLazyVectorTime)`:
-```scala
-      ScanMetricsUtil.inc(fileCacheWriteBytes, operatorMetrics.fileCacheWriteBytes)
-```
-
-### Steps
-
-- [ ] **Step 1: Add `kFileCacheWriteBytes` to C++ `Metrics.h` enum**
-- [ ] **Step 2: Create `RuntimeMetricUtil.h`/`.cc`, register in `VELOX_SRCS`, add the constant + `collectMetrics` propagation in `WholeStageResultIterator.cc`**
-- [ ] **Step 3: Update JNI NewObject call and signature in `JniWrapper.cc`**
-- [ ] **Step 4: Add field/param to Java `Metrics.java` (field, constructor, assignment, getOperatorMetrics)**
-- [ ] **Step 5: Add field/param to Java `OperatorMetrics.java`**
-- [ ] **Step 6: Aggregate `fileCacheWriteBytes` in `MetricsUtil.scala` `mergeMetrics` (2nd `new OperatorMetrics`)**
-- [ ] **Step 7: Add SQLMetric in `VeloxMetricsApi.scala`**
-- [ ] **Step 8: Add field + update in `FileSourceScanMetricsUpdater.scala`**
-- [ ] **Step 9: Create the native carrier test `cpp/velox/tests/FileCacheGlutenMetricsTest.cc`**
-
-Exercises the extracted production helper `gluten::sumRuntimeMetric` (the exact
-aggregation `collectMetrics` uses to move `fileCacheWriteBytes` out of
-`customStats`) and the enum order — NOT merely `IoStats`:
-
-```cpp
-#include <gtest/gtest.h>
-
-#include <unordered_map>
-
-#include "compute/RuntimeMetricUtil.h"
-#include "core/utils/Metrics.h"
-
-#include "velox/common/base/RuntimeMetrics.h"
-
-using namespace facebook::velox;
-
-TEST(FileCacheGlutenMetricsTest, SumRuntimeMetricReadsFileCacheWriteBytes) {
-  // customStats holds an aggregated (sum=12288, count=2) fileCacheWriteBytes.
-  std::unordered_map<std::string, RuntimeMetric> customStats;
-  customStats.emplace(
-      "fileCacheWriteBytes",
-      RuntimeMetric(
-          /*sum=*/12288, /*count=*/2, /*min=*/4096, /*max=*/8192,
-          RuntimeCounter::Unit::kBytes));
-  EXPECT_EQ(gluten::sumRuntimeMetric(customStats, "fileCacheWriteBytes"), 12288);
-  EXPECT_EQ(gluten::sumRuntimeMetric(customStats, "absent"), 0);
-}
-
-TEST(FileCacheGlutenMetricsTest, MetricsEnumOrderCorrect) {
-  EXPECT_EQ(
-      static_cast<int>(gluten::Metrics::kFileCacheWriteBytes),
-      static_cast<int>(gluten::Metrics::kLoadLazyVectorTime) + 1);
-  EXPECT_EQ(
-      static_cast<int>(gluten::Metrics::kEnd),
-      static_cast<int>(gluten::Metrics::kFileCacheWriteBytes) + 1);
-}
-```
-
-Register and build/run:
-```cmake
-add_velox_test(velox_file_cache_gluten_metrics_test SOURCES FileCacheGlutenMetricsTest.cc)
-```
-```bash
-cd /root/oss/gluten-018
-ninja -C cpp/build velox_file_cache_gluten_metrics_test > cpp/build/build_018g.log 2>&1
-ctest --test-dir cpp/build -R '^velox_file_cache_gluten_metrics_test$' \
-  --output-on-failure > cpp/build/test_018g.log 2>&1
-echo "exit: $?"
-```
-
-- [ ] **Step 10: Create the Java carrier test `backends-velox/src/test/java/org/apache/gluten/metrics/MetricsCarrierTest.java`**
-
-Constructs `Metrics` arrays and proves `getOperatorMetrics` carries the exact
-`fileCacheWriteBytes` value (this is also the target of the statistics mutation
-in Step 13). Uses length-1 arrays; only `fileCacheWriteBytes` is non-zero:
-
-```java
-package org.apache.gluten.metrics;
-
-import org.junit.Assert;
-import org.junit.Test;
-
-public class MetricsCarrierTest {
-  private static long[] a(long v) {
-    return new long[] {v};
-  }
-
-  @Test
-  public void getOperatorMetricsCarriesFileCacheWriteBytes() {
-    final long expected = 987654L;
-    // Constructor order matches Metrics.java: 10 arrays, veloxToArrow (scalar),
-    // then 34 arrays, then fileCacheWriteBytes, then taskStats.
-    Metrics metrics =
-        new Metrics(
-            a(1), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0),
-            0L,
-            a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0),
-            a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0),
-            a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0), a(0),
-            a(0), a(0), a(0),
-            a(0),
-            a(expected),
-            "");
-    OperatorMetrics op = metrics.getOperatorMetrics(0);
-    Assert.assertEquals(expected, op.fileCacheWriteBytes);
-  }
-}
-```
-
-Run (surefire selects the JUnit test; scalatest is disabled with an empty
-`wildcardSuites`; profiles follow `docs/developers/HowTo.md`):
-```bash
-cd /root/oss/gluten-018
-mvn test -Pspark-3.5 -Pbackends-velox -pl backends-velox \
-  -Dtest=MetricsCarrierTest -DwildcardSuites= -DfailIfNoTests=false -q \
-  > cpp/build/test_018g_java.log 2>&1
-echo "Java carrier test exit: $?"
-```
-
-- [ ] **Step 11: Create the Scala updater test `backends-velox/src/test/scala/org/apache/gluten/metrics/FileSourceScanMetricsUpdaterSuite.scala`**
-
-Constructs an `OperatorMetrics`, invokes `FileSourceScanMetricsUpdater`, and
-proves the `SQLMetric` value increments:
-
-```scala
-package org.apache.gluten.metrics
-
-import org.apache.spark.sql.execution.metric.SQLMetric
-
-import org.scalatest.funsuite.AnyFunSuite
-
-class FileSourceScanMetricsUpdaterSuite extends AnyFunSuite {
-
-  test("updateNativeMetrics increments the fileCacheWriteBytes SQLMetric") {
-    val sqlMetric = new SQLMetric("size", 0L)
-    val updater =
-      new FileSourceScanMetricsUpdater(Map("fileCacheWriteBytes" -> sqlMetric))
-
-    // OperatorMetrics: 44 zero longs then fileCacheWriteBytes = 12345.
-    val op = new OperatorMetrics(
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-      0, 0, 0, 0,
-      12345L)
-
-    updater.updateNativeMetrics(op)
-    assert(sqlMetric.value == 12345L)
-  }
-}
-```
-
-Run (scalatest-maven-plugin selects the suite via `wildcardSuites`; surefire is
-disabled with `-Dtest=none`):
-```bash
-cd /root/oss/gluten-018
-mvn test -Pspark-3.5 -Pbackends-velox -pl backends-velox \
-  -DwildcardSuites=org.apache.gluten.metrics.FileSourceScanMetricsUpdaterSuite \
-  -Dtest=none -DfailIfNoTests=false -q \
-  > cpp/build/test_018g_scala.log 2>&1
-echo "Scala updater test exit: $?"
-```
-
-- [ ] **Step 12: JNI signature / full-bridge compile gate**
-
-The native library must compile with the new JNI signature and the Java/Scala
-bridge must compile with the new constructor arity:
-```bash
-cd /root/oss/gluten-018
-ninja -C cpp/build gluten > cpp/build/build_018g_native.log 2>&1
-echo "native build exit: $?"
-mvn compile -pl backends-velox -am -DskipTests -q > cpp/build/build_018g_javac.log 2>&1
-echo "Java/Scala compile exit: $?"
-```
-A subagent analyzes each log and returns a concise summary.
-
-- [ ] **Step 13: Statistics mutation — drop the 018-owned Java carrier pass**
-
-**File:** `backends-velox/src/main/java/org/apache/gluten/metrics/Metrics.java`
-**Function:** `getOperatorMetrics`
-
-This is the 018-owned statistics carrier. Change the `fileCacheWriteBytes[index]`
-argument passed to `new OperatorMetrics(...)` to a wrong constant, e.g.:
-```java
-        loadLazyVectorTime[index],
-        0L); // MUTATION: was fileCacheWriteBytes[index]
-```
-
-Re-run the Java carrier test:
-```bash
-mvn test -Pspark-3.5 -Pbackends-velox -pl backends-velox \
-  -Dtest=MetricsCarrierTest -DwildcardSuites= -DfailIfNoTests=false -q
-```
-
-**Expected failed assertion:** `MetricsCarrierTest.getOperatorMetricsCarriesFileCacheWriteBytes`'s
-`assertEquals(expected, op.fileCacheWriteBytes)` fails (`0 != 987654`). Restore
-after confirming RED.
-
-This mutation stays within Task-018-owned source. The Task-017A
-`FileCacheInputStream.cpp` `ioStats_->addCounter` line is NOT mutated here (Task
-018 owns no line there); the byte-level correctness mutation lives in 018-A
-Step 8 (`CacheReadHarness.cpp`).
-
-**Gate (all three carriers + compile gate required):**
-- Native: `velox_file_cache_gluten_metrics_test` proves `sumRuntimeMetric` reads
-  the correct key/sum and the enum order.
-- Java: `MetricsCarrierTest` proves `getOperatorMetrics` carries the value; the
-  Step 13 mutation confirms coverage.
-- Scala: `FileSourceScanMetricsUpdaterSuite` proves the `SQLMetric` increments.
-- Compile gate: native `gluten` + `mvn compile` succeed with the new JNI
-  signature and constructor arity.
-
----
-
-## Task 018-H: Performance Waves (Baseline, No Threshold)
+**Depends on:** 018-B and 018-D only (not 018-C).
 
 **Files:**
-- No new source files. Uses binaries from 018-A/B/C.
-- Output: CSVs in `tmp/` directory and logs in build directory.
+- No new source files. Uses the non-TPCH binaries from 018-A/018-B and the
+  accepted orchestration script from 018-D.
+- Output: Markdown/timing artifacts in `tmp/` and logs in the build directory.
 
 **Interfaces:**
-- Consumes: `velox_ch_filecache_seek_benchmark`, `velox_ch_fcbi_benchmark`, `velox_bufferedinput_wrapper_benchmark`, `velox_tpch_benchmark`
-- Produces: Baseline timing CSVs and folly benchmark tables. No performance threshold.
+- Consumes: `velox_ch_filecache_seek_benchmark`, `velox_ch_fcbi_benchmark`,
+  `velox_bufferedinput_wrapper_benchmark`, and the accepted
+  `velox/benchmarks/scripts/run_wrapper_ab.sh`.
+- Produces: baseline folly benchmark tables and the wrapper A/B Markdown table
+  (all read paths). No performance threshold.
 
-**Scheduling:** Waves 1–3 are 018-H1 and run after 018-B, 018-D, and 018-G.
-Then the Worker stops at 018-P. Wave 4 is 018-H2 and runs only after explicit
-user approval and green 018-C. Task 019 is excluded. Task 017B is not a
-dependency.
+**Scheduling:** Waves 1–3 run after 018-B and 018-D are green. The Worker then
+stops at 018-P; no TPCH source is copied, built, or run here.
+
+Every binary path is under a RelWithDebInfo or Release build directory; a Debug
+binary invalidates the result.
 
 ### Wave 1: Core seek microbenchmark (existing target, baseline)
 
@@ -3066,7 +1675,7 @@ echo "Wave 1 exit: $?"
 
 Output: `test_018h_w1.log` with folly benchmark table.
 
-### Wave 2: Dedicated FCBI micro (NEW target, `velox_ch_fcbi_benchmark`)
+### Wave 2: Dedicated FCBI micro (`velox_ch_fcbi_benchmark`)
 
 ```bash
 mkdir -p tmp/fc_w2
@@ -3083,32 +1692,334 @@ echo "Wave 2 exit: $?"
 
 Output: `test_018h_w2.log` with folly benchmark table for FCBI enqueue+load+read.
 
-### Wave 3: Wrapper A/B — full dbi/cbi/fcbi matrix (cold+hot, sequential+zipfian, 1M+8M)
+### Wave 3: Wrapper A/B — all read paths (dbi/cbi/fcbi) via the accepted script
 
-Use the safe orchestration script from 018-D, which runs the full `direct`
-(dbi) / `cbi` / `filecache` (fcbi) matrix and handles per-mode flags and
-sentinel cache cleanup:
+Use the accepted 018-D orchestrator `run_wrapper_ab.sh`. It runs
+`velox_bufferedinput_wrapper_benchmark` once with `--wrappers=all` and writes a
+single Markdown table (`cbi` is the delta baseline; `fcbi`/`dbi` rows carry
+`Δ vs cbi`), sentinel-cleaning the cbi SSD tier and the fcbi disk tier on exit.
+Drive it only with the environment variables the accepted script reads (`BIN`,
+`CACHE_ROOT`, `OUT`, and the A/B knobs); it emits Markdown via `--out`, never a
+CSV file and never an `--input_source` flag:
 
 ```bash
 mkdir -p tmp/fc_w3
 BIN=/root/oss/velox/_build/relwithdebinfo/velox/dwio/common/benchmarks/velox_bufferedinput_wrapper_benchmark \
-OUT_DIR=tmp/fc_w3 \
-FC_ROOT="$(pwd)/tmp/fc_w3_cache" \
-FC_SIZE_GIB=10 CACHE_GB=8 TARGET_WS_GB=4 \
+CACHE_ROOT="$(pwd)/tmp/fc_w3_cache" \
+OUT="$(pwd)/tmp/fc_w3/wrapper_all.md" \
+RAM_CACHE_GB=4 SSD_CACHE_GB=10 FILECACHE_DISK_GB=10 \
+TARGET_WS_GB=8 REMOTE_GB=9 \
 READ_SIZES_KIB=1024,8192 WORKLOADS=sequential,zipfian \
-MEASURE_PASSES=3 ROUNDS=3 \
+MEASURE_PASSES=3 \
   bash velox/benchmarks/scripts/run_wrapper_ab.sh \
   > /root/oss/velox/_build/relwithdebinfo/test_018h_w3.log 2>&1
 echo "Wave 3 exit: $?"
 ```
 
-Output: `tmp/fc_w3/wrapper_direct.csv`, `tmp/fc_w3/wrapper_cbi.csv`,
-`tmp/fc_w3/wrapper_filecache.csv` (all three wrapper modes).
+Output: `tmp/fc_w3/wrapper_all.md` — one Markdown table with `cbi`, `fcbi`, and
+`dbi` rows (the accepted script validates the common header and all three rows).
 
-### Wave 4: TPCH all 22 queries (correctness before perf)
+### Steps
 
-This wave is forbidden before the user approves 018-P. After approval,
-correctness must first be verified in 018-C, then run the perf baseline:
+- [ ] **Step 1: Build non-TPCH benchmark targets in RelWithDebInfo**
+
+```bash
+source /root/oss/velox-helper/env.sh
+ninja -C /root/oss/velox/_build/relwithdebinfo \
+  velox_ch_filecache_seek_benchmark \
+  velox_ch_fcbi_benchmark \
+  velox_bufferedinput_wrapper_benchmark \
+  > /root/oss/velox/_build/relwithdebinfo/build_018h1.log 2>&1
+echo "exit: $?"
+```
+
+- [ ] **Step 2: Run Wave 1 (core seek micro)**
+- [ ] **Step 3: Run Wave 2 (dedicated FCBI micro)**
+- [ ] **Step 4: Run Wave 3 (wrapper A/B, all read paths)**
+- [ ] **Step 5: Collect the non-TPCH artifacts and hand off to 018-P**
+
+The Worker records the build type, exact binary paths, and the Wave 1–3
+artifacts (`test_018h_w1.log`, `test_018h_w2.log`, `tmp/fc_w3/wrapper_all.md`)
+into the Task-018 receipt, then stops for the mandatory pre-TPCH checkpoint.
+
+**Gate (018-H1):** Waves 1–3 exit 0; every benchmark binary path is under a
+RelWithDebInfo or Release build directory (any Debug binary invalidates the
+result); the wrapper Markdown carries the common header and the `cbi`/`fcbi`/`dbi`
+rows. No hard regression threshold is applied. No TPCH source is copied, built,
+or run.
+
+---
+
+## Task 018-P: Mandatory Pre-TPCH Checkpoint
+
+**This is a hard STOP.** Waves 1–3 (018-H1) are complete; no TPCH work may begin
+until the user explicitly approves.
+
+The Worker writes the non-TPCH results to the Task-018 receipt — build type,
+exact binary paths, correctness results (018-A), the 018-D safety evidence, and
+the Wave 1–3 artifacts — then sets:
+
+```text
+worker_status: waiting_for_pre_tpch_approval
+tpch_sources_copied: false
+tpch_target_built: false
+tpch_commands_run: false
+```
+
+The Controller verifies the receipt and asks for explicit user approval. No
+Worker continues into 018-C or 018-H2 under the original dispatch. Only after
+approval does the Controller dispatch a fresh Task-018 Worker to perform 018-C
+(the first authorized TPCH source copy, target registration, fresh
+RelWithDebInfo build, and correctness run) and then 018-H2.
+
+**Gate (018-P):** the non-TPCH receipt is reviewed and the user explicitly
+approves TPCH. BLOCKED while any of 018-A/B/D/H1 is incomplete.
+
+---
+
+## Task 018-C: TPCH Benchmark Correctness
+
+**Carry-forward reconciliation (Velox-only).** Before the first TPCH run,
+confirm the two properties 018-C and 018-H2 inherit from the earlier Velox
+stages:
+
+- [ ] **Step 0a: Reconfigure Parquet ON after 018-P approval.** The pre-checkpoint build is
+   intentionally Parquet OFF. Reconfigure the same RelWithDebInfo build with
+   `-DVELOX_ENABLE_PARQUET=ON` and verify Arrow/Parquet dependencies before
+   copying or building the TPCH target:
+
+   ```bash
+   source /root/oss/velox-helper/env.sh
+   cmake -S /root/oss/velox -B /root/oss/velox/_build/relwithdebinfo -G Ninja \
+     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+     -DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE" \
+     -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+     -DVELOX_ENABLE_BENCHMARKS=ON \
+     -DVELOX_ENABLE_PARQUET=ON \
+     -DVELOX_BUILD_TESTING=ON \
+     -DVELOX_MONO_LIBRARY=ON \
+     -DVELOX_GFLAGS_TYPE=static \
+     > /root/oss/velox/_build/relwithdebinfo/configure_018c_parquet.log 2>&1
+   ```
+
+- [ ] **Step 0b: Split backend-specific statistics before runtime use.** The current
+   `bytes_dl_mib` and `evict_mib` columns are not comparable across CBI and
+   FileCache. Before building TPCH, change `AbBenchmarkBase.cpp` to emit:
+
+   ```text
+   cache_read_mib    CBI hitBytes / FileCache cacheReadBytes
+   predownload_mib   FileCache predownloadedFromSourceBytes; zero for CBI/direct
+   evict_mib         FileCache evictedBytes; zero for CBI/direct
+   evict_count       FileCache evictedSegments / CBI numEvict; zero for direct
+   ```
+
+   Replace `BackendSnapshot::downloadBytes`, `evictUnits`, and `evictInBytes`
+   with `cacheReadBytes`, `predownloadBytes`, `evictedBytes`, and
+   `evictionCount`. Add matching fields to `AbCsvRow`, update
+   `writeCsvHeader`/`writeCsvRow`, and compute monotonic deltas independently.
+   Add a focused unit-testable helper or test target that proves both FileCache
+   and CBI mappings; a mutation that swaps bytes/count units must fail.
+
+Only `wall_ms`, `rows`, `result_hash`, `bytes_read`, `hit_pct`, and
+`cache_read_mib` are cross-backend comparisons. Backend-specific columns are
+explicitly zero when unavailable; no count is labeled as MiB.
+
+- [ ] **Step 0c: Lock the post-reconciliation CSV schema.**
+
+The exact header after Step 0b is:
+
+```text
+round,query_id,wall_ms,rows,result_hash,bytes_read,hit_pct,cache_read_mib,predownload_mib,evict_mib,evict_count,op_p50_us,op_p95_us,error
+```
+
+The focused schema test must require exactly these 14 fields in this order.
+Before interpreting any correctness row, the shell gate below compares the
+header byte-for-byte and requires each success row to have exactly 14 fields.
+
+This TPCH A/B is Velox-native; it does not build, require, or run any Spark or
+Gluten component.
+
+**Authorization gate:** This entire section is post-checkpoint. Before the user
+approves 018-P, do not copy the TPCH reference sources, add/build the TPCH
+target, inspect `${TPCH_DATA}`, or run any TPCH command.
+
+**Files:**
+- Near-copy from reference: `velox/benchmarks/tpch/TpchBenchmark.h`, `velox/benchmarks/tpch/TpchBenchmark.cpp`, `velox/benchmarks/tpch/TpchBenchmarkMain.cpp`
+- Modify: `velox/benchmarks/tpch/CMakeLists.txt` (link `velox_benchmark_ab`)
+
+**Interfaces:**
+- Consumes: `AbBenchmarkBase` (from 018-A), `dispatchAbMain`, `QueryBenchmarkBase`
+- Produces: `velox_tpch_benchmark` binary with `--input_source={direct,cbi,filecache}`, `--num_splits_per_file=1`, `--include_results`
+
+**BLOCKED semantics:** If `${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}` is unset, this task cannot run. The variable must point to a directory containing TPC-H SF1+ Parquet files.
+
+- [ ] **Step 1: Copy TPCH benchmark from reference**
+
+```bash
+cd /root/oss/velox
+mkdir -p velox/benchmarks/tpch
+git show baibaichen/ch-filecache:velox/benchmarks/tpch/TpchBenchmark.h > velox/benchmarks/tpch/TpchBenchmark.h
+git show baibaichen/ch-filecache:velox/benchmarks/tpch/TpchBenchmark.cpp > velox/benchmarks/tpch/TpchBenchmark.cpp
+git show baibaichen/ch-filecache:velox/benchmarks/tpch/TpchBenchmarkMain.cpp > velox/benchmarks/tpch/TpchBenchmarkMain.cpp
+git show baibaichen/ch-filecache:velox/benchmarks/tpch/CMakeLists.txt > velox/benchmarks/tpch/CMakeLists.txt
+```
+
+- [ ] **Step 2: Build TPCH benchmark**
+
+```bash
+source /root/oss/velox-helper/env.sh
+ninja -C /root/oss/velox/_build/relwithdebinfo velox_tpch_benchmark \
+  > /root/oss/velox/_build/relwithdebinfo/build_018c.log 2>&1
+echo "exit: $?"
+```
+
+- [ ] **Step 3: Run q01 in all three modes with `num_splits_per_file=1`**
+
+```bash
+mkdir -p tmp
+for MODE in direct cbi filecache; do
+  if ! /root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_benchmark \
+    --input_source=$MODE \
+    --data_path="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
+    --data_format=parquet \
+    --query_id=1 \
+    --rounds=1 \
+    --num_splits_per_file=1 \
+    --num_drivers=1 \
+    --filecache_root=tmp/fc_tpch_$MODE \
+    --filecache_disk_gib=10 \
+    --cache_gb=4 \
+    --out=tmp/tpch_q01_$MODE.csv \
+    > /root/oss/velox/_build/relwithdebinfo/test_018c_$MODE.log 2>&1; then
+    echo "FAIL: q01 $MODE exited nonzero"
+    exit 1
+  fi
+done
+
+EXPECTED_HEADER='round,query_id,wall_ms,rows,result_hash,bytes_read,hit_pct,cache_read_mib,predownload_mib,evict_mib,evict_count,op_p50_us,op_p95_us,error'
+for CSV in tmp/tpch_q01_direct.csv tmp/tpch_q01_cbi.csv tmp/tpch_q01_filecache.csv; do
+  test "$(head -n 1 "$CSV")" = "$EXPECTED_HEADER" || {
+    echo "FAIL: unexpected CSV header in $CSV"
+    exit 1
+  }
+  awk -F, 'NR==2 && NF!=14 { exit 1 }' "$CSV" || {
+    echo "FAIL: expected exactly 14 fields in the success row of $CSV"
+    exit 1
+  }
+done
+```
+
+- [ ] **Step 4: Verify row-count AND result-checksum correctness**
+
+Row count alone is insufficient (two different result sets can share a
+cardinality). Compare BOTH `rows` (CSV field 4) and `result_hash` (CSV field 5,
+the commutative `hashValueAt` checksum added to the harness in 018-A):
+
+```bash
+check_row() { awk -F, -v r=2 'NR==r{print $4}' "$1"; }
+check_hash() { awk -F, -v r=2 'NR==r{print $5}' "$1"; }
+check_error() { awk -F, -v r=2 'NR==r{print $NF}' "$1"; }
+ROWS_DIRECT=$(check_row tmp/tpch_q01_direct.csv); HASH_DIRECT=$(check_hash tmp/tpch_q01_direct.csv)
+ROWS_CBI=$(check_row tmp/tpch_q01_cbi.csv);       HASH_CBI=$(check_hash tmp/tpch_q01_cbi.csv)
+ROWS_FC=$(check_row tmp/tpch_q01_filecache.csv);  HASH_FC=$(check_hash tmp/tpch_q01_filecache.csv)
+ERR_DIRECT=$(check_error tmp/tpch_q01_direct.csv)
+ERR_CBI=$(check_error tmp/tpch_q01_cbi.csv)
+ERR_FC=$(check_error tmp/tpch_q01_filecache.csv)
+echo "rows: direct=$ROWS_DIRECT cbi=$ROWS_CBI fc=$ROWS_FC"
+echo "hash: direct=$HASH_DIRECT cbi=$HASH_CBI fc=$HASH_FC"
+if [ "$ROWS_DIRECT" = "$ROWS_CBI" ] && [ "$ROWS_DIRECT" = "$ROWS_FC" ] \
+   && [ "$HASH_DIRECT" = "$HASH_CBI" ] && [ "$HASH_DIRECT" = "$HASH_FC" ] \
+   && [ -n "$HASH_DIRECT" ] \
+   && [ "$ROWS_DIRECT" -gt 0 ] \
+   && [ -z "$ERR_DIRECT" ] && [ -z "$ERR_CBI" ] && [ -z "$ERR_FC" ]; then
+  echo "PASS"
+else
+  echo "FAIL"
+  exit 1
+fi
+```
+
+Expected: PASS — identical row count AND identical result checksum across all
+three modes for q01.
+
+- [ ] **Step 5: Run all 22 queries correctness (rows + checksum)**
+
+```bash
+EXPECTED_HEADER='round,query_id,wall_ms,rows,result_hash,bytes_read,hit_pct,cache_read_mib,predownload_mib,evict_mib,evict_count,op_p50_us,op_p95_us,error'
+for Q in $(seq 1 22); do
+  for MODE in direct cbi filecache; do
+    if ! /root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_benchmark \
+      --input_source=$MODE \
+      --data_path="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
+      --data_format=parquet \
+      --query_id=$Q \
+      --rounds=1 \
+      --num_splits_per_file=1 \
+      --num_drivers=1 \
+      --filecache_root=tmp/fc_tpch_correctness_$MODE \
+      --filecache_disk_gib=10 \
+      --cache_gb=4 \
+      --out=tmp/tpch_correctness_q${Q}_$MODE.csv \
+      > /root/oss/velox/_build/relwithdebinfo/test_018c_all_q${Q}_$MODE.log 2>&1; then
+      echo "FAIL q$Q $MODE: nonzero exit"
+      exit 1
+    fi
+  done
+  for MODE in direct cbi filecache; do
+    CSV=tmp/tpch_correctness_q${Q}_$MODE.csv
+    test "$(head -n 1 "$CSV")" = "$EXPECTED_HEADER" || {
+      echo "FAIL q$Q $MODE: unexpected CSV header"
+      exit 1
+    }
+    awk -F, 'NR==2 && NF!=14 { exit 1 }' "$CSV" || {
+      echo "FAIL q$Q $MODE: expected exactly 14 fields in the success row"
+      exit 1
+    }
+  done
+  ROWS_D=$(awk -F, 'NR==2{print $4}' tmp/tpch_correctness_q${Q}_direct.csv)
+  ROWS_C=$(awk -F, 'NR==2{print $4}' tmp/tpch_correctness_q${Q}_cbi.csv)
+  ROWS_F=$(awk -F, 'NR==2{print $4}' tmp/tpch_correctness_q${Q}_filecache.csv)
+  HASH_D=$(awk -F, 'NR==2{print $5}' tmp/tpch_correctness_q${Q}_direct.csv)
+  HASH_C=$(awk -F, 'NR==2{print $5}' tmp/tpch_correctness_q${Q}_cbi.csv)
+  HASH_F=$(awk -F, 'NR==2{print $5}' tmp/tpch_correctness_q${Q}_filecache.csv)
+  ERR_D=$(awk -F, 'NR==2{print $NF}' tmp/tpch_correctness_q${Q}_direct.csv)
+  ERR_C=$(awk -F, 'NR==2{print $NF}' tmp/tpch_correctness_q${Q}_cbi.csv)
+  ERR_F=$(awk -F, 'NR==2{print $NF}' tmp/tpch_correctness_q${Q}_filecache.csv)
+  if [ "$ROWS_D" != "$ROWS_C" ] || [ "$ROWS_D" != "$ROWS_F" ] \
+     || [ "$HASH_D" != "$HASH_C" ] || [ "$HASH_D" != "$HASH_F" ] \
+     || [ -z "$HASH_D" ] \
+     || [ -n "$ERR_D" ] || [ -n "$ERR_C" ] || [ -n "$ERR_F" ]; then
+    echo "FAIL q$Q: rows direct=$ROWS_D cbi=$ROWS_C fc=$ROWS_F | hash direct=$HASH_D cbi=$HASH_C fc=$HASH_F | errors direct='$ERR_D' cbi='$ERR_C' fc='$ERR_F'"
+    exit 1
+  fi
+  echo "q$Q PASS ($ROWS_D rows, hash=$HASH_D)"
+done
+```
+
+**Gate:** every process exits zero, every `error` field is empty, and `rows` and
+`result_hash` are identical across direct, cbi, and filecache for all 22 queries
+(checksum comparison, not row count alone); q01 reports more than zero rows.
+
+---
+
+## Task 018-H2: TPCH Performance Wave (Baseline, No Threshold)
+
+**Depends on:** 018-P approval and green 018-C.
+
+**Files:**
+- No new source files. Uses `velox_tpch_benchmark` from 018-C.
+- Output: TPCH timing CSVs in `tmp/` and logs in the build directory.
+
+**Interfaces:**
+- Consumes: `velox_tpch_benchmark` (RelWithDebInfo/Release) and the accepted
+  `velox/benchmarks/scripts/run_tpch_ab.sh` (018-P gated).
+- Produces: baseline TPCH CSVs. No performance threshold.
+
+**Authorization:** Forbidden before the user approves 018-P, and then only after
+018-C is green. Every benchmark binary path is under a RelWithDebInfo or Release
+build directory; a Debug binary invalidates the result.
+
+### Wave 4: TPCH performance (smoke q01/q09/q21, then full 22)
 
 ```bash
 for Q in 1 9 21; do
@@ -3143,52 +2054,36 @@ done
 echo "Wave 4 full exit: $?"
 ```
 
-### Steps
-
-- [ ] **Step 1: Build non-TPCH benchmark targets in RelWithDebInfo**
+For the full three-backend A/B sweep, use the accepted 018-D orchestrator; its
+`TPCH_APPROVED=1` gate must already be satisfied by the 018-P approval, and it
+sentinel-cleans the filecache disk root on exit:
 
 ```bash
-source /root/oss/velox-helper/env.sh
-ninja -C /root/oss/velox/_build/relwithdebinfo \
-  velox_ch_filecache_seek_benchmark \
-  velox_ch_fcbi_benchmark \
-  velox_bufferedinput_wrapper_benchmark \
-  > /root/oss/velox/_build/relwithdebinfo/build_018h1.log 2>&1
-echo "exit: $?"
+TPCH_APPROVED=1 \
+BIN=/root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_benchmark \
+TPCH_DATA="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
+OUT_DIR="$(pwd)/tmp/tpch_ab_results" \
+CACHE_ROOT="$(pwd)/tmp/velox_tpch_ab_cache" \
+QUERY_ID=0 ROUNDS=3 NUM_SPLITS_PER_FILE=1 NUM_DRIVERS=4 \
+FILECACHE_DISK_GIB=80 CACHE_GB=4 \
+  bash velox/benchmarks/scripts/run_tpch_ab.sh \
+  > /root/oss/velox/_build/relwithdebinfo/test_018h2_ab.log 2>&1
+echo "TPCH A/B exit: $?"
 ```
 
-- [ ] **Step 2: Run Wave 1 (core seek micro)**
-- [ ] **Step 3: Run Wave 2 (dedicated FCBI micro)**
-- [ ] **Step 4: Run Wave 3 (wrapper A/B)**
-- [ ] **Step 5: Write and stop at the mandatory pre-TPCH checkpoint**
+### Steps
 
-The Worker writes the non-TPCH results to the Task-018 receipt, including build
-type, exact binary paths, correctness results, carrier tests, and Waves 1–3
-artifacts, then sets:
+- [ ] **Step 1: Confirm 018-P approval and green 018-C**
+- [ ] **Step 2: Build `velox_tpch_benchmark` in RelWithDebInfo (if not already built by 018-C)**
+- [ ] **Step 3: Run Wave 4 smoke (q01, q09, q21)**
+- [ ] **Step 4: Run Wave 4 full (all 22) if smoke passes**
+- [ ] **Step 5: Collect CSVs, report median wall_ms per (mode, query, round)**
 
-```text
-worker_status: waiting_for_pre_tpch_approval
-tpch_sources_copied: false
-tpch_target_built: false
-tpch_commands_run: false
-```
-
-The Controller verifies the receipt and asks for explicit user approval. No
-Worker continues into 018-C or Wave 4 under the original dispatch.
-
-- [ ] **Step 6: After approval, dispatch a fresh Task-018 Worker and execute Task 018-C**
-
-Task 018-C performs the first authorized TPCH source copy, target registration,
-fresh RelWithDebInfo build, and correctness run.
-
-- [ ] **Step 7: Run Wave 4 smoke (q01, q09, q21)**
-- [ ] **Step 8: Run Wave 4 full (all 22) if smoke passes**
-- [ ] **Step 9: Collect CSVs, report median wall_ms per (mode, query, round)**
-
-**Gate:** Every benchmark binary path is under a RelWithDebInfo or Release build
-directory; any Debug binary invalidates the result. All authorized waves exit
-0, CSVs are collected, and no exception or timeout occurs. No hard regression
-threshold is applied; the noise band comes from within-run variance.
+**Gate (018-H2):** 018-P approval present and 018-C green; every benchmark
+binary path is under a RelWithDebInfo or Release build directory (any Debug
+binary invalidates the result); all authorized TPCH waves exit 0, CSVs are
+collected, and no exception or timeout occurs. No hard regression threshold is
+applied; the noise band comes from within-run variance.
 
 ---
 
@@ -3207,23 +2102,15 @@ git --no-pager branch --show-current  # Must be "filecache"
 test -f velox/ch/Common/FileCacheStats.h || { echo "BLOCKED: FileCacheStats.h not found"; exit 1; }
 grep -q "takeFileCacheStatsSnapshot" velox/ch/Common/FileCacheStats.h || { echo "BLOCKED: takeFileCacheStatsSnapshot missing"; exit 1; }
 grep -q "kFileCacheWriteBytes" velox/ch/Common/FileCacheStats.h || { echo "BLOCKED: kFileCacheWriteBytes missing"; exit 1; }
-# FCBI must carry the cancellation token AND expose the accessor (018-F builder test).
-grep -q "CancellationToken cancellationToken" velox/ch/Disks/IO/FileCacheBufferedInput.h || { echo "BLOCKED: FCBI ctor lacks cancellationToken param"; exit 1; }
-grep -q "cancellationToken() const" velox/ch/Disks/IO/FileCacheBufferedInput.h || { echo "BLOCKED: FCBI lacks cancellationToken() accessor"; exit 1; }
-# FileCacheManager::Options must expose the three validated resource fields (018-A/E).
+# FileCacheManager::Options must expose the three validated resource fields (018-A).
 grep -q "localFileSystem" velox/ch/Interpreters/FileCache/FileCacheManager.h || { echo "BLOCKED: Options.localFileSystem missing"; exit 1; }
 grep -q "timekeeper" velox/ch/Interpreters/FileCache/FileCacheManager.h || { echo "BLOCKED: Options.timekeeper missing"; exit 1; }
 grep -q "commonUserId() const" velox/ch/Interpreters/FileCache/FileCacheManager.h || { echo "BLOCKED: FileCacheManager::commonUserId() missing"; exit 1; }
-# FileCacheConfig must expose backgroundDownloadThreads (018-E 5th key mapping).
-grep -q "backgroundDownloadThreads" velox/ch/Interpreters/FileCache/FileCacheSettings.h || { echo "BLOCKED: FileCacheConfig.backgroundDownloadThreads missing"; exit 1; }
 
 # 3. vcpkg toolchain
 test -f "$CMAKE_TOOLCHAIN_FILE" || { echo "BLOCKED: CMAKE_TOOLCHAIN_FILE not set/found"; exit 1; }
 
-# 4. Gluten worktree can be created
-cd /root/oss/gluten && git worktree list | grep -v "018" | head -5
-
-# 5. TPCH data is checked only after 018-P approval.
+# 4. TPCH data is checked only after 018-P approval.
 # Do not inspect or require TPCH_DATA during the pre-checkpoint phase.
 ```
 
@@ -3244,21 +2131,29 @@ cd /root/oss/gluten && git worktree list | grep -v "018" | head -5
 
 ### After all subtasks
 
-1. Full CTest of all `velox_ch_*` targets in the debug build (freshly rebuilt).
-2. Full CTest of all new Gluten test targets (`velox_file_cache_support_test`,
-   `velox_file_cache_gluten_lifecycle_test`, `velox_file_cache_gluten_builder_test`,
-   `velox_file_cache_gluten_metrics_test`) plus the Java `MetricsCarrierTest` and
-   Scala `FileSourceScanMetricsUpdaterSuite`.
-3. Read-only code-review subagent on the complete diff (Velox + Gluten).
+1. Full CTest of all `velox_ch_*` and benchmark harness test targets
+   (`velox_cache_read_harness_test`, `velox_cache_verify_test`), freshly rebuilt.
+2. Re-run the non-TPCH benchmark smokes (correctness verify, dedicated FCBI
+   micro, wrapper A/B) from a RelWithDebInfo/Release build; confirm no exception
+   and no Debug binary is used.
+3. Read-only code-review subagent on the complete Velox diff.
 4. Worker writes the result receipt. Worker does NOT commit.
 
 ---
 
 ## Explicit Exclusions
 
+**Moved to Task 019 (Gluten integration + Spark E2E) — excluded entirely from
+Task 018.** Task 019 owns the former 018-E/F/G work: the Gluten configuration
+and `VeloxBackend`/`FileCacheManager` lifecycle (former 018-E), the
+`GlutenBufferedInputBuilder` selection/identity/cancellation-token adapter
+(former 018-F), and the `fileCacheWriteBytes` native -> JNI -> Java -> Scala
+`SQLMetric` bridge with its Spark end-to-end verification (former 018-G). None
+of that is built, tested, or depended on by Task 018.
+
 ```text
-Task 019 (Spark E2E) — excluded entirely
 Task 017B (logging) — independent, executes after Task 018 and accepted Review 5, not a dependency
+Review 5 — reviews Tasks 003-018 as a Velox-only FileCache system after Task 018 is accepted; does not review Task 019 integration
 pageLoadTimeNs key mismatch — existing bug, out of scope
 Hard performance regression thresholds — baseline only
 Multi-cache configuration — single "default" only
@@ -3266,26 +2161,29 @@ Prometheus / HTTP metrics server — deferred
 Kernel O_DIRECT integration — deferred
 AsyncDataCache + FileCache co-existence — rejected by mutual exclusion
 TestValue seam — not used unless already approved in Task 017A
-Spark SQLMetric end-to-end verification — full Spark-to-SQLMetric E2E deferred to Task 019; this plan proves the Scala updater increments the SQLMetric in isolation (FileSourceScanMetricsUpdaterSuite) and that the whole bridge compiles
 ```
 
 ---
 
 ## Task-Owned Files Summary
 
-All files created or modified by this plan are either in:
-1. `/root/oss/velox/` (Velox repo, branch `filecache`)
-2. `/root/oss/gluten-018/` (isolated worktree)
+All files created or modified by this plan live in `/root/oss/velox/` (Velox
+repo, branch `filecache`):
 
-No file in the dirty `/root/oss/gluten` (branch `main`) is touched. The worktree
-shares no modified paths with the dirty main working tree.
+- `velox/benchmarks/AbBenchmark*.{h,cpp}` and `velox/benchmarks/CMakeLists.txt` (018-A adapter)
+- `velox/dwio/common/benchmarks/**` correctness harness, wrapper benchmark, and tests (018-A)
+- `velox/ch/benchmarks/FileCacheBufferedInputBenchmark.cpp` + `velox/ch/benchmarks/CMakeLists.txt` (018-B)
+- `velox/benchmarks/scripts/{lib_cache_cleanup,run_wrapper_ab,run_tpch_ab}.sh` (018-D)
+- `velox/benchmarks/tpch/**` (018-C, post-checkpoint)
+
+No repository or worktree outside `/root/oss/velox` is touched.
 
 ---
 
 ## Result Receipt Location
 
 ```text
-/root/oss/clickhouse/port/task/result/018-filecache-gluten-integration-result.md
+/root/oss/clickhouse/port/task/result/018-filecache-velox-benchmark-result.md
 ```
 
 Worker never stages or commits. Controller commits accepted subtasks.

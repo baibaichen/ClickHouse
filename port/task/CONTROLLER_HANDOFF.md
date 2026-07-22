@@ -248,7 +248,7 @@ Current task:
     11. Tasks 017A/018 are jointly designed because benchmark output consumes
         Task-017A statistics;
     12. user-selected execution order is Task 017A -> Task 018 -> Review 5 ->
-        Task 017B; Task 019 design waits for accepted Task 017B;
+        Task 017B -> Task 019;
     13. executable plans are independently reviewed and stored at
         `port/task/017a-filecache-statistics-cancellation-plan.md`,
         `port/task/018-filecache-gluten-benchmark-plan.md`, and
@@ -262,8 +262,9 @@ Current task:
     15. Task 017A is accepted at Velox `a856d836c`. Task 018 non-TPCH work is
         authorized through 018-P. TPCH retains its separate explicit checkpoint
         approval; Review 5 and Task 017B retain their gates.
-    16. Task 018 stops after non-TPCH correctness/micro/wrapper/Gluten work and
-        Waves 1–3. No TPCH source copy, target build, data requirement, or run is
+    16. Task 018 is Velox-only and stops after non-TPCH correctness,
+        micro/wrapper/orchestration work and Waves 1–3. No TPCH source copy,
+        target build, data requirement, or run is
         allowed until the user explicitly approves the pre-TPCH checkpoint.
         Every benchmark result must come from a fresh RelWithDebInfo or Release
         build; Debug benchmark results are invalid.
@@ -271,6 +272,11 @@ Current task:
         byte events and query `ssdRead`/`read` record pre-clamp physical bytes;
         `rawBytesRead` alone records post-clamp logical bytes; predownload also
         contributes to the global source total and query `read`/`prefetch`.
+    18. The approved hard split
+        `port/design/filecache-task-018-019-hard-split.md` moves former
+        018-E/F/G to Task 019. Task 019 is the full Gluten integration owner and
+        begins with a compatible-Velox hard gate; the uncommitted Gluten WIP is
+        preserved but is not Task-018 work.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -288,17 +294,18 @@ Resume procedure:
 4. Tasks 011 B2/B3, 012 B4/B5, and 014's B4 caller-order confirmation are
    corrected and accepted.
 5. The targeted re-review records zero unresolved findings.
-6. Task 015 and Task 017A are complete and accepted. Task 018 non-TPCH work is
-   authorized.
+6. Task 015 and Task 017A are complete and accepted. Task 018-A/B/D are accepted
+   at Velox `9850a70fa`, `df9091e78`, and `5ae39651b`; Task 018-H1 is next.
 
 Continuous execution target:
 
-- Current state: Task 017A is accepted at Velox `a856d836c`; Task 018 non-TPCH
-  work may be dispatched. The mandatory stop before TPCH is 018-P. After
-  complete Task 018, the next mandatory stop is Review 5.
+- Current state: Task 017A is accepted at Velox `a856d836c`; Task 018-A/B/D are
+  accepted and Task 018-H1 may be dispatched. The mandatory stop before TPCH is
+  018-P. After complete Task 018, the next mandatory stop is Review 5.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
-  continues with Task 018, Review 5, then Task 017B. Task 019 design is blocked
-  until Task 017B is accepted.
+  continues with Task 018, Review 5, Task 017B, then Task 019 Gluten/Spark
+  integration. Task 019 is blocked on its prerequisites and compatible Velox
+  baseline.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

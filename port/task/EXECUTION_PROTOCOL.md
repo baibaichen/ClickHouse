@@ -10,7 +10,7 @@ cross-task correctness, acceptance, and commits.
 Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
                        E2E cases and the checked seek benchmark.
 Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
-                       Task 019 design.
+                       Task 019 Gluten/Spark integration.
                        The three executable plans are independently reviewed.
                        Task 017A is accepted at Velox a856d836c.
                        Task 018 non-TPCH work is authorized through 018-P;
@@ -18,13 +18,12 @@ Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
-Tasks 017A and 018 are mainline work and were designed together:
-Task 017A owns statistics/cancellation/scheduler/caller-id and Task 018 owns Gluten integration plus
-the adapted Velox correctness, core/buffered-input/wrapper microbenchmark, and
-TPCH suite. Task 017A is accepted. Task 018 non-TPCH work is authorized; TPCH
-remains separately gated. Task 019 is not allowed as currently written.
+Task 017A owns statistics/cancellation/scheduler/caller-id. Task 018 is
+Velox-only and owns correctness, core/buffered-input/wrapper microbenchmarks,
+safe orchestration, and TPCH. Task 017A is accepted. Task 018 non-TPCH work is
+authorized; TPCH remains separately gated.
 Task 017B independently owns logging and exception stacks. It executes after
-Task 018 and accepted Review 5, and must be accepted before Task 019 design.
+Task 018 and accepted Review 5, and must be accepted before Task 019.
 Task 018 has an additional mandatory stop after all non-TPCH work and before any
 TPCH source copy/build/run. Benchmark evidence must come from RelWithDebInfo or
 Release, never Debug. TPCH resumes only after explicit user approval.
@@ -35,8 +34,9 @@ Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
 Deferred Velox work:  Task 016
 Planned Velox work:   `017a-filecache-statistics-cancellation-plan.md`, then
                       post-018 `017b-filecache-logging-exception-stack-plan.md`
-Planned Gluten work:  `018-filecache-gluten-benchmark-plan.md`
-Deferred Gluten:      Task 019, blocked on Task 018
+Planned Gluten work:  `019-filecache-gluten-integration-spark-e2e-plan.md`
+Deferred Gluten:      Task 019, blocked on Task 018, Review 5, Task 017B, and
+                      the compatible Velox hard gate
 ```
 
 Task 011 and Task 012 form one atomic SCC migration stage. Run them
@@ -248,8 +248,8 @@ controller's request.
 When the Task-018 Worker writes
 `worker_status: waiting_for_pre_tpch_approval`, the Controller:
 
-1. verifies every non-TPCH correctness, micro, wrapper, Gluten lifecycle,
-   Builder, metric, and Waves 1–3 gate;
+1. verifies every non-TPCH correctness, micro, wrapper, orchestration, and
+   Waves 1–3 gate;
 2. verifies every benchmark binary came from a fresh RelWithDebInfo or Release
    build;
 3. verifies `tpch_sources_copied`, `tpch_target_built`, and

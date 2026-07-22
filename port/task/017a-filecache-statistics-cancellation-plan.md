@@ -361,7 +361,7 @@ namespace facebook::velox::ch
 
 /// RuntimeMetric key for bytes written to the FileCache. Used in IoStats
 /// free-form counters; flows through FileDataSource -> RuntimeMetric ->
-/// OperatorStats -> TaskStats -> Gluten JNI -> Spark SQLMetric.
+/// OperatorStats -> TaskStats; Task 019 later carries it through Gluten/Spark.
 inline constexpr const char * kFileCacheWriteBytes = "fileCacheWriteBytes";
 
 /// Point-in-time snapshot of FileCache gauges + cumulative counters.
@@ -1158,7 +1158,7 @@ load-bearing.
 **Interfaces:**
 - Consumes: `folly::CancellationToken` (from folly)
 - Produces: `FileCacheBufferedInput::cancellationToken()` accessor
-- Produces for Task 018: ctor parameter `folly::CancellationToken cancellationToken = {}` appended after `fileReadOps`
+- Produces for Task 019: ctor parameter `folly::CancellationToken cancellationToken = {}` appended after `fileReadOps`
 - Produces (test-only): `TestValue` injection points `FileCacheInputStream::beforeSegmentWait` and `FileCacheInputStream::afterDownloaderElected` (compiled out in release)
 - Safe cancellation points (design §4.2): top of `nextFileSegmentsBatch` (before first lookup / between batches); inside `FileSegment::wait`; after `completeAndPopFront` in `completeCurrentSegmentAndAdvance` (after completing a segment). No check between downloader election and release, or between reserve and write.
 
@@ -2327,8 +2327,8 @@ These are independently owned by Task 017B.
 
 | Obligation | Owner | Gate |
 |------------|-------|------|
-| `kFileCacheWriteBytes` propagation to Spark | Task 018 | Gluten metric bridge |
-| Real `ConnectorQueryCtx::cancellationToken` supply | Task 018 | Builder `cancellationToken` param after `fileReadOps` |
+| `kFileCacheWriteBytes` propagation to Spark | Task 019 | Gluten metric bridge |
+| Real `ConnectorQueryCtx::cancellationToken` supply | Task 019 | Builder `cancellationToken` param after `fileReadOps` |
 | Logger/exception real impl | Task 017B | Independent |
 | Prometheus reporter | Deferred | Not Task 017A/018 |
 
