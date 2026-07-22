@@ -33,6 +33,45 @@ Keep the existing configure command:
   -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13
 ```
 
+### Gluten integration build (`home-chang`, Task 018+)
+
+The Velox port has two branches in `<velox_repo>`:
+
+- `filecache2` — the clean mainline (upstream base + FileCache port + GCC/`-Werror`
+  portability fixes). This is the audited/PR line. It does NOT carry the IBM/OAP
+  compatibility shims.
+- `filecache2-gluten` — the branch used to BUILD Gluten. It carries `filecache2`
+  plus the `[!TMP]` IBM/OAP shims (HashTable serde, Parquet subfield, private
+  static dependency prefix) and the extra upstream `-Werror` backports Gluten's
+  toolchain needs. Do Gluten development here.
+
+**Rule:** any change to Velox source made while on `filecache2-gluten` that is NOT
+an IBM/OAP shim (i.e. a real FileCache or portability fix) MUST be copied back to
+`filecache2` so the mainline stays complete. Only the `[!TMP]` shims stay
+gluten-only.
+
+Gluten is built against our Velox fork (not the vendored IBM velox) via the
+official `dev/builddeps-veloxbe.sh` with `--velox_home` pointing at `<velox_repo>`.
+Because `VELOX_HOME` points at an existing tree, the script skips fetching upstream
+velox. Build (Velox then Gluten C++ in one invocation):
+
+```bash
+cd /home/chang/SourceCode/gluten2   # gluten1's worktree; keep filecache2-gluten checked out in <velox_repo>
+INSTALL_PREFIX=/home/chang/OpenSource/velox/_build/deps-install \
+VELOX_GFLAGS_TYPE=static \
+./dev/builddeps-veloxbe.sh \
+  --velox_home=/home/chang/OpenSource/velox \
+  --build_type=Release --build_arrow=OFF \
+  build_velox build_gluten_cpp
+```
+
+Notes: non-vcpkg, Arrow off, private static gflags/glog/Folly under
+`_build/deps-install` (so `VELOX_GFLAGS_TYPE=static` is required; a stale/partial
+`deps-install` missing the static gflags component makes configure fail with
+"Package gflags was installed without required component shared"). Products:
+`_build/release/lib/libvelox.a`, `gluten2/cpp/build/releases/{libgluten,libvelox}.so`.
+Do not pass `-j`; redirect each build to a log under `gluten2/`.
+
 ## `root-oss`
 
 The environment source is `/root/oss/velox-helper/README.md`, backed by
