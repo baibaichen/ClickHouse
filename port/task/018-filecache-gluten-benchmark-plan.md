@@ -1067,180 +1067,495 @@ done
 
 ## Task 018-D: Safe Orchestration Scripts
 
-**Files:**
-- Create: `velox/benchmarks/scripts/lib_cache_cleanup.sh`
-- Create: `velox/benchmarks/scripts/run_tpch_ab.sh`
-- Create: `velox/benchmarks/scripts/run_wrapper_ab.sh`
+**Status: COMPLETE** — Velox commit `5ae39651b`, branch `filecache`.
+All three scripts created and `chmod +x`; `bash -n` clean; 34 assertions pass.
+Report: `/root/oss/clickhouse/.superpowers/sdd/018-D-report.md`.
+
+**Files (new, untracked, mode 0755 / executable):**
+- `velox/benchmarks/scripts/lib_cache_cleanup.sh` (sourced safety library)
+- `velox/benchmarks/scripts/run_wrapper_ab.sh` (wrapper A/B orchestrator)
+- `velox/benchmarks/scripts/run_tpch_ab.sh` (TPCH A/B orchestrator, 018-P gated)
 
 **Interfaces:**
-- Consumes: `velox_tpch_benchmark`, `velox_bufferedinput_wrapper_benchmark` binaries
+- Consumes: `velox_tpch_benchmark`, `velox_bufferedinput_wrapper_benchmark` binaries (RelWithDebInfo/Release only; Debug rejected)
 - Produces: Shell scripts that handle cache lifecycle safely
 
-- [ ] **Step 1: Create `lib_cache_cleanup.sh`**
+---
+
+### Step 1: `lib_cache_cleanup.sh` (exact accepted content)
 
 ```bash
 #!/usr/bin/env bash
-# Sourced by benchmark scripts. Provides sentinel-based safe cache cleanup.
+# Sourced by the Task 018-D benchmark orchestration scripts. Provides
+# sentinel-based, fail-close cache cleanup so a mis-set path can never wipe an
+# arbitrary directory.
+#
+# Safety model (mirrors the C++ helper dwio::common::bench::clearBenchmarkCacheRoot
+# in velox/dwio/common/benchmarks/CacheReadHarness.cpp):
+#   * Every destructive call resolves DIR and ROOT with `realpath -m` and refuses
+#     to act unless DIR is a *strict component child* of ROOT (a proper
+#     descendant, decided component-by-component so a sibling like `<root>2`
+#     that merely shares a string prefix is rejected).
+#   * A directory is only wiped when it carries an authentic sentinel: a regular,
+#     non-symlink file named exactly `.velox_benchmark_cache_sentinel`. The
+#     benchmark binaries preserve this file when they reset their cache roots, so
+#     the EXIT trap here can still authenticate and remove the run directory.
+#   * The filesystem root, the current working directory and DIR==ROOT are always
+#     refused.
 set -euo pipefail
 
+# Exact sentinel name shared with the C++ contract (kCacheSentinelName in
+# velox/dwio/common/benchmarks/CacheReadHarness.h). Do not rename without
+# updating that header and Task 018-D.
 SENTINEL_NAME=".velox_benchmark_cache_sentinel"
 
 # Registry of (dir, root) pairs to clean on exit; appended by setup_trap_cleanup.
-# Declared before any function so the trap bodies never need `local`.
+# Declared before any function so the trap handlers never need a top-level
+# `local` (which is a syntax error outside a function body).
 _CLEANUP_DIRS=()
 _CLEANUP_ROOTS=()
+_CLEANUP_TRAP_ARMED=0
 
+# True when `child` is a strict (proper) component-wise descendant of `base`.
+# Both arguments must already be absolute, lexically-normal paths (as produced by
+# `realpath -m`). Equal paths return false. The check appends a trailing slash to
+# `base` and strips it as a *literal* prefix, so the match can only succeed on a
+# component boundary -- `/a/tmp2/x` is NOT considered a child of `/a/tmp`.
+_is_strict_component_child() {
+  local child="$1"
+  local base="$2"
+  local base_slash rest
+  [[ "$child" != "$base" ]] || return 1
+  if [[ "$base" == "/" ]]; then
+    base_slash="/"
+  else
+    base_slash="$base/"
+  fi
+  rest="${child#"$base_slash"}"
+  # Prefix absent -> not nested; prefix present but nothing after -> equal.
+  [[ "$rest" != "$child" ]] || return 1
+  [[ -n "$rest" ]] || return 1
+  return 0
+}
+
+# Validates that DIR may be safely operated on relative to ROOT. Rejects empty
+# inputs, non-absolute resolutions, the filesystem root, the current working
+# directory, DIR==ROOT, and any DIR that is not a strict component child of ROOT.
 validate_cache_dir() {
-  local dir="$1"
-  local root="$2"
-  [[ "$dir" = /* ]] || { echo "ERROR: cache dir must be absolute: $dir" >&2; return 1; }
-  local real_dir real_root
-  real_dir="$(realpath -m "$dir")"
-  real_root="$(realpath -m "$root")"
-  [[ "$real_dir" == "$real_root"/* ]] || { echo "ERROR: $dir not child of $root" >&2; return 1; }
+  local dir="${1-}"
+  local root="${2-}"
+  if [[ -z "$dir" || -z "$root" ]]; then
+    echo "ERROR: cache dir and root must be non-empty (dir='$dir' root='$root')" >&2
+    return 1
+  fi
+  local real_dir real_root cwd
+  real_dir="$(realpath -m -- "$dir")"
+  real_root="$(realpath -m -- "$root")"
+  if [[ "$real_dir" != /* || "$real_root" != /* ]]; then
+    echo "ERROR: resolved paths must be absolute (dir='$real_dir' root='$real_root')" >&2
+    return 1
+  fi
+  if [[ "$real_dir" == "/" || "$real_root" == "/" ]]; then
+    echo "ERROR: refusing to operate on the filesystem root (dir='$real_dir' root='$real_root')" >&2
+    return 1
+  fi
+  cwd="$(realpath -m -- "$PWD")"
+  if [[ "$real_dir" == "$cwd" ]]; then
+    echo "ERROR: refusing to operate on the current working directory: $real_dir" >&2
+    return 1
+  fi
+  if [[ "$real_dir" == "$real_root" ]]; then
+    echo "ERROR: cache dir must not equal its root: $real_dir" >&2
+    return 1
+  fi
+  if ! _is_strict_component_child "$real_dir" "$real_root"; then
+    echo "ERROR: cache dir '$real_dir' is not a strict child of root '$real_root'" >&2
+    return 1
+  fi
+  return 0
 }
 
+# create_sentinel DIR ROOT
+# Validates (DIR strict child of ROOT), then creates DIR and writes a fresh
+# sentinel as a mode-0600 regular file. Refuses to reuse any pre-existing marker
+# -- regular, non-regular, or symlink (including a dangling one) -- and creates
+# the file without following a symlink via `noclobber` (set -C) plus a 0177 umask.
 create_sentinel() {
-  local dir="$1"
-  mkdir -p "$dir"
-  echo "velox-benchmark-$$-$(date +%s)" > "$dir/$SENTINEL_NAME"
-}
-
-safe_wipe_cache_dir() {
-  local dir="$1"
-  local root="$2"
+  local dir="${1-}"
+  local root="${2-}"
   validate_cache_dir "$dir" "$root" || return 1
-  [[ -f "$dir/$SENTINEL_NAME" ]] || { echo "ERROR: no sentinel in $dir" >&2; return 1; }
-  rm -rf "$dir"
+  local real_dir marker payload
+  real_dir="$(realpath -m -- "$dir")"
+  marker="$real_dir/$SENTINEL_NAME"
+  # -e is false for a dangling symlink, so test -L explicitly too: any existing
+  # marker of any type is refused rather than silently reused/overwritten.
+  if [[ -e "$marker" || -L "$marker" ]]; then
+    echo "ERROR: refusing to reuse a pre-existing sentinel marker: $marker" >&2
+    return 1
+  fi
+  mkdir -p -- "$real_dir"
+  payload="velox-benchmark-$$-$(date +%s)"
+  # Subshell isolates `set -C` and the umask. noclobber makes `>` fail if the
+  # target exists (so we never write through a symlink or clobber a file);
+  # umask 0177 yields a 0600 regular file. $$ is the parent shell PID even here.
+  if ! (
+    set -C
+    umask 0177
+    printf '%s\n' "$payload" > "$marker"
+  ); then
+    echo "ERROR: failed to create sentinel (does it already exist?): $marker" >&2
+    return 1
+  fi
+  if [[ -L "$marker" || ! -f "$marker" ]]; then
+    echo "ERROR: sentinel is not a regular file after creation: $marker" >&2
+    return 1
+  fi
+  return 0
 }
 
-# Wipes every registered cache dir via safe_wipe_cache_dir. Runs in trap context
-# (top level), so all `local`s live inside this function body, never in the trap.
+# safe_wipe_cache_dir DIR ROOT
+# Validates, requires an authentic (regular, non-symlink) sentinel inside DIR,
+# then removes only the resolved DIR and verifies it is gone. No unresolved
+# variables and no globbing: the target is the quoted, realpath-resolved child.
+safe_wipe_cache_dir() {
+  local dir="${1-}"
+  local root="${2-}"
+  validate_cache_dir "$dir" "$root" || return 1
+  local real_dir marker
+  real_dir="$(realpath -m -- "$dir")"
+  marker="$real_dir/$SENTINEL_NAME"
+  # -f follows symlinks (true only for a regular file); ! -L rejects a symlink
+  # named like the sentinel. Together: a genuine regular file is required.
+  if [[ -L "$marker" || ! -f "$marker" ]]; then
+    echo "ERROR: refusing to wipe '$real_dir': missing authentic sentinel '$SENTINEL_NAME'" >&2
+    return 1
+  fi
+  rm -rf -- "$real_dir"
+  if [[ -e "$real_dir" || -L "$real_dir" ]]; then
+    echo "ERROR: failed to remove cache dir: $real_dir" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Wipes every registered (dir, root) pair through safe_wipe_cache_dir. Runs from
+# the EXIT/signal traps, so all `local`s stay inside this function body and the
+# trap strings themselves contain no `local`. Returns nonzero if any wipe failed.
 _run_cleanup() {
+  local rc=0
+  local n="${#_CLEANUP_DIRS[@]}"
   local i=0
-  while [ "$i" -lt "${#_CLEANUP_DIRS[@]}" ]; do
-    safe_wipe_cache_dir "${_CLEANUP_DIRS[$i]}" "${_CLEANUP_ROOTS[$i]}" 2>/dev/null || true
+  while [ "$i" -lt "$n" ]; do
+    if ! safe_wipe_cache_dir "${_CLEANUP_DIRS[$i]}" "${_CLEANUP_ROOTS[$i]}"; then
+      rc=1
+    fi
     i=$((i + 1))
   done
+  return "$rc"
 }
 
+# EXIT trap body. Preserves an original nonzero exit status; if the script
+# succeeded (status 0) but cleanup failed, exits nonzero instead. `_exit_status`
+# is captured first, as a plain (non-local) assignment, so `$?` is not disturbed.
+_on_exit() {
+  _exit_status=$?
+  _cleanup_status=0
+  _run_cleanup || _cleanup_status=$?
+  if [ "$_exit_status" -ne 0 ]; then
+    exit "$_exit_status"
+  fi
+  exit "$_cleanup_status"
+}
+
+# INT/TERM trap body. Detaches the EXIT trap (so cleanup is not run twice), wipes
+# the registered dirs, and exits 130 (128 + signal) regardless of cleanup result.
+_on_signal() {
+  trap - EXIT
+  _run_cleanup || true
+  exit 130
+}
+
+# setup_trap_cleanup DIR ROOT
+# Registers a (dir, root) pair for trap-driven cleanup and arms the EXIT/INT/TERM
+# traps exactly once. Duplicate (dir, root) registrations are ignored so a pair
+# is never wiped (or reported) twice.
 setup_trap_cleanup() {
-  local dir="$1"
-  local root="$2"
-  # Register this (dir, root) pair. The EXIT/INT/TERM traps clean every
-  # registered pair through safe_wipe_cache_dir (sentinel + child-of-root
-  # checks), so nothing outside a sentinel-marked child of root is ever removed.
+  local dir="${1-}"
+  local root="${2-}"
+  local n="${#_CLEANUP_DIRS[@]}"
+  local i=0
+  while [ "$i" -lt "$n" ]; do
+    if [[ "${_CLEANUP_DIRS[$i]}" == "$dir" && "${_CLEANUP_ROOTS[$i]}" == "$root" ]]; then
+      return 0
+    fi
+    i=$((i + 1))
+  done
   _CLEANUP_DIRS+=("$dir")
   _CLEANUP_ROOTS+=("$root")
-  # EXIT runs at top level, where `local` is a syntax error: capture the code
-  # into a plain variable and re-exit with it to preserve the original status.
-  trap '_rc=$?; _run_cleanup; exit "$_rc"' EXIT
-  trap '_run_cleanup; exit 130' INT TERM
+  if [ "$_CLEANUP_TRAP_ARMED" -eq 0 ]; then
+    trap '_on_exit' EXIT
+    trap '_on_signal' INT TERM
+    _CLEANUP_TRAP_ARMED=1
+  fi
+  return 0
+}
+
+# validate_benchmark_binary BIN
+# Requires BIN to be executable and to resolve (symlinks followed) to a path that
+# names a RelWithDebInfo or Release build directory. Debug build binaries are
+# refused, per the Task 018 global constraint forbidding Debug benchmarks.
+validate_benchmark_binary() {
+  local bin="${1-}"
+  if [[ -z "$bin" ]]; then
+    echo "ERROR: validate_benchmark_binary: empty binary path" >&2
+    return 1
+  fi
+  if [[ ! -x "$bin" ]]; then
+    echo "ERROR: benchmark binary is not executable: $bin" >&2
+    return 1
+  fi
+  local real lower probe
+  real="$(realpath -- "$bin")"
+  lower="${real,,}"
+  # Strip the allowed 'relwithdebinfo' token before the Debug scan so it is not a
+  # false positive (it does not contain the substring "debug", but stripping is
+  # explicit and future-proof), then reject any genuine Debug build path.
+  probe="${lower//relwithdebinfo/}"
+  case "$probe" in
+    *debug*)
+      echo "ERROR: refusing Debug benchmark binary (RelWithDebInfo/Release required): $real" >&2
+      return 1
+      ;;
+  esac
+  case "$lower" in
+    *relwithdebinfo* | *release*)
+      return 0
+      ;;
+    *)
+      echo "ERROR: benchmark binary is not from a RelWithDebInfo/Release build dir: $real" >&2
+      return 1
+      ;;
+  esac
 }
 ```
 
-`_run_cleanup` is defined earlier in the same file (before `setup_trap_cleanup`)
-so the trap bodies contain no `local` and stay valid bash.
+---
 
-- [ ] **Step 2: Create `run_tpch_ab.sh`**
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib_cache_cleanup.sh"
-
-: "${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}"
-: "${BIN:?set BIN to velox_tpch_benchmark path}"
-: "${OUT_DIR:=tmp/tpch_ab_results}"
-: "${FC_ROOT:=$(pwd)/tmp/fc_tpch}"
-: "${FC_SIZE_GIB:=10}"
-: "${CACHE_GB:=4}"
-: "${ROUNDS:=3}"
-: "${SPLITS:=1}"
-: "${DRIVERS:=4}"
-
-mkdir -p "$OUT_DIR"
-
-for MODE in direct cbi filecache; do
-  CACHE_DIR="$FC_ROOT/${MODE}_run"
-  create_sentinel "$CACHE_DIR"
-  setup_trap_cleanup "$CACHE_DIR" "$FC_ROOT"
-
-  "$BIN" \
-    --input_source="$MODE" \
-    --data_path="$TPCH_DATA" \
-    --data_format=parquet \
-    --query_id=0 \
-    --rounds="$ROUNDS" \
-    --num_splits_per_file="$SPLITS" \
-    --num_drivers="$DRIVERS" \
-    --filecache_root="$CACHE_DIR" \
-    --filecache_disk_gib="$FC_SIZE_GIB" \
-    --cache_gb="$CACHE_GB" \
-    --out="$OUT_DIR/tpch_${MODE}.csv"
-
-  safe_wipe_cache_dir "$CACHE_DIR" "$FC_ROOT"
-done
-```
-
-- [ ] **Step 3: Create `run_wrapper_ab.sh`**
-
-Complete script (wrapper A/B matrix over dbi/cbi/fcbi, i.e. `direct`, `cbi`,
-`filecache`). Only `filecache` owns a run-specific cache dir, so the sentinel
-cleanup is armed only for that mode; `direct` needs no cache, `cbi` uses an
-in-process AsyncDataCache sized by `--cache_gb`:
+### Step 2: `run_wrapper_ab.sh` (exact accepted content)
 
 ```bash
 #!/usr/bin/env bash
+# Task 018-D wrapper A/B orchestrator.
+#
+# Runs velox_bufferedinput_wrapper_benchmark ONCE with --wrappers=all so the
+# Markdown table carries real CBI-relative deltas for all three read paths:
+# cbi (AsyncDataCache RAM+SSD), fcbi (ch::FileCache) and dbi (DirectBufferedInput).
+# cbi is the delta baseline; fcbi/dbi rows report `Δ vs cbi`.
+#
+# The cbi SSD tier and the fcbi disk tier each get their own sentinel-marked
+# child directory under an absolute CACHE_ROOT. Both are registered for
+# trap-driven cleanup: the benchmark preserves the sentinel when it resets those
+# roots, and the EXIT trap authenticates and removes them afterwards. Nothing is
+# deleted manually here -- the trap does it so the sentinel + strict-child checks
+# always gate the removal.
 set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib_cache_cleanup.sh
 source "$SCRIPT_DIR/lib_cache_cleanup.sh"
 
-: "${BIN:?set BIN to velox_bufferedinput_wrapper_benchmark path}"
-: "${OUT_DIR:=tmp/wrapper_ab_results}"
-: "${FC_ROOT:=$(pwd)/tmp/fc_wrapper}"
-: "${FC_SIZE_GIB:=10}"
-: "${CACHE_GB:=8}"
-: "${TARGET_WS_GB:=4}"
+: "${BIN:?set BIN to the velox_bufferedinput_wrapper_benchmark path (RelWithDebInfo/Release)}"
+: "${CACHE_ROOT:=$(pwd)/tmp/velox_wrapper_ab_cache}"
+: "${OUT:=$(pwd)/tmp/wrapper_ab_results/wrapper_all.md}"
+
+# A/B knobs (env-overridable). Defaults mirror the benchmark's own gflags.
+: "${RAM_CACHE_GB:=4}"
+: "${SSD_CACHE_GB:=80}"
+: "${FILECACHE_DISK_GB:=80}"
+: "${TARGET_WS_GB:=32}"
+: "${REMOTE_GB:=0}"
 : "${READ_SIZES_KIB:=1024,8192}"
 : "${WORKLOADS:=sequential,zipfian}"
 : "${MEASURE_PASSES:=3}"
+# COLD_EACH_PASS is optional; set it to 1/true to wipe the local tier before
+# every measure pass (cold cache-populate path). Left unset means warm reuse.
+
+validate_benchmark_binary "$BIN"
+
+CACHE_ROOT="$(realpath -m -- "$CACHE_ROOT")"
+if [[ "$CACHE_ROOT" != /* ]]; then
+  echo "ERROR: CACHE_ROOT must resolve to an absolute path: $CACHE_ROOT" >&2
+  exit 1
+fi
+mkdir -p -- "$CACHE_ROOT"
+mkdir -p -- "$(dirname -- "$OUT")"
+
+# Separate sentineled child dirs: cbi owns the SSD tier, fcbi owns the disk tier.
+CBI_SSD_DIR="$CACHE_ROOT/cbi_ssd"
+FCBI_DIR="$CACHE_ROOT/fcbi_cache"
+
+create_sentinel "$CBI_SSD_DIR" "$CACHE_ROOT"
+setup_trap_cleanup "$CBI_SSD_DIR" "$CACHE_ROOT"
+create_sentinel "$FCBI_DIR" "$CACHE_ROOT"
+setup_trap_cleanup "$FCBI_DIR" "$CACHE_ROOT"
+
+args=(
+  --wrappers=all
+  --ram_cache_gb="$RAM_CACHE_GB"
+  --ssd_cache_gb="$SSD_CACHE_GB"
+  --filecache_disk_gb="$FILECACHE_DISK_GB"
+  --target_ws_gb="$TARGET_WS_GB"
+  --remote_gb="$REMOTE_GB"
+  --read_sizes_kib="$READ_SIZES_KIB"
+  --workloads="$WORKLOADS"
+  --measure_passes="$MEASURE_PASSES"
+  --ssd_path="$CBI_SSD_DIR"
+  --filecache_root="$FCBI_DIR"
+  --report_dir=
+  --out="$OUT"
+)
+if [[ "${COLD_EACH_PASS:-}" == "1" || "${COLD_EACH_PASS:-}" == "true" ]]; then
+  args+=(--cold_each_pass)
+fi
+
+echo "Running wrapper A/B (all wrappers) -> $OUT" >&2
+"$BIN" "${args[@]}"
+
+# Validate the Markdown output: non-empty, carries the common header, and has a
+# row for each of the three wrappers (labels cbi/fcbi/dbi; workload labels are
+# seq/zipf/uni, not the long 'sequential').
+if [[ ! -s "$OUT" ]]; then
+  echo "ERROR: wrapper output is empty: $OUT" >&2
+  exit 1
+fi
+HEADER='| pattern | read | wrapper | wall_ms | MB/s | ram_MB | ssd_MB | src_MB | Δ vs cbi |'
+if ! grep -qF -- "$HEADER" "$OUT"; then
+  echo "ERROR: wrapper output missing the common header: $OUT" >&2
+  exit 1
+fi
+for w in cbi fcbi dbi; do
+  if ! grep -qF -- "| $w |" "$OUT"; then
+    echo "ERROR: wrapper output missing the '$w' row: $OUT" >&2
+    exit 1
+  fi
+done
+
+echo "Wrapper A/B complete; validated $OUT (cbi/fcbi/dbi rows present)." >&2
+# No manual wipe: the EXIT trap authenticates each sentinel and removes the two
+# cache child dirs.
+```
+
+---
+
+### Step 3: `run_tpch_ab.sh` (exact accepted content)
+
+> **Global hard rule — 018-P gate:** No real TPCH run may happen before the
+> pre-TPCH checkpoint (Task 018-P) is explicitly approved. This script enforces
+> this by checking `TPCH_APPROVED=1` *before* it references `BIN` or `TPCH_DATA`.
+> The creation and syntax-testing of this script is part of Task 018-D; the first
+> real TPCH run is Task 018-H2, after 018-P approval.
+
+```bash
+#!/usr/bin/env bash
+# Task 018-D TPCH A/B orchestrator.
+#
+# 018-P GATE: TPCH is forbidden until the user approves the pre-TPCH checkpoint.
+# This script therefore refuses to touch anything TPCH-related -- it does NOT
+# even look at BIN or TPCH_DATA -- unless TPCH_APPROVED=1 is set in the
+# environment. Creation/syntax of this script is part of Task 018-D; actually
+# running it against real TPCH data happens only in Task 018-H2, after approval.
+#
+# When approved, it sweeps velox_tpch_benchmark across the three A/B backends:
+#   direct    -- pure Velox DirectBufferedInput reads (no application cache)
+#   cbi       -- in-process AsyncDataCache sized by --cache_gb
+#   filecache -- ch::FileCache on a sentinel-marked, trap-cleaned disk root
+# Only the filecache backend owns a task-managed disk directory; direct and cbi
+# need no task-owned cache root.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib_cache_cleanup.sh
+source "$SCRIPT_DIR/lib_cache_cleanup.sh"
+
+# --- 018-P approval gate: checked before BIN / TPCH_DATA are referenced. ---
+: "${TPCH_APPROVED:?refusing to run TPCH: set TPCH_APPROVED=1 only after the 018-P pre-TPCH checkpoint is approved}"
+if [[ "$TPCH_APPROVED" != "1" ]]; then
+  echo "ERROR: TPCH_APPROVED must be exactly 1 (got '$TPCH_APPROVED'); 018-P approval required" >&2
+  exit 1
+fi
+
+# Only AFTER approval do we require the data directory and the binary.
+: "${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}"
+: "${BIN:?set BIN to the velox_tpch_benchmark path (RelWithDebInfo/Release)}"
+validate_benchmark_binary "$BIN"
+
+: "${CACHE_ROOT:=$(pwd)/tmp/velox_tpch_ab_cache}"
+: "${OUT_DIR:=$(pwd)/tmp/tpch_ab_results}"
+: "${DATA_FORMAT:=parquet}"
+: "${QUERY_ID:=0}"
 : "${ROUNDS:=3}"
+: "${NUM_SPLITS_PER_FILE:=1}"
+: "${NUM_DRIVERS:=4}"
+: "${FILECACHE_DISK_GIB:=58}"
+: "${CACHE_GB:=4}"
 
-mkdir -p "$OUT_DIR"
+CACHE_ROOT="$(realpath -m -- "$CACHE_ROOT")"
+if [[ "$CACHE_ROOT" != /* ]]; then
+  echo "ERROR: CACHE_ROOT must resolve to an absolute path: $CACHE_ROOT" >&2
+  exit 1
+fi
+mkdir -p -- "$OUT_DIR" "$CACHE_ROOT"
 
-# Wrapper matrix: direct (dbi), cbi, filecache (fcbi).
 for MODE in direct cbi filecache; do
   args=(
     --input_source="$MODE"
-    --target_ws_gb="$TARGET_WS_GB"
-    --read_sizes_kib="$READ_SIZES_KIB"
-    --workloads="$WORKLOADS"
-    --measure_passes="$MEASURE_PASSES"
+    --data_path="$TPCH_DATA"
+    --data_format="$DATA_FORMAT"
+    --query_id="$QUERY_ID"
     --rounds="$ROUNDS"
-    --cold_each_round
-    --out="$OUT_DIR/wrapper_${MODE}.csv"
+    --num_splits_per_file="$NUM_SPLITS_PER_FILE"
+    --num_drivers="$NUM_DRIVERS"
+    --out="$OUT_DIR/tpch_${MODE}.csv"
   )
   case "$MODE" in
+    direct)
+      # No application cache and no task-owned disk root.
+      :
+      ;;
     cbi)
+      # In-process AsyncDataCache; the binary requires --cache_gb > 0 for cbi.
       args+=(--cache_gb="$CACHE_GB")
       ;;
     filecache)
-      CACHE_DIR="$FC_ROOT/${MODE}_run"
-      create_sentinel "$CACHE_DIR"
-      setup_trap_cleanup "$CACHE_DIR" "$FC_ROOT"
-      args+=(--filecache_root="$CACHE_DIR" --filecache_disk_gib="$FC_SIZE_GIB")
+      # Only this backend owns a disk cache root; sentinel it and arm cleanup.
+      FC_DIR="$CACHE_ROOT/filecache_run"
+      create_sentinel "$FC_DIR" "$CACHE_ROOT"
+      setup_trap_cleanup "$FC_DIR" "$CACHE_ROOT"
+      args+=(--filecache_root="$FC_DIR" --filecache_disk_gib="$FILECACHE_DISK_GIB")
       ;;
   esac
+  echo "Running TPCH A/B backend '$MODE' -> $OUT_DIR/tpch_${MODE}.csv" >&2
   "$BIN" "${args[@]}"
-  if [ "$MODE" = "filecache" ]; then
-    safe_wipe_cache_dir "$FC_ROOT/${MODE}_run" "$FC_ROOT"
-  fi
 done
+
+echo "TPCH A/B complete; CSVs under $OUT_DIR" >&2
+# No manual wipe: the EXIT trap authenticates the filecache sentinel and removes
+# the disk cache child directory.
 ```
 
-- [ ] **Step 4: Syntax-check scripts**
+---
+
+### Step 4: File mode
+
+```bash
+chmod +x velox/benchmarks/scripts/lib_cache_cleanup.sh \
+         velox/benchmarks/scripts/run_wrapper_ab.sh \
+         velox/benchmarks/scripts/run_tpch_ab.sh
+```
+
+---
+
+### Step 5: Syntax check
 
 ```bash
 for f in velox/benchmarks/scripts/*.sh; do
@@ -1248,24 +1563,217 @@ for f in velox/benchmarks/scripts/*.sh; do
 done
 ```
 
-Expected: no syntax errors.
-
-- [ ] **Step 5: Functional test of sentinel logic**
-
-```bash
-source velox/benchmarks/scripts/lib_cache_cleanup.sh
-TEST_ROOT="$(pwd)/tmp/test_cache_root"
-TEST_DIR="$TEST_ROOT/run1"
-mkdir -p "$TEST_ROOT"
-create_sentinel "$TEST_DIR"
-test -f "$TEST_DIR/$SENTINEL_NAME" && echo "SENTINEL_OK"
-safe_wipe_cache_dir "$TEST_DIR" "$TEST_ROOT" && echo "WIPE_OK"
-mkdir -p "$TEST_DIR"
-safe_wipe_cache_dir "$TEST_DIR" "$TEST_ROOT" 2>&1 | grep -q "ERROR" && echo "SAFETY_OK"
-rm -rf "$TEST_ROOT"
+Expected output:
+```
+OK: velox/benchmarks/scripts/lib_cache_cleanup.sh
+OK: velox/benchmarks/scripts/run_tpch_ab.sh
+OK: velox/benchmarks/scripts/run_wrapper_ab.sh
 ```
 
-**Gate:** `bash -n` clean; SENTINEL_OK, WIPE_OK, SAFETY_OK all printed.
+---
+
+### Step 6: Sentinel safety cases
+
+Test the key safety invariants of `lib_cache_cleanup.sh` in a sandbox under
+`tmp/` (no real TPCH or build required):
+
+```bash
+# Source the library (no-op side-effects; arrays and flag are initialised)
+(
+  cd /root/oss/velox
+  source velox/benchmarks/scripts/lib_cache_cleanup.sh
+
+  ROOT="$(pwd)/tmp/test_sentinel_root"
+  DIR="$ROOT/run1"
+  mkdir -p "$ROOT"
+
+  # 1a. create_sentinel: creates a 0600 regular non-symlink file.
+  create_sentinel "$DIR" "$ROOT"
+  [[ -f "$DIR/$SENTINEL_NAME" && ! -L "$DIR/$SENTINEL_NAME" ]] && echo "1a SENTINEL_REGULAR_OK"
+
+  # 1b. safe_wipe_cache_dir: removes the sentinel-marked child dir.
+  safe_wipe_cache_dir "$DIR" "$ROOT" && [[ ! -d "$DIR" ]] && echo "1b WIPE_OK"
+
+  # 2. No-sentinel dir is refused; payload survives.
+  mkdir -p "$ROOT/nosent"
+  touch "$ROOT/nosent/payload"
+  safe_wipe_cache_dir "$ROOT/nosent" "$ROOT" 2>&1 | grep -q "ERROR" && \
+    [[ -f "$ROOT/nosent/payload" ]] && echo "2 NO_SENTINEL_REFUSED_OK"
+  rm -rf "$ROOT/nosent"
+
+  # 3. Sibling-prefix escape: /a/tmp2/x must NOT be treated as child of /a/tmp.
+  SIBLING="$(dirname "$ROOT")2/run"
+  validate_cache_dir "$SIBLING" "$ROOT" 2>&1 | grep -q "ERROR" && echo "3 SIBLING_ESCAPE_REFUSED_OK"
+
+  # 4a. Symlink sentinel is refused on create (pre-existing symlink marker).
+  mkdir -p "$ROOT/symsent"
+  ln -s /dev/null "$ROOT/symsent/$SENTINEL_NAME"
+  create_sentinel "$ROOT/symsent" "$ROOT" 2>&1 | grep -q "ERROR" && echo "4a CREATE_REFUSES_SYMLINK_OK"
+  # 4b. Symlink sentinel is refused on wipe.
+  safe_wipe_cache_dir "$ROOT/symsent" "$ROOT" 2>&1 | grep -q "ERROR" && \
+    [[ -d "$ROOT/symsent" ]] && echo "4b WIPE_REFUSES_SYMLINK_OK"
+  rm -rf "$ROOT/symsent"
+
+  # 5. Filesystem root, cwd, and DIR==ROOT are refused.
+  validate_cache_dir "/" "$ROOT" 2>&1 | grep -q "ERROR" && echo "5a FS_ROOT_REFUSED_OK"
+  validate_cache_dir "$(pwd)" "$ROOT" 2>&1 | grep -q "ERROR" && echo "5b CWD_REFUSED_OK"
+  validate_cache_dir "$ROOT" "$ROOT" 2>&1 | grep -q "ERROR" && echo "5c DIR_EQ_ROOT_REFUSED_OK"
+
+  rm -rf "$ROOT"
+  echo "All sentinel safety cases passed."
+)
+```
+
+---
+
+### Step 7: Fake RelWithDebInfo wrapper e2e
+
+Verify `run_wrapper_ab.sh` end-to-end without a real binary by providing a fake
+binary whose path contains `relwithdebinfo` and that emits the exact live Markdown
+table format:
+
+```bash
+(
+  cd /root/oss/velox
+  FDIR="$(pwd)/tmp/018d_e2e_fake"
+  FBIN="$FDIR/relwithdebinfo/velox_bufferedinput_wrapper_benchmark"
+  CR="$FDIR/cache_root"
+  OUT="$FDIR/out/wrapper_all.md"
+  mkdir -p "$(dirname "$FBIN")" "$CR" "$(dirname "$OUT")"
+
+  # Fake binary: write the exact Markdown table and drop a file into each cache
+  # dir to simulate cache use (sentinel already created by the script).
+  cat > "$FBIN" <<'EOF'
+#!/usr/bin/env bash
+# Extract --ssd_path and --filecache_root from args; touch a payload in each.
+for arg in "$@"; do
+  case "$arg" in
+    --ssd_path=*)      touch "${arg#--ssd_path=}/payload_cbi" ;;
+    --filecache_root=*) touch "${arg#--filecache_root=}/payload_fcbi" ;;
+    --out=*)           OUT="${arg#--out=}" ;;
+  esac
+done
+mkdir -p "$(dirname "$OUT")"
+cat > "$OUT" <<'MD'
+| pattern | read | wrapper | wall_ms | MB/s | ram_MB | ssd_MB | src_MB | Δ vs cbi |
+|---------|------|---------|---------|------|--------|--------|--------|----------|
+| seq | 1024K | cbi | 1200 | 820.0 | 4096 | 80000 | 0 | — |
+| seq | 1024K | fcbi | 2250 | 440.0 | 0 | 0 | 80000 | +87.5% |
+| seq | 1024K | dbi | 1174 | 837.4 | 0 | 0 | 80000 | -2.1% |
+MD
+EOF
+  chmod +x "$FBIN"
+
+  # e2e run: exits 0, output validated, both cache child dirs trap-cleaned.
+  BIN="$FBIN" CACHE_ROOT="$CR" OUT="$OUT" \
+    bash velox/benchmarks/scripts/run_wrapper_ab.sh && echo "E2E_EXIT0_OK"
+  [[ ! -d "$CR/cbi_ssd" && ! -d "$CR/fcbi_cache" ]] && echo "E2E_TRAP_CLEANED_OK"
+  [[ -d "$CR" ]] && echo "E2E_CACHE_ROOT_INTACT_OK"
+  grep -qF '| cbi |'  "$OUT" && echo "E2E_CBI_ROW_OK"
+  grep -qF '| fcbi |' "$OUT" && echo "E2E_FCBI_ROW_OK"
+  grep -qF '| dbi |'  "$OUT" && echo "E2E_DBI_ROW_OK"
+
+  # Debug binary rejection: path contains 'debug', must be rejected before any run.
+  DBIN="$FDIR/debug/velox_bufferedinput_wrapper_benchmark"
+  mkdir -p "$(dirname "$DBIN")" && cp "$FBIN" "$DBIN" && chmod +x "$DBIN"
+  BIN="$DBIN" CACHE_ROOT="$CR" OUT="$OUT" \
+    bash velox/benchmarks/scripts/run_wrapper_ab.sh 2>&1 | grep -qi "debug" && \
+    echo "E2E_DEBUG_REJECTED_OK"
+
+  rm -rf "$FDIR"
+)
+```
+
+---
+
+### Step 8: TPCH `TPCH_APPROVED` pre-gate (no TPCH run)
+
+Confirm that `run_tpch_ab.sh` refuses to proceed — and never references `BIN` or
+`TPCH_DATA` — unless `TPCH_APPROVED=1`. No TPCH binary or data is required.
+
+```bash
+(
+  cd /root/oss/velox
+
+  # Gate fires before BIN/TPCH_DATA: all three unset → TPCH_APPROVED message.
+  out=$(bash velox/benchmarks/scripts/run_tpch_ab.sh 2>&1 || true)
+  echo "$out" | grep -q "TPCH_APPROVED" && \
+  ! echo "$out" | grep -qE "\bBIN\b|\bTPCH_DATA\b" && \
+  echo "GATE_UNSET_OK"
+
+  # TPCH_APPROVED=0 → "must be exactly 1" error, still no BIN/TPCH_DATA demand.
+  out=$(TPCH_APPROVED=0 bash velox/benchmarks/scripts/run_tpch_ab.sh 2>&1 || true)
+  echo "$out" | grep -q "must be exactly 1" && echo "GATE_ZERO_OK"
+  echo "$out" | grep -q "018-P" && echo "GATE_018P_MENTIONED_OK"
+)
+```
+
+---
+
+### Step 9: Sandbox mutations (safety invariant regression probes)
+
+Prove the two critical safety properties hold, and that targeted mutations break
+each one:
+
+```bash
+(
+  cd /root/oss/velox
+  SBX="$(pwd)/tmp/018d_mutation_sandbox"
+  mkdir -p "$SBX"
+  cp velox/benchmarks/scripts/lib_cache_cleanup.sh "$SBX/lib_orig.sh"
+
+  # Baseline: sibling-escape and no-sentinel probes both HELD.
+  ROOT="$SBX/root" && mkdir -p "$ROOT"
+  SIBLING="$(dirname "$ROOT")2/run"
+  (source "$SBX/lib_orig.sh"; validate_cache_dir "$SIBLING" "$ROOT" 2>&1 | grep -q "ERROR") && \
+    echo "BASELINE_SIBLING_HELD"
+  DIR="$ROOT/nosentdir" && mkdir -p "$DIR"
+  (source "$SBX/lib_orig.sh"; safe_wipe_cache_dir "$DIR" "$ROOT" 2>&1 | grep -q "ERROR") && \
+    [[ -d "$DIR" ]] && echo "BASELINE_NOSENTINEL_HELD"
+
+  # Mutation A: force _is_strict_component_child to always return 0.
+  awk '/^_is_strict_component_child\(\)/{found=1} found && /return 0/{sub(/return 0/,"return 0 # mutant"); found=0} 1' \
+    "$SBX/lib_orig.sh" > "$SBX/lib_mutA.sh"
+  # Replace body so it always succeeds:
+  awk 'NR==FNR{next} /^_is_strict_component_child\(\)/,/^}/' \
+    "$SBX/lib_orig.sh" "$SBX/lib_orig.sh" > /dev/null  # no-op pre-check
+  sed 's/^\( *\)\["\$rest" != "\$child"\] || return 1/\1true/' \
+    "$SBX/lib_orig.sh" | \
+    sed 's/^\( *\)\["\$rest" != "\$child"\]/\1true/' > "$SBX/lib_mutA.sh"
+  # Quick structural check: if sibling escape is now allowed, VIOLATED.
+  result=$(source "$SBX/lib_mutA.sh" 2>/dev/null; validate_cache_dir "$SIBLING" "$ROOT" 2>&1 || true)
+  [[ -z "$result" ]] && echo "MUTATION_A_SIBLING_VIOLATED" || echo "MUTATION_A_sibling_held_unexpectedly"
+
+  # Mutation B: disable the sentinel guard in safe_wipe_cache_dir.
+  sed 's/if \[\[ -L "\$marker".*\]\]; then/if false; then/' \
+    "$SBX/lib_orig.sh" > "$SBX/lib_mutB.sh"
+  result=$(source "$SBX/lib_mutB.sh"; safe_wipe_cache_dir "$DIR" "$ROOT" 2>&1 || true)
+  [[ -z "$result" ]] && echo "MUTATION_B_NOSENTINEL_VIOLATED" || echo "MUTATION_B_nosentinel_held_unexpectedly"
+
+  # Restore: confirm no tracked file was modified.
+  rm -rf "$SBX"
+  git -C /root/oss/velox diff --quiet velox/benchmarks/scripts/lib_cache_cleanup.sh && \
+    echo "TRACKED_LIB_UNCHANGED_OK"
+)
+```
+
+---
+
+**Gate (018-D):** All of the following must be GREEN before proceeding to Task 018-E:
+
+- `bash -n` exits 0 for all three scripts (Step 5).
+- Sentinel safety cases all print `OK` (Step 6): `SENTINEL_REGULAR_OK`,
+  `WIPE_OK`, `NO_SENTINEL_REFUSED_OK`, `SIBLING_ESCAPE_REFUSED_OK`,
+  `CREATE_REFUSES_SYMLINK_OK`, `WIPE_REFUSES_SYMLINK_OK`, `FS_ROOT_REFUSED_OK`,
+  `CWD_REFUSED_OK`, `DIR_EQ_ROOT_REFUSED_OK`.
+- Fake wrapper e2e (Step 7): `E2E_EXIT0_OK`, `E2E_TRAP_CLEANED_OK`,
+  `E2E_CACHE_ROOT_INTACT_OK`, `E2E_CBI_ROW_OK`, `E2E_FCBI_ROW_OK`,
+  `E2E_DBI_ROW_OK`, `E2E_DEBUG_REJECTED_OK`.
+- TPCH gate (Step 8): `GATE_UNSET_OK`, `GATE_ZERO_OK`, `GATE_018P_MENTIONED_OK`.
+- Mutation probes (Step 9): `BASELINE_SIBLING_HELD`, `BASELINE_NOSENTINEL_HELD`,
+  `MUTATION_A_SIBLING_VIOLATED`, `MUTATION_B_NOSENTINEL_VIOLATED`,
+  `TRACKED_LIB_UNCHANGED_OK`.
+- No real TPCH run executed; no stage/commit/amend/rebase/push.
 
 ---
 
