@@ -2039,7 +2039,7 @@ TEST(FileCacheQueryIdScopeTest, NamedThreadAppearsInCallerId)
     bool nameSet = false;
     std::thread worker([&]
     {
-        nameSet = folly::setCurrentThreadName("FcTestWorker");
+        nameSet = folly::setThreadName("FcTestWorker");
         callerId = FileCacheQueryIdScope::getCallerId();
     });
     worker.join();
