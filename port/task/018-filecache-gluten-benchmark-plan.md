@@ -1707,7 +1707,7 @@ mkdir -p tmp/fc_w3
 BIN=/root/oss/velox/_build/relwithdebinfo/velox/dwio/common/benchmarks/velox_bufferedinput_wrapper_benchmark \
 CACHE_ROOT="$(pwd)/tmp/fc_w3_cache" \
 OUT="$(pwd)/tmp/fc_w3/wrapper_all.md" \
-RAM_CACHE_GB=4 SSD_CACHE_GB=10 FILECACHE_DISK_GB=10 \
+RAM_CACHE_GB=4 SSD_CACHE_GB=10 FILECACHE_DISK_GB=20 \
 TARGET_WS_GB=8 REMOTE_GB=9 \
 READ_SIZES_KIB=1024,8192 WORKLOADS=sequential,zipfian \
 MEASURE_PASSES=3 \
@@ -1715,6 +1715,13 @@ MEASURE_PASSES=3 \
   > /root/oss/velox/_build/relwithdebinfo/test_018h_w3.log 2>&1
 echo "Wave 3 exit: $?"
 ```
+
+The asymmetric raw disk sizes are intentional. CBI can use its full 10 GiB SSD
+tier after the chunked RAM-to-SSD warm. The production-default FileCache policy
+is `SLRU` with `slruSizeRatio=0.6`; first-touch warm entries occupy only the 40%
+probationary queue. A 20 GiB FileCache therefore provides 8 GiB of effective
+first-touch capacity for the 8 GiB target. The Controller must reject the run if
+the measured FCBI rows still report non-zero source bytes.
 
 Output: `tmp/fc_w3/wrapper_all.md` — one Markdown table with `cbi`, `fcbi`, and
 `dbi` rows (the accepted script validates the common header and all three rows).
