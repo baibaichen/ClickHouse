@@ -295,13 +295,17 @@ Resume procedure:
    corrected and accepted.
 5. The targeted re-review records zero unresolved findings.
 6. Task 015 and Task 017A are complete and accepted. Task 018-A/B/D are accepted
-   at Velox `9850a70fa`, `df9091e78`, and `5ae39651b`; Task 018-H1 is next.
+   at Velox `9850a70fa`, `df9091e78`, and `5ae39651b`; Task 018-H1 is accepted
+   with its RelWithDebInfo evidence in
+   `port/task/result/018-filecache-velox-benchmark-result.md`. Execution is
+   stopped at 018-P for explicit TPCH approval.
 
 Continuous execution target:
 
-- Current state: Task 017A is accepted at Velox `a856d836c`; Task 018-A/B/D are
-  accepted and Task 018-H1 may be dispatched. The mandatory stop before TPCH is
-  018-P. After complete Task 018, the next mandatory stop is Review 5.
+- Current state: Task 017A and Task 018-A/B/D/H1 are accepted. The pipeline is
+  stopped at 018-P. No TPCH source copy, target build, data inspection, or run is
+  authorized until the user explicitly approves. After complete Task 018, the
+  next mandatory stop is Review 5.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
   continues with Task 018, Review 5, Task 017B, then Task 019 Gluten/Spark
   integration. Task 019 is blocked on its prerequisites and compatible Velox

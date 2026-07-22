@@ -4,11 +4,12 @@
 
 ```text
 environment_profile: root-oss
-disposition: implementation_in_progress
+disposition: waiting_for_pre_tpch_approval
 scope: Velox only
 implementation_authorized: true
 authorization_scope: non-TPCH phase through 018-P
 tpch_authorized: false
+h1_checkpoint_status: accepted
 prerequisite: accepted Task 017A at a856d836c
 execution_before: Review 5, then Task 017B, then Task 019
 implementation_plan: port/task/018-filecache-gluten-benchmark-plan.md
