@@ -259,9 +259,9 @@ Current task:
         a Tasks 003–018 whole-port review whose first section closes the Review-4
         corrective/decision debt. No complete-parity or production-ready claim
         is allowed before Review 5 acceptance;
-    15. Task 017A implementation is authorized by the user on 2026-07-21.
-        Task 018 still requires accepted Task 017A; TPCH retains its separate
-        explicit checkpoint approval; Review 5 and Task 017B retain their gates.
+    15. Task 017A is accepted at Velox `a856d836c`. Task 018 non-TPCH work is
+        authorized through 018-P. TPCH retains its separate explicit checkpoint
+        approval; Review 5 and Task 017B retain their gates.
     16. Task 018 stops after non-TPCH correctness/micro/wrapper/Gluten work and
         Waves 1–3. No TPCH source copy, target build, data requirement, or run is
         allowed until the user explicitly approves the pre-TPCH checkpoint.
@@ -288,17 +288,17 @@ Resume procedure:
 4. Tasks 011 B2/B3, 012 B4/B5, and 014's B4 caller-order confirmation are
    corrected and accepted.
 5. The targeted re-review records zero unresolved findings.
-6. Task 015 is complete and accepted. Tasks 017A/018/017B have reviewed
-   executable plans; wait for execution authorization.
+6. Task 015 and Task 017A are complete and accepted. Task 018 non-TPCH work is
+   authorized.
 
 Continuous execution target:
 
-- Current state: Task 017A implementation is authorized and may be dispatched.
-  Task 018 waits for accepted Task 017A; after Task 018, the next mandatory stop
-  is Review 5.
-- Tasks 003-015 are accepted. Task 016 is deferred. Planned order is Task 017A,
-  Task 018, Review 5, then Task 017B. Task 017A is authorized; later stages are
-  dependency-gated. Task 019 design is blocked until Task 017B is accepted.
+- Current state: Task 017A is accepted at Velox `a856d836c`; Task 018 non-TPCH
+  work may be dispatched. The mandatory stop before TPCH is 018-P. After
+  complete Task 018, the next mandatory stop is Review 5.
+- Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
+  continues with Task 018, Review 5, then Task 017B. Task 019 design is blocked
+  until Task 017B is accepted.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

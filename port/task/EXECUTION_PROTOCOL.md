@@ -12,16 +12,17 @@ Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
 Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
                        Task 019 design.
                        The three executable plans are independently reviewed.
-                       Task 017A implementation is authorized by the user;
-                       later stages retain their dependency/checkpoint gates.
+                       Task 017A is accepted at Velox a856d836c.
+                       Task 018 non-TPCH work is authorized through 018-P;
+                       TPCH and later stages retain their checkpoint gates.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
-Tasks 017A and 018 are planned mainline work and were designed together:
+Tasks 017A and 018 are mainline work and were designed together:
 Task 017A owns statistics/cancellation/scheduler/caller-id and Task 018 owns Gluten integration plus
 the adapted Velox correctness, core/buffered-input/wrapper microbenchmark, and
-TPCH suite. Their executable plans are under `port/task/`; implementation is not
-authorized. Task 019 is not allowed as currently written.
+TPCH suite. Task 017A is accepted. Task 018 non-TPCH work is authorized; TPCH
+remains separately gated. Task 019 is not allowed as currently written.
 Task 017B independently owns logging and exception stacks. It executes after
 Task 018 and accepted Review 5, and must be accepted before Task 019 design.
 Task 018 has an additional mandatory stop after all non-TPCH work and before any

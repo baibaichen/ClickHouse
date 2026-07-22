@@ -4,9 +4,12 @@
 
 ```text
 environment_profile: root-oss
-disposition: implementation_plan_ready
+disposition: accepted
 implementation_authorized: true
 authorization_date: 2026-07-21
+controller_status: accepted
+accepted_velox_head: a856d836c
+result: port/task/result/017a-filecache-statistics-cancellation-result.md
 prerequisite: Tasks 003-015 accepted
 task_016_dependency: none
 task_018_dependency: Task 018 requires accepted Task 017A

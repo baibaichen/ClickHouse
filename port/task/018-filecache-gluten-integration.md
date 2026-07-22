@@ -5,8 +5,10 @@
 ```text
 environment_profile: root-oss
 disposition: implementation_plan_ready
-implementation_authorized: false
-prerequisite: accepted Task 017A
+implementation_authorized: true
+authorization_scope: non-TPCH phase through 018-P
+tpch_authorized: false
+prerequisite: accepted Task 017A at a856d836c
 execution_after: Task 017A
 execution_before: Review 5, then Task 017B
 task_019_dependency: Task 019 design waits for accepted Task 017B
