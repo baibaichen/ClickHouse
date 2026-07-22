@@ -2198,6 +2198,7 @@ Expected: all tests pass, zero failures. Then dispatch a `task` subagent to anal
 - [ ] **Step 4: Configure non-mono build**
 
 ```bash
+mkdir -p /root/oss/velox/_build/debug-task017a-nonmono
 source /root/oss/velox-helper/env.sh && cmake \
   -DCMAKE_TOOLCHAIN_FILE=/root/oss/gluten/dev/vcpkg/toolchain.cmake \
   -DCMAKE_BUILD_TYPE=Debug \
@@ -2269,11 +2270,12 @@ Expected: no trailing whitespace in modified files.
 
 - [ ] **Step 10: Strict placeholder scan**
 
-Scan every file created or modified by Tasks 1–4 for placeholder/stub markers that must never
-reach a review. Run from the repo root:
+Scan every file created or modified by Tasks 1–4 for placeholder/stub markers
+that must never reach a review. The Controller commits each reviewed subtask, so
+scan the full Task-017A commit range rather than the clean working-tree diff:
 
 ```bash
-cd /root/oss/velox && git diff --name-only -- 'velox/ch/*' | \
+cd /root/oss/velox && git diff --name-only 43a9e6f75ffb94be38836b45fd476325665f50be..HEAD -- 'velox/ch/*' | \
   xargs grep -nE 'TODO|FIXME|XXX|HACK|placeholder|PLACEHOLDER|stub|STUB|NotImplemented|not implemented|\bWIP\b|\.\.\.' 2>/dev/null
 ```
 
@@ -2327,7 +2329,7 @@ These are independently owned by Task 017B.
 | 3 | Real token passed to wait | Revert to `folly::CancellationToken{}` | `CancellationDuringSegmentWaitThrows` fails (waiter never throws) |
 | 3 | Check before lookup | Remove `nextFileSegmentsBatch` `isCancellationRequested` check | `CancellationBeforeLookupThrows` fails |
 | 4 | Thread name in caller ID | Omit `getCurrentThreadName()` | `FileCacheQueryIdScopeTest.NamedThreadAppearsInCallerId` fails |
-| 4 | armTimerLocked publishes only if current | Drop the `gen == generation_ && state_ == Delayed` reinstall guard | `StaleTimerAfterScheduleIsNoOp` may double-run (`runs != 1`) |
+| 4 | `armTimerLocked` publishes only if current | Race-only supersede-during-unlocked-window coverage | 200× scheduler stress; deterministic mutation deferred until a production test seam is approved |
 | 4 | Inline completion under two plain locks | Revert to a single non-recursive `std::mutex` held across `.thenValue()` | `InlineTimerCompletionDoesNotDeadlock` deadlocks/times out |
 
 ---
@@ -2348,5 +2350,8 @@ These are independently owned by Task 017B.
 12. `weak_ptr + generation` lifetime pattern retained.
 13. Both mono and non-mono builds: all `velox_ch_*` targets dynamically discovered via `ctest -N -R`, freshly built, and pass CTest.
 14. No disabled/skipped/comment-only tests. No C++ sleeps.
-15. Every material behavior has a buildable mutation RED.
+15. Every deterministic material behavior has a buildable mutation RED. The
+    supersede-during-unlocked-window generation guard is race-only and has 200×
+    stress evidence; do not add a production `TestValue` seam before Review 5
+    disposes the pending production-test-util decision.
 16. Worker does not stage/commit; Controller commits after task review per EXECUTION_PROTOCOL.
