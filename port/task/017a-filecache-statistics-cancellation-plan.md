@@ -1659,6 +1659,7 @@ analyze `test_pt3.log` and return a concise pass/fail summary.
 - Modify: `velox/ch/Common/FileCacheScheduler.h` (replace `recursive_mutex` + `condition_variable_any` with exactly two plain `std::mutex` — `execMutex_` and `scheduleMutex_`; remove `cv_`, `callbackInFlight_`, and `#include <condition_variable>`)
 - Modify: `velox/ch/Common/FileCacheScheduler.cpp` (rewrite locking per two-lock protocol)
 - Modify: `velox/ch/Common/tests/SchedulerAndScopeTest.cpp` (add 5 new tests via the existing `TestScheduler`/`FileCacheQueryIdScopeTest`; no new fixture)
+- Modify: `velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp` (update the pre-existing no-scope caller-id acceptance test to the restored three-field format)
 
 **Interfaces:**
 - Produces: `getCallerId()` returns `"<query-id>:<os-tid>"` or `"None:<thread-name>:<os-tid>"`
@@ -1994,6 +1995,22 @@ Add one include at the top:
 
 ```cpp
 #include <folly/system/ThreadName.h>
+```
+
+Update the pre-existing `CallerIdTest.NoScopeBackgroundId` in
+`velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp`; it must no longer
+pin the obsolete `None:<tid>` format:
+
+```cpp
+TEST(CallerIdTest, NoScopeBackgroundId)
+{
+    const auto id = FileSegment::getCallerId();
+    ASSERT_EQ(id.rfind("None:", 0), 0u);
+    const auto firstColon = id.find(':');
+    const auto lastColon = id.rfind(':');
+    ASSERT_NE(firstColon, lastColon) << "expected None:<name>:<tid>, got " << id;
+    EXPECT_EQ(id.substr(lastColon + 1), std::to_string(folly::getOSThreadID()));
+}
 ```
 
 Append these tests:
