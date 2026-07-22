@@ -614,7 +614,7 @@ mutation confirmed RED then restored.
 
 **Interfaces:**
 - Consumes: `FileCacheManager` API, `FileCacheBufferedInput`, test helpers from `velox/ch/Disks/IO/tests/FileCacheTestHelpers.h` (`makeManager`, `makeInput`, `makeDeterministicData`, `readAll`, `CountingReadFile`, `FileCacheTestOptions`), `velox_bufferedinput_wrapper_benchmark` binary (from 018-A)
-- Produces: `velox_ch_fcbi_benchmark` binary (folly benchmark table on stdout), and wrapper A/B CSV files at `tmp/wrapper_direct.csv`, `tmp/wrapper_cbi.csv`, `tmp/wrapper_fc.csv` (from `velox_bufferedinput_wrapper_benchmark`)
+- Produces: `velox_ch_fcbi_benchmark` binary (folly benchmark table on stdout), and wrapper smoke Markdown tables at `tmp/wrapper_direct.md`, `tmp/wrapper_cbi.md`, and `tmp/wrapper_fcbi.md`
 
 **FCBI micro benchmark (`FileCacheBufferedInputBenchmark.cpp`):**
 
@@ -870,13 +870,14 @@ echo "exit: $?"
 ```bash
 mkdir -p tmp
 /root/oss/velox/_build/relwithdebinfo/velox/dwio/common/benchmarks/velox_bufferedinput_wrapper_benchmark \
-  --input_source=direct \
-  --target_ws_gb=1 \
+  --wrappers=dbi \
+  --target_ws_gb=0.25 \
+  --remote_gb=0.5 \
   --read_sizes_kib=1024 \
   --workloads=sequential \
   --measure_passes=1 \
-  --rounds=1 \
-  --out=tmp/wrapper_direct.csv \
+  --report_dir= \
+  --out=tmp/wrapper_direct.md \
   > /root/oss/velox/_build/relwithdebinfo/test_018b_direct.log 2>&1
 echo "exit: $?"
 ```
@@ -885,14 +886,17 @@ echo "exit: $?"
 
 ```bash
 /root/oss/velox/_build/relwithdebinfo/velox/dwio/common/benchmarks/velox_bufferedinput_wrapper_benchmark \
-  --input_source=cbi \
-  --cache_gb=2 \
-  --target_ws_gb=1 \
+  --wrappers=cbi \
+  --ram_cache_gb=0.125 \
+  --ssd_cache_gb=1 \
+  --ssd_path=tmp/cbi_018b \
+  --target_ws_gb=0.25 \
+  --remote_gb=0.5 \
   --read_sizes_kib=1024 \
   --workloads=sequential \
   --measure_passes=1 \
-  --rounds=1 \
-  --out=tmp/wrapper_cbi.csv \
+  --report_dir= \
+  --out=tmp/wrapper_cbi.md \
   > /root/oss/velox/_build/relwithdebinfo/test_018b_cbi.log 2>&1
 echo "exit: $?"
 ```
@@ -901,28 +905,30 @@ echo "exit: $?"
 
 ```bash
 /root/oss/velox/_build/relwithdebinfo/velox/dwio/common/benchmarks/velox_bufferedinput_wrapper_benchmark \
-  --input_source=filecache \
+  --wrappers=fcbi \
   --filecache_root=tmp/fc_018b \
-  --filecache_disk_gib=4 \
-  --target_ws_gb=1 \
+  --filecache_disk_gb=1 \
+  --target_ws_gb=0.25 \
+  --remote_gb=0.5 \
   --read_sizes_kib=1024 \
   --workloads=sequential \
   --measure_passes=1 \
-  --rounds=1 \
-  --out=tmp/wrapper_fc.csv \
+  --report_dir= \
+  --out=tmp/wrapper_fcbi.md \
   > /root/oss/velox/_build/relwithdebinfo/test_018b_fc.log 2>&1
 echo "exit: $?"
 ```
 
-- [ ] **Step 7: Validate CSV schema and content**
+- [ ] **Step 7: Validate Markdown schema and content**
 
 ```bash
-head -1 tmp/wrapper_direct.csv tmp/wrapper_cbi.csv tmp/wrapper_fc.csv
-# Expect identical header
-wc -l tmp/wrapper_direct.csv tmp/wrapper_cbi.csv tmp/wrapper_fc.csv
-# Each must have >=2 lines (header + 1+ data rows)
-grep -c "error" tmp/wrapper_fc.csv
-# Error column must be empty for all data rows
+for f in tmp/wrapper_direct.md tmp/wrapper_cbi.md tmp/wrapper_fcbi.md; do
+  test -s "$f"
+  grep -Fq '| pattern | read | wrapper | wall_ms | MB/s | ram_MB | ssd_MB | src_MB | Δ vs cbi |' "$f"
+done
+grep -Fq '| sequential | 1024K | dbi |' tmp/wrapper_direct.md
+grep -Fq '| sequential | 1024K | cbi |' tmp/wrapper_cbi.md
+grep -Fq '| sequential | 1024K | fcbi |' tmp/wrapper_fcbi.md
 ```
 
 - [ ] **Step 8: Run dedicated FCBI micro baseline**
@@ -938,7 +944,9 @@ mkdir -p tmp/fc_fcbi_018b
 echo "exit: $?"
 ```
 
-**Gate:** All three wrapper CSVs have >=1 data row with empty error field. Both FCBI micro and seek micro exit 0.
+**Gate:** All three wrapper Markdown outputs contain the common table header and
+the expected wrapper row. Dedicated FCBI micro and seek micro exit 0. Every
+binary path is under `_build/relwithdebinfo`.
 
 ---
 
