@@ -1655,10 +1655,12 @@ analyze `test_pt3.log` and return a concise pass/fail summary.
 ### Task 4: Caller Identity + Scheduler Two-Lock Parity
 
 **Files:**
+- Modify: `velox/ch/Common/FileCacheQueryIdScope.h` (update the public caller-id format contract)
 - Modify: `velox/ch/Common/FileCacheQueryIdScope.cpp` (`getCallerId()` — add thread name)
 - Modify: `velox/ch/Common/FileCacheScheduler.h` (replace `recursive_mutex` + `condition_variable_any` with exactly two plain `std::mutex` — `execMutex_` and `scheduleMutex_`; remove `cv_`, `callbackInFlight_`, and `#include <condition_variable>`)
 - Modify: `velox/ch/Common/FileCacheScheduler.cpp` (rewrite locking per two-lock protocol)
 - Modify: `velox/ch/Common/tests/SchedulerAndScopeTest.cpp` (add 5 new tests via the existing `TestScheduler`/`FileCacheQueryIdScopeTest`; no new fixture)
+- Modify: `velox/ch/Interpreters/FileCache/FileSegment.cpp` (remove the obsolete comment that says the restored background format is deferred)
 - Modify: `velox/ch/Interpreters/FileCache/tests/FileSegmentTest.cpp` (update the pre-existing no-scope caller-id acceptance test to the restored three-field format)
 
 **Interfaces:**
