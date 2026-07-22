@@ -926,9 +926,9 @@ for f in tmp/wrapper_direct.md tmp/wrapper_cbi.md tmp/wrapper_fcbi.md; do
   test -s "$f"
   grep -Fq '| pattern | read | wrapper | wall_ms | MB/s | ram_MB | ssd_MB | src_MB | Δ vs cbi |' "$f"
 done
-grep -Fq '| sequential | 1024K | dbi |' tmp/wrapper_direct.md
-grep -Fq '| sequential | 1024K | cbi |' tmp/wrapper_cbi.md
-grep -Fq '| sequential | 1024K | fcbi |' tmp/wrapper_fcbi.md
+grep -Fq '| seq | 1024K | dbi |' tmp/wrapper_direct.md
+grep -Fq '| seq | 1024K | cbi |' tmp/wrapper_cbi.md
+grep -Fq '| seq | 1024K | fcbi |' tmp/wrapper_fcbi.md
 ```
 
 - [ ] **Step 8: Run dedicated FCBI micro baseline**
