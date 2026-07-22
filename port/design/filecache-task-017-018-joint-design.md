@@ -199,17 +199,22 @@ Benchmarks calculate before/after deltas.
 
 | FileCache fact | Velox query statistic | Runtime metric |
 |---|---|---|
-| logical bytes returned | `incRawBytesRead` | existing raw input metric |
-| local FileCache bytes | `ssdRead` | `localReadBytes` |
-| source bytes | `read` | `storageReadBytes` |
-| predownload source bytes | `read` and `prefetch` | storage/prefetch metrics |
+| logical bytes returned after the final range clamp | `incRawBytesRead` | existing raw input metric |
+| physical bytes read from local FileCache before the final range clamp | `ssdRead` | `localReadBytes` |
+| physical bytes read from source before the final range clamp | `read` | `storageReadBytes` |
+| physical predownload source bytes | `read` and `prefetch` | storage/prefetch metrics |
 | cache write bytes | `IoStats["fileCacheWriteBytes"]` | new free-form metric |
 | local/source waiting | existing IO latency counters | existing wait metrics |
 | scan time | `incTotalScanTimeNs` | `totalScanTime` |
 
 Only successfully read/returned/written bytes are recorded in their respective
-fields. A failed reserve may record source bytes but records zero cache-write
-bytes.
+fields. `CachedReadBufferReadFromCacheBytes`,
+`CachedReadBufferReadFromSourceBytes`, `ssdRead`, and `read` describe physical
+I/O before the final requested-range clamp, matching CH. `incRawBytesRead`
+describes only the post-clamp logical bytes returned to the caller. Predownload
+bytes are included in both the global source total and query `read`, additionally
+increment query `prefetch`, and never increment `incRawBytesRead`. A failed
+reserve may record source bytes but records zero cache-write bytes.
 
 Task 018 extends Gluten's metric bridge for `fileCacheWriteBytes`; existing
 `storageReadBytes` and `localReadBytes` continue through their current path.

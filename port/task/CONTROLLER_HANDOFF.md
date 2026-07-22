@@ -267,6 +267,10 @@ Current task:
         allowed until the user explicitly approves the pre-TPCH checkpoint.
         Every benchmark result must come from a fresh RelWithDebInfo or Release
         build; Debug benchmark results are invalid.
+    17. Task-017A statistics use CH physical-I/O semantics: global cache/source
+        byte events and query `ssdRead`/`read` record pre-clamp physical bytes;
+        `rawBytesRead` alone records post-clamp logical bytes; predownload also
+        contributes to the global source total and query `read`/`prefetch`.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 

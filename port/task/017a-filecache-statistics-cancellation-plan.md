@@ -721,7 +721,7 @@ Expected: `AddSubGetRoundTrip` fails. Revert.
 - Consumes: `kFileCacheWriteBytes` (from Task 1, `velox/ch/Common/FileCacheStats.h`)
 - Consumes: `io::IoStatistics::ssdRead()`, `io::IoStatistics::read()`, `io::IoStatistics::prefetch()`, `io::IoStatistics::incRawBytesRead`, `io::IoStatistics::incTotalScanTimeNs`
 - Consumes: `velox::IoStats::addCounter(const std::string& name, RuntimeCounter counter)`
-- Produces: double-accounting wiring (each I/O fact updates both global ProfileEvents AND query IoStatistics/IoStats). Mapping (design §3.4): cache return → `ssdRead` + `incRawBytesRead`; source return → `read` + `incRawBytesRead`; predownload → `read` + `prefetch` (NOT `incRawBytesRead`); cache write → `IoStats["fileCacheWriteBytes"]`.
+- Produces: double-accounting wiring (each I/O fact updates both global ProfileEvents AND query IoStatistics/IoStats). Mapping (design §3.4): physical cache read before clamp → global cache bytes + `ssdRead`; physical source read before clamp → global source bytes + `read`; post-clamp logical return → `incRawBytesRead`; predownload → global source/predownload bytes + `read` + `prefetch` (NOT `incRawBytesRead`); cache write → `IoStats["fileCacheWriteBytes"]`.
 
 - [ ] **Step 1: Add public accessors to `FileCacheBufferedInput.h`**
 
@@ -767,36 +767,37 @@ Add includes at top of `FileCacheInputStream.cpp`:
 
 - [ ] **Step 4: Add accounting in read-from-cache path**
 
-Site: `FileCacheInputStream::readFromCurrentSegment`, right after `state_->reader->next()`
-yields `size` bytes (the `if (size)` block) **when `state_->readType == ReadType::CACHED`**.
-These are logical bytes returned to the caller from a local FileCache file, so they update
-`ssdRead` *and* the raw-input ledger (design §3.4: local FileCache bytes → `ssdRead`,
-logical bytes returned → `incRawBytesRead`):
+Site: `FileCacheInputStream::readFromCurrentSegment`, immediately after
+`state_->reader->next()` determines `size`, before cache write and before the
+final requested-range clamp, when `state_->readType == ReadType::CACHED`.
+These are physical bytes read from the local cache, matching CH:
 
 ```cpp
+ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheHits);
 ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheBytes, size);
 if (ioStatistics_)
-{
     ioStatistics_->ssdRead().increment(size);
-    ioStatistics_->incRawBytesRead(static_cast<int64_t>(size));
-}
 ```
+
+After cache write and the final range clamp, increment
+`incRawBytesRead(static_cast<int64_t>(size))` once with the logical bytes
+actually returned.
 
 - [ ] **Step 5: Add accounting in read-from-source path**
 
-Site: same `if (size)` block in `readFromCurrentSegment`, **when `state_->readType` is a remote
-read (`REMOTE_FS_READ_AND_PUT_IN_CACHE` or `REMOTE_FS_READ_BYPASS_CACHE`)**. These are logical
-bytes returned to the caller from source, so they update `read` *and* the raw-input ledger
-(design §3.4: source bytes → `read`, logical bytes returned → `incRawBytesRead`):
+Site: the same post-`next`, pre-write, pre-clamp point when `state_->readType`
+is a remote read (`REMOTE_FS_READ_AND_PUT_IN_CACHE` or
+`REMOTE_FS_READ_BYPASS_CACHE`). These are physical source bytes, matching CH:
 
 ```cpp
+ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheMisses);
 ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromSourceBytes, size);
 if (ioStatistics_)
-{
     ioStatistics_->read().increment(size);
-    ioStatistics_->incRawBytesRead(static_cast<int64_t>(size));
-}
 ```
+
+After cache write and the final range clamp, increment `incRawBytesRead` once
+with only the logical bytes actually returned.
 
 - [ ] **Step 6: Add accounting in predownload path**
 
@@ -813,6 +814,7 @@ returned bytes are counted exactly once on the cache/source return in Step 4/5:
 ```cpp
 ProfileEvents::increment(ProfileEvents::CachedReadBufferPredownloadedBytes, got);
 ProfileEvents::increment(ProfileEvents::CachedReadBufferPredownloadedFromSourceBytes, got);
+ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromSourceBytes, got);
 if (ioStatistics_)
 {
     ioStatistics_->read().increment(got);
@@ -834,16 +836,14 @@ if (ioStats_)
 
 - [ ] **Step 8: Add hit/miss accounting**
 
-At segment-batch CACHED path entry:
+Count hit/miss at the same post-`next`, pre-clamp physical-read point as Steps
+4/5, even when `size == 0`, matching CH. Do not count at reader construction:
+a reused multi-chunk bypass reader must record one miss per physical read.
 
 ```cpp
-ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheHits);
-```
-
-At segment-batch non-CACHED (REMOTE/EMPTY) path entry:
-
-```cpp
-ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheMisses);
+ProfileEvents::increment(
+    isCacheRead ? ProfileEvents::CachedReadBufferReadFromCacheHits
+                : ProfileEvents::CachedReadBufferReadFromCacheMisses);
 ```
 
 - [ ] **Step 9: Add latency accounting**
@@ -2322,6 +2322,8 @@ These are independently owned by Task 017B.
 | 2 | Cache read bytes → global | Comment out `ProfileEvents::increment(CachedReadBufferReadFromCacheBytes, size)` | `CacheReadUpdatesGlobalAndIoStatistics` fails |
 | 2 | Cache write bytes → IoStats | Comment out `ioStats_->addCounter(kFileCacheWriteBytes)` | `CacheWriteUpdatesGlobalAndIoStats` fails |
 | 2 | Predownload maps to `read`+`prefetch`, NOT `incRawBytesRead` | Add `ioStatistics_->incRawBytesRead(got)` in predownload path | `PredownloadUpdatesReadPrefetchButNotRawBytes` fails (rawBytesRead delta wrong) |
+| 2 | Physical-vs-logical clamp | Use post-clamp size for global/query cache/source I/O, or pre-clamp size for `rawBytesRead` | `LastSegmentClampSeparatesPhysicalAndLogicalBytes` fails |
+| 2 | Predownload contributes to global source total | Remove `CachedReadBufferReadFromSourceBytes` from predownload | `PredownloadUpdatesReadPrefetchButNotRawBytes` fails |
 | 3 | Real token passed to wait | Revert to `folly::CancellationToken{}` | `CancellationDuringSegmentWaitThrows` fails (waiter never throws) |
 | 3 | Check before lookup | Remove `nextFileSegmentsBatch` `isCancellationRequested` check | `CancellationBeforeLookupThrows` fails |
 | 4 | Thread name in caller ID | Omit `getCurrentThreadName()` | `FileCacheQueryIdScopeTest.NamedThreadAppearsInCallerId` fails |
@@ -2336,7 +2338,7 @@ These are independently owned by Task 017B.
 2. 10 new CH reader events added (exact names: `CachedReadBufferWaitReadBufferMicroseconds`, `CachedReadBufferReadFromSourceMicroseconds`, `CachedReadBufferPredownloadedFromSourceMicroseconds`, `CachedReadBufferReadFromCacheMicroseconds`, `CachedReadBufferCacheWriteMicroseconds`, `CachedReadBufferPredownloadedFromSourceBytes`, `CachedReadBufferPredownloadedBytes`, `CachedReadBufferCreateBufferMicroseconds`, `CachedReadBufferReadFromCacheHits`, `CachedReadBufferReadFromCacheMisses`).
 3. Storage arrays in `CurrentMetrics.cpp` and `ProfileEvents.cpp` (not header-local statics).
 4. `FileCacheStatsSnapshot` public type in `velox/ch/Common/FileCacheStats.h`: `takeFileCacheStatsSnapshot()` + `operator-` + `kFileCacheWriteBytes`.
-5. Same read/write fact updates both global ProfileEvents and query `IoStatistics`/`IoStats`. Logical returned bytes (cache/source) update `incRawBytesRead` exactly once; predownload source bytes update `read` **and** `prefetch` but **never** `incRawBytesRead`; scan time flows via `incTotalScanTimeNs`.
+5. Same read/write fact updates both global ProfileEvents and query `IoStatistics`/`IoStats`. Physical cache/source bytes before clamp update the matching global byte event and `ssdRead`/`read`; post-clamp logical returned bytes update `incRawBytesRead` exactly once. Predownload source bytes update global source/predownload bytes plus `read` and `prefetch`, but never `incRawBytesRead`; scan time flows via `incTotalScanTimeNs`.
 6. `FileCacheBufferedInput` ctor: `folly::CancellationToken cancellationToken = {}` appended after `fileReadOps` to preserve all existing positional calls.
 7. `FileSegment::wait` receives the stored token (not empty).
 8. Cancellation only at safe checkpoints (no check while downloader/reserve-write active).
