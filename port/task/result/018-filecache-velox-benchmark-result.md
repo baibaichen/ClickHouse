@@ -462,3 +462,20 @@ uses error log level for non-error statistics. It does not affect this result.
 The complete non-TPCH phase is accepted at checkpoint 018-P. Execution stops
 here until the user explicitly authorizes TPCH source copy, target build, data
 inspection, and 018-C/H2 execution.
+
+## Controller approval — 018-P passed
+
+```text
+approval_date: 2026-07-22
+controller_status: worker_dispatch_authorized
+task_018_h1_accepted: true
+task_018_accepted: false
+tpch_authorized: true
+tpch_data: /root/oss/test-data/tpch-sf100-parquet-double
+next_task: 018-C
+```
+
+The user explicitly approved checking the dataset, reconfiguring the
+RelWithDebInfo tree with Parquet enabled, building the Task-018 TPCH target, and
+executing 018-C correctness followed by 018-H2 performance. A fresh Worker must
+run 018-C before any TPCH performance measurement.

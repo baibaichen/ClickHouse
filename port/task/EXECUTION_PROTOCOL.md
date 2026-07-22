@@ -13,15 +13,15 @@ Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
                        Task 019 Gluten/Spark integration.
                        The three executable plans are independently reviewed.
                        Task 017A is accepted at Velox a856d836c.
-                       Task 018 non-TPCH work is accepted. Execution is stopped
-                       at 018-P; TPCH and later stages retain their gates.
+                       Task 018 non-TPCH work is accepted and 018-P is approved.
+                       Task 018-C correctness is next; 018-H2 remains gated on it.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
 Task 017A owns statistics/cancellation/scheduler/caller-id. Task 018 is
 Velox-only and owns correctness, core/buffered-input/wrapper microbenchmarks,
 safe orchestration, and TPCH. Task 017A and Task 018 non-TPCH work are accepted;
-TPCH remains separately gated at 018-P.
+018-P is approved, so 018-C may run before gated 018-H2.
 Task 017B independently owns logging and exception stacks. It executes after
 Task 018 and accepted Review 5, and must be accepted before Task 019.
 Task 018 has an additional mandatory stop after all non-TPCH work and before any
