@@ -1803,11 +1803,26 @@ stages:
      -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
      -DVELOX_ENABLE_BENCHMARKS=ON \
      -DVELOX_ENABLE_PARQUET=ON \
+     -DVELOX_ENABLE_ARROW_TESTING=OFF \
      -DVELOX_BUILD_TESTING=ON \
      -DVELOX_MONO_LIBRARY=ON \
      -DVELOX_GFLAGS_TYPE=static \
      > /root/oss/velox/_build/relwithdebinfo/configure_018c_parquet.log 2>&1
    ```
+
+   `ARROW_CMAKE_ARGS` in
+   `CMake/resolve_dependency_modules/arrow/CMakeLists.txt` now hard-codes
+   `-DARROW_ZSTD_USE_SHARED=OFF` next to `-DARROW_WITH_ZSTD=ON`, so no
+   `-D...=...` flag for it needs to be passed on this command line. This
+   environment's vcpkg `zstd` triplet exports only the
+   `zstd::libzstd_static`/`zstd::libzstd` CMake targets (no
+   `zstd::libzstd_shared`), while bundled Arrow is built `ARROW_BUILD_STATIC=ON`;
+   without the flag Arrow's `ThirdpartyToolchain.cmake` zstd resolution fails
+   with `Zstandard target doesn't exist: zstd::libzstd_shared`. Tracking the
+   flag in the CMakeLists.txt (instead of only in a generated
+   `arrow_ep-build/CMakeCache.txt` edit) makes a from-scratch recreation of
+   the `arrow_ep` prefix reproducible without a manual `cmake -D... .`
+   invocation inside the generated `arrow_ep-build` directory.
 
 - [ ] **Step 0b: Split backend-specific statistics before runtime use.** The current
    `bytes_dl_mib` and `evict_mib` columns are not comparable across CBI and

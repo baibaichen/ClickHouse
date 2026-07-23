@@ -99,7 +99,26 @@ with:
 -DARROW_TESTING=${VELOX_ENABLE_ARROW_TESTING}
 ```
 
-- [ ] **Step 2: Construct the exact byproduct list**
+- [ ] **Step 2: Pin static zstd linkage (reproducibility fix)**
+
+Add, immediately after `-DARROW_WITH_ZSTD=ON`:
+
+```cmake
+-DARROW_ZSTD_USE_SHARED=OFF
+```
+
+Bundled Arrow is always built `ARROW_BUILD_STATIC=ON`, and this
+environment's vcpkg `zstd` triplet exports only the
+`zstd::libzstd_static`/`zstd::libzstd` CMake targets (no
+`zstd::libzstd_shared`). Without this flag, Arrow's default
+`ARROW_ZSTD_USE_SHARED=ON` makes `ThirdpartyToolchain.cmake` fail with
+`Zstandard target doesn't exist: zstd::libzstd_shared` on every fresh
+Arrow configure. Tracking the flag here (instead of only caching it with a
+manual `cmake -D... .` inside the generated `arrow_ep-build` directory)
+makes deleting and recreating the `arrow_ep` prefix (Task 4) reproducible
+without any generated-cache edit.
+
+- [ ] **Step 3: Construct the exact byproduct list**
 
 Immediately after `set(ARROW_LIBDIR ...)`, add:
 
@@ -116,7 +135,7 @@ Change the ExternalProject declaration to:
 BUILD_BYPRODUCTS ${ARROW_BUILD_BYPRODUCTS}
 ```
 
-- [ ] **Step 3: Keep `arrow` unconditional and gate `arrow_testing`**
+- [ ] **Step 4: Keep `arrow` unconditional and gate `arrow_testing`**
 
 The target block must have this structure:
 
@@ -144,7 +163,7 @@ if(VELOX_ENABLE_ARROW_TESTING)
 endif()
 ```
 
-- [ ] **Step 4: Run CMake formatting/check**
+- [ ] **Step 5: Run CMake formatting/check**
 
 Use the repository's existing CMake formatting or style check if available.
 Do not install a new formatter. `git diff --check` is mandatory.
@@ -237,13 +256,17 @@ Velox testing ON, and Arrow testing OFF. Redirect output to:
 ```bash
 ARROW_BUILD=/root/oss/velox/_build/relwithdebinfo/CMake/resolve_dependency_modules/arrow/arrow_ep/src/arrow_ep-build
 grep '^ARROW_TESTING:BOOL=OFF$' "$ARROW_BUILD/CMakeCache.txt"
+grep '^ARROW_ZSTD_USE_SHARED:BOOL=OFF$' "$ARROW_BUILD/CMakeCache.txt"
 if ninja -C "$ARROW_BUILD" -t commands | grep -q 'testing/process.cc'; then
   echo "unexpected Arrow testing compile command" >&2
   exit 1
 fi
 ```
 
-Expected: `ARROW_TESTING:BOOL=OFF` and no `testing/process.cc` compile command.
+Expected: `ARROW_TESTING:BOOL=OFF` and `ARROW_ZSTD_USE_SHARED:BOOL=OFF`, both
+arriving from the ExternalProject `CMAKE_ARGS` (i.e. present without any
+manual `cmake -D... .` invocation inside `arrow_ep-build`), and no
+`testing/process.cc` compile command.
 
 - [ ] **Step 5: Build the focused tests and TPCH target**
 

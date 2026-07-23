@@ -7,6 +7,8 @@ decision_date: 2026-07-22
 decision: approved
 scope: Task 018 TPCH build only
 default_behavior: unchanged
+addendum_date: 2026-07-23
+addendum: track ARROW_ZSTD_USE_SHARED=OFF in ARROW_CMAKE_ARGS (reproducibility fix)
 ```
 
 ## Problem
@@ -50,6 +52,8 @@ CMake/resolve_dependency_modules/arrow/CMakeLists.txt
   Forward the option to ARROW_TESTING.
   Make libarrow_testing.a, the imported arrow_testing target, and its properties
   conditional.
+  Add -DARROW_ZSTD_USE_SHARED=OFF to ARROW_CMAKE_ARGS, next to
+  -DARROW_WITH_ZSTD=ON (reproducibility fix; see Addendum below).
 
 velox/vector/arrow/CMakeLists.txt
   Add VELOX_ENABLE_ARROW_TESTING to the Arrow bridge test-directory gate.
@@ -69,12 +73,39 @@ port/task/018-filecache-gluten-benchmark-plan.md
    stub.
 2. Configure Task 018 with Parquet enabled, Velox testing enabled, and Arrow
    testing disabled.
-3. Verify the Arrow sub-build has `ARROW_TESTING=OFF`.
+3. Verify the Arrow sub-build has `ARROW_TESTING=OFF` and
+   `ARROW_ZSTD_USE_SHARED=OFF`, both arriving from the ExternalProject
+   `CMAKE_ARGS` (i.e. present in `arrow_ep-build/CMakeCache.txt` without any
+   manual `cmake -D... .` edit inside that generated directory).
 4. Verify its build graph contains `libarrow.a` but not
    `libarrow_testing.a` or `testing/process.cc`.
 5. Build and run the Task-018 schema and `AdaptivePrefetch` tests.
 6. Build `velox_tpch_benchmark`.
 7. Confirm no vcpkg, Boost, downloaded Arrow source, or Gluten file changed.
+
+## Addendum: ARROW_ZSTD_USE_SHARED reproducibility fix (2026-07-23)
+
+**Concern.** The first Task-018-C reconfigure after this design's Arrow-testing
+bypass (recreating the `arrow_ep` prefix from the verified archive) failed
+during the Arrow sub-build's zstd resolution: this environment's vcpkg `zstd`
+triplet exports only the `zstd::libzstd_static`/`zstd::libzstd` CMake targets,
+never `zstd::libzstd_shared`, but Arrow's `ThirdpartyToolchain.cmake` defaults
+`ARROW_ZSTD_USE_SHARED=ON` and fails with `Zstandard target doesn't exist:
+zstd::libzstd_shared`. The workaround applied in that session — running
+`cmake -DARROW_ZSTD_USE_SHARED=OFF .` directly inside the generated,
+gitignored `arrow_ep-build` directory — is not reproducible: deleting and
+recreating the `arrow_ep` prefix again (as Verification step 1 requires) loses
+that manually-cached value and reintroduces the failure.
+
+**Fix.** Track the flag in the tracked source instead of the generated cache:
+add `-DARROW_ZSTD_USE_SHARED=OFF` to `ARROW_CMAKE_ARGS` in
+`CMake/resolve_dependency_modules/arrow/CMakeLists.txt`, next to
+`-DARROW_WITH_ZSTD=ON`. Bundled Arrow is always built `ARROW_BUILD_STATIC=ON`,
+so a static zstd link is correct and matches what the vcpkg triplet actually
+provides; no generated `CMakeCache.txt` edit is required or permitted going
+forward. This is orthogonal to the Arrow-testing bypass — it applies
+identically whether `ARROW_TESTING` is `ON` or `OFF` — but is recorded here
+because it was discovered while validating that bypass's clean-rebuild path.
 
 ## Non-goals
 
