@@ -72,6 +72,35 @@ Notes: non-vcpkg, Arrow off, private static gflags/glog/Folly under
 `_build/release/lib/libvelox.a`, `gluten2/cpp/build/releases/{libgluten,libvelox}.so`.
 Do not pass `-j`; redirect each build to a log under `gluten2/`.
 
+**Critical pitfall — rebuild `_build/release` after ANY Velox change.** Gluten
+links the pre-built Velox archive `_build/release/lib/libvelox.a` (see
+`VELOX_BUILD_PATH` in `gluten2/cpp/build/CMakeCache.txt`); it does NOT compile
+Velox sources itself (`FileDataSource.cpp` is 0 compile units in Gluten's
+`build.ninja`). A `ninja` in `gluten2/cpp/build` only relinks Gluten's own `.so`
+against whatever `.a` already exists. So after editing any `velox/` source you
+MUST rebuild the archive, or Gluten silently runs the OLD Velox code (symptom:
+your change is in the loaded `.so` by name but its effect is absent — e.g. new
+metrics stay zero). Rebuild it directly, bypassing `builddeps-veloxbe.sh` (which
+re-configures and hits the gflags pitfall):
+
+```bash
+cd /home/chang/OpenSource/velox   # MUST be on filecache2-gluten (see below)
+VELOX_GFLAGS_TYPE=static /path/to/ninja -C _build/release velox
+```
+
+Then relink Gluten (`ninja velox gluten` in `gluten2/cpp/build`), and — if a
+`.jar` is consumed (e.g. gluten-it) — repackage and copy the fresh bundle into
+`tools/gluten-it/package/target/lib/gluten-package-*.jar`.
+
+`_build/release` is configured for the `filecache2-gluten` CMakeLists (which
+carries the `[!TMP]` shims). Checking out `filecache2` changes `CMakeLists.txt`,
+which makes ninja re-generate `build.ninja` → CMake re-configure → the gflags
+failure. **So `_build/release` builds must run with `filecache2-gluten` checked
+out**, not `filecache2`. (The "switch back to filecache2 after cherry-pick" rule
+still applies for editing/committing; just switch to `filecache2-gluten` for the
+release build step.)
+
+
 ## `root-oss`
 
 The environment source is `/root/oss/velox-helper/README.md`, backed by
