@@ -1858,6 +1858,30 @@ The focused schema test must require exactly these 14 fields in this order.
 Before interpreting any correctness row, the shell gate below compares the
 header byte-for-byte and requires each success row to have exactly 14 fields.
 
+- [ ] **Step 0d: Restore the reference query/cache allocator separation.**
+
+The `baibaichen/ch-filecache` benchmark keeps query memory and CBI cache memory
+independent. Port its `QueryBenchmarkBase.cpp` flags and initialization:
+
+```text
+cache_gb=32      CBI query allocator capacity; also enables CBI
+cache_mem_gb=4   dedicated CBI MmapAllocator capacity
+query_mem_gb=32  direct/FileCache query allocator capacity
+```
+
+`cache_mem_gb > 0` must create a dedicated `MmapAllocator` for
+`AsyncDataCache`; it must not consume the query allocator selected by
+`cache_gb`. When `cache_gb == 0`, `query_mem_gb` selects the same 32 GiB mmap
+query allocator for direct and FileCache without constructing CBI. This is the
+reviewed reference behavior, not a new benchmark policy.
+
+Behavioral RED is the SF100 CBI evidence: q09/q21/q22 exhaust the legacy shared
+4 GiB allocator; q21 still exhausts 8 and 16 GiB. The reference-separated
+configuration must pass q09/q21/q22 with a 32 GiB query allocator and a
+dedicated 4 GiB cache allocator. Record allocator capacities from the logs and
+add a focused flag/configuration test if the mapping cannot otherwise be
+asserted deterministically.
+
 This TPCH A/B is Velox-native; it does not build, require, or run any Spark or
 Gluten component.
 
@@ -1900,6 +1924,12 @@ echo "exit: $?"
 ```bash
 mkdir -p tmp
 for MODE in direct cbi filecache; do
+  MEMORY_ARGS=(--query_mem_gb=32)
+  if [[ "$MODE" == "cbi" ]]; then
+    MEMORY_ARGS+=(--cache_gb=32 --cache_mem_gb=4)
+  else
+    MEMORY_ARGS+=(--cache_gb=0)
+  fi
   if ! /root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_benchmark \
     --input_source=$MODE \
     --data_path="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
@@ -1908,9 +1938,9 @@ for MODE in direct cbi filecache; do
     --rounds=1 \
     --num_splits_per_file=1 \
     --num_drivers=1 \
+    "${MEMORY_ARGS[@]}" \
     --filecache_root=tmp/fc_tpch_$MODE \
     --filecache_disk_gib=10 \
-    --cache_gb=4 \
     --out=tmp/tpch_q01_$MODE.csv \
     > /root/oss/velox/_build/relwithdebinfo/test_018c_$MODE.log 2>&1; then
     echo "FAIL: q01 $MODE exited nonzero"
@@ -1970,6 +2000,12 @@ three modes for q01.
 EXPECTED_HEADER='round,query_id,wall_ms,rows,result_hash,bytes_read,hit_pct,cache_read_mib,predownload_mib,evict_mib,evict_count,op_p50_us,op_p95_us,error'
 for Q in $(seq 1 22); do
   for MODE in direct cbi filecache; do
+    MEMORY_ARGS=(--query_mem_gb=32)
+    if [[ "$MODE" == "cbi" ]]; then
+      MEMORY_ARGS+=(--cache_gb=32 --cache_mem_gb=4)
+    else
+      MEMORY_ARGS+=(--cache_gb=0)
+    fi
     if ! /root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_benchmark \
       --input_source=$MODE \
       --data_path="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
@@ -1978,9 +2014,9 @@ for Q in $(seq 1 22); do
       --rounds=1 \
       --num_splits_per_file=1 \
       --num_drivers=1 \
+      "${MEMORY_ARGS[@]}" \
       --filecache_root=tmp/fc_tpch_correctness_$MODE \
       --filecache_disk_gib=10 \
-      --cache_gb=4 \
       --out=tmp/tpch_correctness_q${Q}_$MODE.csv \
       > /root/oss/velox/_build/relwithdebinfo/test_018c_all_q${Q}_$MODE.log 2>&1; then
       echo "FAIL q$Q $MODE: nonzero exit"
@@ -2193,6 +2229,7 @@ All files created or modified by this plan live in `/root/oss/velox/` (Velox
 repo, branch `filecache`):
 
 - `velox/benchmarks/AbBenchmark*.{h,cpp}` and `velox/benchmarks/CMakeLists.txt` (018-A adapter)
+- `velox/benchmarks/QueryBenchmarkBase.cpp` (018-C reference query/cache allocator separation)
 - `velox/dwio/common/benchmarks/**` correctness harness, wrapper benchmark, and tests (018-A)
 - `velox/ch/benchmarks/FileCacheBufferedInputBenchmark.cpp` + `velox/ch/benchmarks/CMakeLists.txt` (018-B)
 - `velox/benchmarks/scripts/{lib_cache_cleanup,run_wrapper_ab,run_tpch_ab}.sh` (018-D)
