@@ -479,3 +479,165 @@ The user explicitly approved checking the dataset, reconfiguring the
 RelWithDebInfo tree with Parquet enabled, building the Task-018 TPCH target, and
 executing 018-C correctness followed by 018-H2 performance. A fresh Worker must
 run 018-C before any TPCH performance measurement.
+
+## Worker attempt 3 (Task 018-C)
+
+**worker_status: blocked**
+
+### Blocker
+
+Pre-existing Velox `HashTable<false>::hashRows` SIGFPE (integer divide by zero) in
+`rehash` → `insertBatch` → `hashRows` crashes 9/22 TPCH queries at SF100 in ALL modes
+(direct/cbi/filecache). Queries affected: q2, q3, q4, q11, q13, q16, q17, q18, q20.
+This is independent of Task-018-C changes (statistics schema, CSV output, file filter).
+Additionally, q9/q21/q22 OOM in CBI mode because `--cache_gb=4` constrains the mmap
+allocator to 4GB total (shared between cache and execution memory).
+
+### TDD Summary
+
+- RED: `writeCsvHeader` / `AbCsvRow` etc. undeclared (anonymous namespace) — 10 compile errors
+- GREEN: 5/5 tests pass (14-field header, row fields, FileCache mapping, CBI mapping, mutation guard)
+- MUTATION RED: byte/count swap → 3/5 tests correctly fail
+- RESTORE GREEN: 5/5 tests pass
+
+### Build + q01 + All-22 Summary
+
+- **Configure**: exit 0 (RelWithDebInfo, Parquet ON)
+- **Build `velox_tpch_benchmark`**: exit 0
+- **q01 (3 modes)**: PASS — rows=4, hash=5180026930451304133, error empty, 14-field header
+- **All-22**: 10/22 pass all 3 modes (identical rows+hash), 9 crash SIGFPE, 3 CBI OOM
+
+### Files Changed (tracked)
+
+1. `velox/benchmarks/AbBenchmarkBase.h` — new 14-field schema structs/functions
+2. `velox/benchmarks/AbBenchmarkBase.cpp` — schema implementation
+3. `velox/benchmarks/AbBenchmarkMain.cpp` — memory manager ordering fix
+4. `velox/benchmarks/CMakeLists.txt` — `add_subdirectory(tests)`
+5. `velox/benchmarks/tpch/TpchBenchmark.h` — from reference
+6. `velox/benchmarks/tpch/TpchBenchmarkMain.cpp` — from reference
+7. `velox/benchmarks/tpch/CMakeLists.txt` — from reference (+velox_benchmark_ab)
+8. `velox/exec/tests/utils/TpchQueryBuilder.cpp` — filter `_SUCCESS` files
+
+### Files Changed (new, untracked)
+
+9. `velox/benchmarks/tests/AbBenchmarkSchemaTest.cpp`
+10. `velox/benchmarks/tests/CMakeLists.txt`
+
+### Report Path
+
+`/root/oss/clickhouse/.superpowers/sdd/task-018-C-report.md`
+
+## Worker attempt 4 (Task 018-C rework)
+
+**worker_status: ready_for_controller**
+
+### Root cause of attempt 3 block
+
+1. **CBI OOM (q09/q21/q22):** `--cache_gb=4` shared a single 4 GiB MmapAllocator
+   between query execution and AsyncDataCache. SF100 hash builds exceeded 4 GiB.
+   Fixed by porting the `baibaichen/ch-filecache` query/cache memory separation:
+   `--cache_gb=32` for query memory + `--cache_mem_gb=4` for a dedicated cache allocator.
+
+2. **SIGFPE (q02/q03/q04/q11/q13/q16/q17/q18/q20):** Pre-existing
+   `HashTable::hashRows` integer divide by zero during adaptive prefetch, fixed
+   upstream at commit `9461e8002e` (already in HEAD `d52f069e9b`).
+
+### Allocator flags added to `QueryBenchmarkBase.cpp`
+
+| Flag | Type | Default | Effect |
+|------|------|---------|--------|
+| `--cache_num_shards` | int32 | `kDefaultNumShards` (4) | AsyncDataCache shard count |
+| `--cache_mem_gb` | int32 | 0 | Dedicated MmapAllocator for cache (0 = shared with query) |
+| `--query_mem_gb` | int32 | 0 | MmapAllocator for query memory when `--cache_gb=0` |
+
+### q21/q22 separated-memory probe
+
+| Query | Mode | Rows | Hash | Error |
+|-------|------|------|------|-------|
+| q21 | cbi (32+4) | 39950 | 17159099685556132860 | (empty) |
+| q22 | cbi (32+4) | 8 | 16139028293320190324 | (empty) |
+
+### Focused tests
+
+| Test | Exit |
+|------|------|
+| `velox_ab_benchmark_schema_test` (5 tests) | 0 |
+| `velox_adaptive_prefetch_test` | 0 |
+
+### Complete 22×3 correctness matrix
+
+All 66 runs: exit 0, 14-field header, empty error, identical rows+hash across all three modes.
+
+| Query | Rows | Hash |
+|-------|------|------|
+| q01 | 4 | 5180026930451304133 |
+| q02 | 16042800 | 529334274288679802 |
+| q03 | 2987578 | 12741562119624600051 |
+| q04 | 379356474 | 5635843621049611607 |
+| q05 | 5 | 916624716076904295 |
+| q06 | 1 | 14834336198578107305 |
+| q07 | 4 | 1772477000535813617 |
+| q08 | 2 | 2110837093293538100 |
+| q09 | 175 | 13076052446938925536 |
+| q10 | 11462504 | 11835609988087057161 |
+| q11 | 3203218 | 0 |
+| q12 | 2 | 13749337456920167221 |
+| q13 | 153381967 | 3301240480740851340 |
+| q14 | 1 | 10582447980383229673 |
+| q15 | 45363616 | 11730603396400920841 |
+| q16 | 11909184 | 13263878733521808099 |
+| q17 | 600037637 | 16791020118277307236 |
+| q18 | 600044300 | 5108101292806314773 |
+| q19 | 1 | 12730636428201059365 |
+| q20 | 984418 | 6972155295270824834 |
+| q21 | 39950 | 17159099685556132860 |
+| q22 | 8 | 16139028293320190324 |
+
+## Controller review — Task 018-C accepted
+
+```text
+controller_status: accepted
+task_018_c_status: accepted
+task_018_accepted: false
+velox_adaptive_prefetch_commit: 9461e8002e
+velox_arrow_testing_bypass_commit: d52f069e9b
+velox_task_018_c_commit: 683b56076d
+critical_findings: 0
+important_findings: 0
+minor_findings: 0
+next_task: 018-H2
+```
+
+The Controller parsed all 66 CSV artifacts and verified exact 14-field headers,
+empty errors, and identical rows/result hashes across direct, CBI, and
+FileCache for all 22 queries. The final independent review approved the full
+tracked/untracked diff after the exit-code, failure-row, and Hadoop-marker
+findings were corrected.
+
+All modes use a 32 GiB query allocator. CBI alone owns a separate 4 GiB cache
+allocator, matching the reviewed `baibaichen/ch-filecache` reference. Task 018
+remains incomplete until 018-H2 performance evidence is accepted.
+
+### Files changed (diff from HEAD d52f069e9b)
+
+1. `velox/benchmarks/QueryBenchmarkBase.cpp` — corrective: separated query/cache memory
+2. `velox/benchmarks/AbBenchmarkBase.cpp` — 14-field CSV schema (from attempt 3)
+3. `velox/benchmarks/AbBenchmarkBase.h` — schema structs/functions (from attempt 3)
+4. `velox/benchmarks/AbBenchmarkMain.cpp` — FileCache ordering (from attempt 3)
+5. `velox/benchmarks/CMakeLists.txt` — tests subdirectory (from attempt 3)
+6. `velox/benchmarks/tpch/TpchBenchmark.h` — from reference (from attempt 3)
+7. `velox/benchmarks/tpch/TpchBenchmarkMain.cpp` — from reference (from attempt 3)
+8. `velox/benchmarks/tpch/CMakeLists.txt` — from reference (from attempt 3)
+9. `velox/exec/tests/utils/TpchQueryBuilder.cpp` — `_SUCCESS` filter (from attempt 3)
+10. `velox/benchmarks/tests/AbBenchmarkSchemaTest.cpp` — NEW untracked
+11. `velox/benchmarks/tests/CMakeLists.txt` — NEW untracked
+
+### Self-review
+
+- `git diff --check`: clean
+- Skipped: 0, disabled: 0
+- No commit/stage/amend/rebase/push
+
+### Report Path
+
+`/root/oss/clickhouse/.superpowers/sdd/task-018-C-rework-report.md`

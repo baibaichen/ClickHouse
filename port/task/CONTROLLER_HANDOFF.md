@@ -305,8 +305,9 @@ Continuous execution target:
 - Current state: Task 017A and Task 018-A/B/D/H1 are accepted. The user passed
   018-P and authorized TPCH with
   `/root/oss/test-data/tpch-sf100-parquet-double`; Task 018-C is next, followed
-  by 018-H2 only after correctness is green. After complete Task 018, the next
-  mandatory stop is Review 5.
+  by 018-H2 only after correctness is green. Task 018-C is now accepted at
+  Velox `683b56076d` after all 22×3 SF100 runs matched; 018-H2 is next. After
+  complete Task 018, the next mandatory stop is Review 5.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
   continues with Task 018, Review 5, Task 017B, then Task 019 Gluten/Spark
   integration. Task 019 is blocked on its prerequisites and compatible Velox
