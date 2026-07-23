@@ -1358,7 +1358,9 @@ validate_benchmark_binary "$BIN"
 : "${NUM_SPLITS_PER_FILE:=1}"
 : "${NUM_DRIVERS:=4}"
 : "${FILECACHE_DISK_GIB:=58}"
-: "${CACHE_GB:=4}"
+: "${QUERY_MEM_GB:=32}"
+: "${CACHE_GB:=32}"
+: "${CACHE_MEM_GB:=4}"
 
 CACHE_ROOT="$(realpath -m -- "$CACHE_ROOT")"
 if [[ "$CACHE_ROOT" != /* ]]; then
@@ -1376,23 +1378,28 @@ for MODE in direct cbi filecache; do
     --rounds="$ROUNDS"
     --num_splits_per_file="$NUM_SPLITS_PER_FILE"
     --num_drivers="$NUM_DRIVERS"
+    --query_mem_gb="$QUERY_MEM_GB"
     --out="$OUT_DIR/tpch_${MODE}.csv"
   )
   case "$MODE" in
     direct)
       # No application cache and no task-owned disk root.
-      :
+      args+=(--cache_gb=0)
       ;;
     cbi)
-      # In-process AsyncDataCache; the binary requires --cache_gb > 0 for cbi.
-      args+=(--cache_gb="$CACHE_GB")
+      # CBI uses the common query-memory budget and a dedicated cache allocator.
+      args+=(--cache_gb="$CACHE_GB" --cache_mem_gb="$CACHE_MEM_GB")
       ;;
     filecache)
       # Only this backend owns a disk cache root; sentinel it and arm cleanup.
       FC_DIR="$CACHE_ROOT/filecache_run"
       create_sentinel "$FC_DIR" "$CACHE_ROOT"
       setup_trap_cleanup "$FC_DIR" "$CACHE_ROOT"
-      args+=(--filecache_root="$FC_DIR" --filecache_disk_gib="$FILECACHE_DISK_GIB")
+      args+=(
+        --cache_gb=0
+        --filecache_root="$FC_DIR"
+        --filecache_disk_gib="$FILECACHE_DISK_GIB"
+      )
       ;;
   esac
   echo "Running TPCH A/B backend '$MODE' -> $OUT_DIR/tpch_${MODE}.csv" >&2
@@ -2089,6 +2096,8 @@ for Q in 1 9 21; do
     --rounds=3 \
     --num_splits_per_file=1 \
     --num_drivers=4 \
+    --cache_gb=0 \
+    --query_mem_gb=32 \
     --filecache_root=tmp/fc_tpch_w4 \
     --filecache_disk_gib=80 \
     --out=tmp/tpch_w4_fc_q${Q}.csv \
@@ -2105,6 +2114,8 @@ done
   --rounds=3 \
   --num_splits_per_file=1 \
   --num_drivers=4 \
+  --cache_gb=0 \
+  --query_mem_gb=32 \
   --filecache_root=tmp/fc_tpch_w4_full \
   --filecache_disk_gib=80 \
   --out=tmp/tpch_w4_fc_full.csv \
@@ -2123,7 +2134,7 @@ TPCH_DATA="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
 OUT_DIR="$(pwd)/tmp/tpch_ab_results" \
 CACHE_ROOT="$(pwd)/tmp/velox_tpch_ab_cache" \
 QUERY_ID=0 ROUNDS=3 NUM_SPLITS_PER_FILE=1 NUM_DRIVERS=4 \
-FILECACHE_DISK_GIB=80 CACHE_GB=4 \
+FILECACHE_DISK_GIB=80 QUERY_MEM_GB=32 CACHE_GB=32 CACHE_MEM_GB=4 \
   bash velox/benchmarks/scripts/run_tpch_ab.sh \
   > /root/oss/velox/_build/relwithdebinfo/test_018h2_ab.log 2>&1
 echo "TPCH A/B exit: $?"
