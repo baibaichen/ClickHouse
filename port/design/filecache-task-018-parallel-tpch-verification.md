@@ -45,7 +45,7 @@ build plans
 if reference_num_drivers > 0:
   save requested num_drivers
   run each query once with reference_num_drivers
-  retain returned RowVectors
+  retain returned TaskCursors and RowVectors
   restore requested num_drivers
   reset the active application cache
 run timed rounds with requested num_drivers
@@ -105,6 +105,11 @@ A result mismatch sets `result_match=0`, writes a nonempty error, increments the
 failed-query count, and makes the process exit nonzero. There is no fallback to
 exact hash or timing-only success.
 
+`assertEqualResults` emits GTest-style failure diagnostics on mismatch even in
+the benchmark binary. This log noise is intentional failure evidence; the
+benchmark exit status still comes from `result_match` and the failed-query
+count.
+
 ## Reference comparison
 
 Use the existing:
@@ -122,6 +127,11 @@ groups aggregation rows by non-floating keys when those keys are unique;
 compares REAL/DOUBLE values using Variant::equalsWithEpsilon;
 falls back to exact comparison when epsilon comparison is unsupported.
 ```
+
+All TPCH aggregation outputs used here have unique non-floating group keys.
+This is required for the comparator's epsilon path; if a future query lacks
+such keys and falls back to exact floating comparison, its parallel result
+verification fails closed.
 
 Do not add a Task-specific floating-point tolerance, rounded hash, or result
 serialization format.
@@ -157,9 +167,15 @@ Task-018 H2 result is accepted only with 4/1.
 
 If a reference query fails, execution stops before performance rounds.
 
-The reference `RowVector` objects own their result buffers and remain valid for
-the process lifetime memory pool. Reference cursors/tasks are released after
-their results are retained.
+Reference result buffers are allocated from the corresponding
+`TaskCursor`/`TaskQueue` pool. Retain every reference cursor together with its
+returned `RowVector`s until all timed comparisons complete; releasing the
+cursor first would leave the result buffers with a dangling pool.
+
+`readCursor` uses copied results by default, so retained references are
+materialized in the retained TaskQueue pools rather than aliasing CBI/FileCache
+scan buffers. Clearing the application cache after reference collection does
+not invalidate them.
 
 After reference collection:
 
