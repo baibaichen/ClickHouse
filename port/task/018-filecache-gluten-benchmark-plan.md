@@ -1356,7 +1356,7 @@ validate_benchmark_binary "$BIN"
 : "${QUERY_ID:=0}"
 : "${ROUNDS:=3}"
 : "${NUM_SPLITS_PER_FILE:=1}"
-: "${NUM_DRIVERS:=4}"
+: "${NUM_DRIVERS:=1}"
 : "${FILECACHE_DISK_GIB:=58}"
 : "${QUERY_MEM_GB:=32}"
 : "${CACHE_GB:=32}"
@@ -2084,6 +2084,11 @@ done
 018-C is green. Every benchmark binary path is under a RelWithDebInfo or Release
 build directory; a Debug binary invalidates the result.
 
+**Driver constraint:** H2 uses one driver. A rejected four-driver run produced
+non-equivalent TPCH results (q01 reported 16 rows instead of 4, and aggregate
+rows/hashes varied across rounds/backends). Performance evidence is valid only
+when every round preserves the accepted one-driver rows/hash for its query.
+
 ### Wave 4: TPCH performance (smoke q01/q09/q21, then full 22)
 
 ```bash
@@ -2095,7 +2100,7 @@ for Q in 1 9 21; do
     --query_id=$Q \
     --rounds=3 \
     --num_splits_per_file=1 \
-    --num_drivers=4 \
+    --num_drivers=1 \
     --cache_gb=0 \
     --query_mem_gb=32 \
     --filecache_root=tmp/fc_tpch_w4 \
@@ -2113,7 +2118,7 @@ done
   --query_id=0 \
   --rounds=3 \
   --num_splits_per_file=1 \
-  --num_drivers=4 \
+  --num_drivers=1 \
   --cache_gb=0 \
   --query_mem_gb=32 \
   --filecache_root=tmp/fc_tpch_w4_full \
@@ -2133,7 +2138,7 @@ BIN=/root/oss/velox/_build/relwithdebinfo/velox/benchmarks/tpch/velox_tpch_bench
 TPCH_DATA="${TPCH_DATA:?set TPCH_DATA to the TPCH Parquet directory}" \
 OUT_DIR="$(pwd)/tmp/tpch_ab_results" \
 CACHE_ROOT="$(pwd)/tmp/velox_tpch_ab_cache" \
-QUERY_ID=0 ROUNDS=3 NUM_SPLITS_PER_FILE=1 NUM_DRIVERS=4 \
+QUERY_ID=0 ROUNDS=3 NUM_SPLITS_PER_FILE=1 NUM_DRIVERS=1 \
 FILECACHE_DISK_GIB=80 QUERY_MEM_GB=32 CACHE_GB=32 CACHE_MEM_GB=4 \
   bash velox/benchmarks/scripts/run_tpch_ab.sh \
   > /root/oss/velox/_build/relwithdebinfo/test_018h2_ab.log 2>&1
@@ -2151,8 +2156,9 @@ echo "TPCH A/B exit: $?"
 **Gate (018-H2):** 018-P approval present and 018-C green; every benchmark
 binary path is under a RelWithDebInfo or Release build directory (any Debug
 binary invalidates the result); all authorized TPCH waves exit 0, CSVs are
-collected, and no exception or timeout occurs. No hard regression threshold is
-applied; the noise band comes from within-run variance.
+collected, every round's rows/hash matches accepted correctness, and no
+exception or timeout occurs. No hard regression threshold is applied; the noise
+band comes from within-run variance.
 
 ---
 
