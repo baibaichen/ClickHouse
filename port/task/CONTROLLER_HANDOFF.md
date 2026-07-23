@@ -306,8 +306,10 @@ Continuous execution target:
   018-P and authorized TPCH with
   `/root/oss/test-data/tpch-sf100-parquet-double`; Task 018-C is next, followed
   by 018-H2 only after correctness is green. Task 018-C is now accepted at
-  Velox `683b56076d` after all 22×3 SF100 runs matched; 018-H2 is next. After
-  complete Task 018, the next mandatory stop is Review 5.
+  Velox `683b56076d` after all 22×3 SF100 runs matched. The real Hive FCBI
+  adapter is accepted at `609cf21da9`; final one-driver H2 at `4f3cb3c047`
+  passed 276/276 gates and records 2.5% warm overhead versus Direct and 8.1%
+  versus CBI. Task 018 is accepted. The pipeline is stopped for Review 5.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
   continues with Task 018, Review 5, Task 017B, then Task 019 Gluten/Spark
   integration. Task 019 is blocked on its prerequisites and compatible Velox

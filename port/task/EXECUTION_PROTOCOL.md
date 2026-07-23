@@ -14,7 +14,7 @@ Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
                        The three executable plans are independently reviewed.
                        Task 017A is accepted at Velox a856d836c.
                        Task 018 non-TPCH work is accepted and 018-P is approved.
-                       Task 018-C correctness is accepted; 018-H2 is next.
+                       Task 018 is accepted; the pipeline is stopped for Review 5.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
