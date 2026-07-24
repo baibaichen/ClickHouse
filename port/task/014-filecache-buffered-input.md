@@ -207,6 +207,73 @@ receipt format in `EXECUTION_PROTOCOL.md`, set
 `worker_status: ready_for_controller`, and stop with all changes unstaged and
 uncommitted.
 
+### Review-5 user decision: fix rename/open race in this corrective
+
+```text
+decision_date: 2026-07-24
+finding_id: G-CACHEOPEN-RENAME-01
+decision: fix_now_in_task_014
+```
+
+`getCacheReadBuffer` is reachable for `DOWNLOADING`,
+`PARTIALLY_DOWNLOADED`, and `PARTIALLY_DOWNLOADED_NO_CONTINUATION` segments
+when the requested offset is inside the downloaded prefix. It is not restricted
+to a segment that was already `DOWNLOADED`.
+
+Required ClickHouse behavior:
+
+```text
+CachedOnDiskReadBufferFromFile.cpp:321-395
+  compute the current path;
+  attempt the local open;
+  only on FILE_DOESNT_EXIST:
+    recompute the path while holding the FileSegment lock;
+    if unchanged, rethrow;
+    if changed by completion/rename, retry the new path once.
+```
+
+Velox `LocalReadFile` maps `ENOENT` to a `VeloxException` whose
+`errorCode()` is `velox::error_code::kFileNotFound`
+(`velox/common/file/LocalFile.cpp:54-71`). Do not catch/retry arbitrary open
+errors and do not add a generic fallback.
+
+Extend the declared Velox file scope with:
+
+```text
+<velox_repo>/velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp
+```
+
+Add one narrow `TestValue` observation in `FileCacheInputStream.cpp` after the
+cache path is computed and before the first local open. The hook is test-only
+coordination; it must not change release behavior.
+
+Deterministic RED:
+
+1. Create a partially downloaded segment whose local path is `<offset>`.
+2. Start a fresh cached-prefix reader. At the hook, record that it has computed
+   the old path and block only that first hook invocation.
+3. Let another reader complete the segment and rename it to
+   `<offset>_<size>`.
+4. Release the blocked reader. Pre-fix it opens the disappeared old path and
+   throws `kFileNotFound`.
+5. GREEN retries the path observed under the segment lock and returns the
+   correct cached bytes.
+
+The callback must use condition-based coordination and must not sleep. It must
+not block the completing reader's later hook invocation.
+
+Mutation:
+
+```text
+remove/neutralize the changed-path retry while retaining the deterministic hook;
+the rename/open race test must fail with kFileNotFound;
+restore and rerun final mono/non-mono/accumulated gates.
+```
+
+Worker attempt 6 must preserve the already-green external-truncation fix and
+append a fresh canonical result section. No existing receipt section may be
+edited.
+
 ## Pre-execution source-contract amendment
 
 This section supersedes the placeholder fixture/tests and every Task 007 assumption

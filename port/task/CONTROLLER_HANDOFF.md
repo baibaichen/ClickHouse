@@ -308,6 +308,19 @@ Historical accepted-task context (superseded by Review-5 items 19-22 above):
         `port/task/014-filecache-buffered-input.md`; the reopened Controller
         audit and next Worker handoff live in
         `port/task/result/014-filecache-buffered-input-result.md`.
+        Worker attempt 4 implemented the behavior and final Controller
+        production gates are green, but Controller review 4 records
+        `changes_requested`: its cited post-review mutation log is actually
+        green and its full-path underscore assertion is false-green-prone.
+        Worker attempt 5 corrected both evidence defects; external-truncation
+        RED/mutation/final mono/non-mono gates are now valid. Controller review
+        5 is `waiting_for_user` on a new impacted-surface finding:
+        `G-CACHEOPEN-RENAME-01`. `getCacheReadBuffer` is reachable for partial
+        `DOWNLOADING` segments, so its path can be renamed away before open;
+        ClickHouse retries the new path, Velox does not. The user decided
+        `fix_now_in_task_014` on 2026-07-24. The task/result carry the structured
+        `kFileNotFound` retry and deterministic attempt-6 RED contract. Current
+        Velox changes remain unstaged and uncommitted; redispatch attempt 6.
     22. Task 017B has an approved design at
         `port/design/filecache-task-017b-logging-exception-stack.md`, but its
         implementation plan is stale and `task_017b_authorized` remains false.
