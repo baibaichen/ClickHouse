@@ -7,16 +7,28 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
-                       E2E cases and the checked seek benchmark.
-Next dispatch order:   Task 017A -> Task 018 -> four-driver addendum ->
+Current state:        Review 5 is in progress and blocked after its Review-4
+                       closure pass. The approved Task-012 `folly::call_once`
+                       corrective is accepted at Velox `26325e8a32`.
+Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
                        Review 5 -> Task 017B -> Task 019 Gluten/Spark integration.
                        Task 017A/018 executable plans are independently reviewed;
                        the Task 017B plan is stale and requires rewrite/review.
                        Task 017A is accepted at Velox a856d836c.
                        Task 018 non-TPCH work is accepted and 018-P is approved.
                        Task 018's one-driver baseline and four-driver addendum
-                       are accepted; the pipeline is stopped for Review 5.
+                       are accepted. Review 5 is now stopped before a fresh
+                       Task-014 external-truncation corrective Worker.
+Review 5 blockers:    Task 014 `G-CACHEBUF-01` is approved but not implemented.
+                       `R2-D4` and `R2-D6` remain pending by user decision.
+                       Task 017B remains unauthorized.
+Immediate next dispatch:
+                       a fresh Task-014 corrective Worker using the canonical
+                       numbered task/result handoff. Do not treat the historical
+                       local branch `11111111111111111111111111111111111`
+                       (`d83660e638`, parent `feef5972ff`, merge-base
+                       `43a9e6f75f` with current accepted head) as an accepted
+                       or current-baseline implementation.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.

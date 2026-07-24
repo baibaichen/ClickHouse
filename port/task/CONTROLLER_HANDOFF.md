@@ -74,7 +74,7 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after Task 015 acceptance:
+Current verified snapshot after the Review-5 Task-012 corrective:
 
 environment_profile: root-oss
 
@@ -84,8 +84,8 @@ environment_profile: root-oss
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    43a9e6f75ffb94be38836b45fd476325665f50be (Task-015 direct-I/O adapter
-    contract correction and fresh mono/non-mono accumulated rebuild)
+    26325e8a32108258d737a820f928d93662a3d7c0 (Review-5 Task-012
+    `folly::call_once` corrective)
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -154,7 +154,7 @@ environment_profile: root-oss
    ordinary-Release `chassert` non-evaluation of both expression and message;
    and deferring non-empty current-exception formatting to Task 017B.
 
-Current task:
+Historical accepted-task context (superseded by Review-5 items 19-22 above):
 
 - Task 003 B1/B2 is corrected and accepted.
 - Velox is clean at `b92a0ae3a96493aa63df44bc38514c68003db28e`.
@@ -282,6 +282,31 @@ Current task:
         018-E/F/G to Task 019. Task 019 is the full Gluten integration owner and
         begins with a compatible-Velox hard gate; the uncommitted Gluten WIP is
         preserved but is not Task-018 work.
+    19. Review 5 baseline and Review-4 closure evidence are committed under
+        `port/task/fullreview/root-oss/5/evidence/`. The Task-012
+        `folly::call_once` corrective is accepted and pushed at Velox
+        `26325e8a32`; its Controller receipt/evidence commit is ClickHouse
+        `73449b8366c`. Both `filecache` and `ch-filecache` are clean and pushed.
+    20. Review 5 remains blocked. `R2-D4` (Manager mutation serialization /
+        transactional reload) and `R2-D6` (reader detach / query-pool lifetime)
+        were explicitly kept `pending` by the user on 2026-07-24.
+    21. The only approved-but-absent corrective is Task 014
+        `G-CACHEBUF-01`: a size-suffixed, terminal cache file truncated outside
+        the process currently reaches a short local `pread` exception instead
+        of bypassing the broken cache file and re-fetching source bytes. The
+        existing E2E named `TruncatedOrInvalidCachedDataSourceRecovery` only
+        removes the key and refills, so it is false-green for physical
+        truncation. A historical local-only Velox branch
+        `11111111111111111111111111111111111` contains commit `d83660e638`
+        (`Task 014: Recover from externally truncated cache files`), whose
+        parent is `feef5972ff` and whose merge-base with current accepted head
+        is Review-4 commit `43a9e6f75f`. It has no canonical Worker result, no
+        Controller acceptance, and is not based on current accepted head
+        `26325e8a32`; treat it as abandoned evidence only and dispatch a fresh
+        Task-014 Worker from the current baseline.
+    22. Task 017B has an approved design at
+        `port/design/filecache-task-017b-logging-exception-stack.md`, but its
+        implementation plan is stale and `task_017b_authorized` remains false.
 - Tasks 003-015 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -316,10 +341,14 @@ Continuous execution target:
   passed 276/276 gates and records 2.5% warm overhead versus Direct and 8.1%
   versus CBI. The q15-fixed four-driver addendum at `7c52b47ecb` passed
   198/198 result gates and records 6.2% local warm overhead versus Direct and
-  11.6% versus CBI. Task 018 is accepted; the pipeline is stopped for Review 5.
+  11.6% versus CBI. Task 018 is accepted. Review 5 Task 1 froze the baseline;
+  Task 2 closed Review-4 debt as far as current decisions permit. Its
+  Task-012 `folly::call_once` corrective is accepted at Velox `26325e8a32`.
+  Review 5 is stopped before a fresh Task-014 external-truncation corrective
+  Worker; `R2-D4` and `R2-D6` remain pending.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
-  continues with Review 5, Task 017B, then Task 019 Gluten/Spark integration.
-  Task 019 is blocked on its prerequisites and compatible Velox baseline.
+  continues with Task 014 corrective, resumed Review 5, Task 017B, then Task
+  019 Gluten/Spark integration. Task 017B and Task 019 are blocked.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
