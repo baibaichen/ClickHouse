@@ -631,3 +631,51 @@ Blocker/Major findings: 0
 ```
 
 No Velox source changed. B4 is closed.
+
+## Post-acceptance contract audit 2 — Review-5 external truncation
+
+```text
+controller_status: reopened_by_contract_audit
+environment_profile: root-oss
+task: 014
+finding_id: G-CACHEBUF-01
+next_state: worker_running
+```
+
+Review 5 confirmed that the approved external-truncation self-heal is absent
+from current accepted Velox head `26325e8a32`.
+
+Current failure:
+
+```text
+a size-suffixed cache segment is fully downloaded;
+its physical file is truncated outside the process;
+FileCacheInputStream still selects CACHED and sets the recorded downloaded size
+  as the local read bound;
+LocalReadFile receives a short pread and throws instead of re-fetching source
+  bytes.
+```
+
+The existing
+`FileCacheE2ETest.TruncatedOrInvalidCachedDataSourceRecovery` removes the cache
+key through the public API. It does not truncate the physical cache file and
+cannot satisfy this contract.
+
+Required corrective scope and RED/GREEN/mutation evidence are binding in
+`port/task/014-filecache-buffered-input.md` under
+`## Review-5 corrective: external-truncation self-heal`.
+
+A historical local-only Velox branch
+`11111111111111111111111111111111111` contains old commit `d83660e638`, but it
+has no canonical Worker receipt or Controller acceptance and does not descend
+from current accepted head. It is not the current Worker attempt and must not
+be cherry-picked as acceptance evidence.
+
+Redispatch:
+
+```text
+same task: 014
+fresh Worker: required
+baseline: 26325e8a32
+result handoff: this file
+```

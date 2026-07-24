@@ -304,6 +304,10 @@ Historical accepted-task context (superseded by Review-5 items 19-22 above):
         Controller acceptance, and is not based on current accepted head
         `26325e8a32`; treat it as abandoned evidence only and dispatch a fresh
         Task-014 Worker from the current baseline.
+        The binding corrective is now recorded in
+        `port/task/014-filecache-buffered-input.md`; the reopened Controller
+        audit and next Worker handoff live in
+        `port/task/result/014-filecache-buffered-input-result.md`.
     22. Task 017B has an approved design at
         `port/design/filecache-task-017b-logging-exception-stack.md`, but its
         implementation plan is stale and `task_017b_authorized` remains false.

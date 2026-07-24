@@ -66,6 +66,147 @@ Stop as `blocked` if Task 012's B4 corrective work is not yet
 `ready_for_controller`/`accepted`: Task 014's confirmation depends on that
 test existing and passing first.
 
+## Review-5 corrective: external-truncation self-heal
+
+```text
+controller_status: reopened_by_contract_audit
+environment_profile: root-oss
+reopened_by: port/task/fullreview/root-oss/5/evidence/review-4-closure.md
+decision: G-CACHEBUF-01 approve_fix
+result: port/task/result/014-filecache-buffered-input-result.md
+```
+
+This section is the only active Task-014 implementation scope. It supersedes
+the old placeholder `getCacheReadBuffer` text below but does not reopen B1/B4
+or any accepted reader-handoff behavior.
+
+### Contract and root cause
+
+ClickHouse source of truth:
+
+```text
+src/Disks/IO/CachedOnDiskReadBufferFromFile.cpp:315-477
+  getCacheReadBuffer opens the local cache file, then for a size-suffixed
+  DOWNLOADED/DETACHED segment compares physical size with downloaded size.
+src/Disks/IO/CachedOnDiskReadBufferFromFile.cpp:589-603
+  a null cache reader changes CACHED to REMOTE_FS_READ_BYPASS_CACHE.
+```
+
+Current Velox gap:
+
+```text
+velox/ch/Disks/IO/FileCacheInputStream.cpp:313-329
+  getCacheReadBuffer returns the local reader without a size check.
+velox/ch/Disks/IO/FileCacheInputStream.cpp:383-400
+  the CACHED branch has no null-reader remote-bypass transition.
+velox/ch/Disks/IO/FileCacheInputStream.cpp:513-524
+  the local read bound is still the recorded downloaded size.
+velox/common/file/LocalFile.cpp:204-222
+  an externally shortened file produces a short pread and an exception.
+```
+
+The existing
+`FileCacheE2ETest.TruncatedOrInvalidCachedDataSourceRecovery` is false-green
+for physical truncation: it calls `removeKeyIfExists` and proves an ordinary
+miss/refill, but never truncates a cache file.
+
+Required behavior:
+
+1. Observe `fileSegment.state()` and `hasSizeInFileName()` before comparing
+   physical and recorded sizes.
+2. Apply recovery only when the size suffix is trusted and state is
+   `DOWNLOADED` or `DETACHED`. A downloading/partial or legacy non-suffixed
+   file may legitimately be shorter and must not bypass.
+3. If physical size is less than `getDownloadedSize`, discard the local reader
+   for this stream and switch to `REMOTE_FS_READ_BYPASS_CACHE`.
+   Intercept the null result inside the CACHED branch before constructing the
+   returned state: a state with `reader == nullptr` and
+   `readType == CACHED` would dereference null in
+   `prepareReadFromFileSegmentState`.
+4. Return complete source bytes and preserve the original cache metadata.
+   Do not remove or detach the broken segment from this read path: doing so
+   would invalidate its priority entry without the cache-priority lock and can
+   race `tryIncreasePriority`.
+5. A normal complete cache file remains on the CACHED path.
+6. Use the existing `LOG_WARNING` compatibility call shape for attribution,
+   but do not claim visible warning output before Task 017B replaces the logger
+   shim.
+
+The manager-owned `OpenedFileCache` is not currently used by
+`FileCacheFactory`'s production read-file factory. Wiring it is separate
+Task-013/Review-5 impacted-surface debt and is excluded here. The corrective
+must be correct for the current fresh-open factory and must not claim that
+Velox's cached `ReadFile::size` is equivalent to ClickHouse's live `fstat`.
+Use `readInfo_.cacheReader->tryGetFileSize()` for the current accessible
+physical-size value; the wrapped `readFile_` is private and does not justify a
+scope expansion.
+
+### File scope
+
+Modify only:
+
+```text
+<velox_repo>/velox/ch/Disks/IO/FileCacheInputStream.cpp
+<velox_repo>/velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp
+<clickhouse_repo>/port/task/result/014-filecache-buffered-input-result.md
+```
+
+If another production file is required, stop as `blocked` and record why
+instead of expanding scope.
+
+### TDD and false-green evidence
+
+RED first:
+
+1. Add a real E2E case that fills a segment, obtains its actual
+   size-suffixed cache path, truncates that physical file, and reads through a
+   fresh `FileCacheInputStream`.
+2. Require the full original source bytes and positive source `pread` calls.
+3. Run against pre-change production code and capture the expected short-local-
+   `pread` exception in a unique `root-oss` log.
+
+GREEN:
+
+1. Implement the minimal terminal size-suffix check and null-reader bypass in
+   `FileCacheInputStream.cpp`.
+2. Require the truncation E2E and the existing removed-key recovery case to
+   pass.
+3. Require a normal complete cached read to remain a cache hit with zero source
+   `pread` calls on the second read.
+
+Mutation:
+
+```text
+Temporarily remove/bypass the physical-size check while preserving the test.
+The real truncation E2E must return to the short-pread exception or fail its
+full-byte/source-read assertions. Restore and rerun GREEN.
+```
+
+### Build and handoff gates
+
+Follow `ENVIRONMENT.md` profile `root-oss`, source `<velox_env>`, use no Ninja
+`-j`, and redirect every command to a unique log under the corresponding build
+directory.
+
+Required gates:
+
+```text
+mono:
+  build and run the selected FileCache E2E cases
+non-mono:
+  build and run the same selected FileCache E2E cases
+RED and mutation:
+  mono evidence is sufficient
+git:
+  diff --check clean; only declared files dirty
+```
+
+The Worker must append a new `Worker attempt` to
+`port/task/result/014-filecache-buffered-input-result.md` using the exact
+receipt format in `EXECUTION_PROTOCOL.md`, set
+`worker_status: ready_for_controller`, and stop with all changes unstaged and
+uncommitted.
+
 ## Pre-execution source-contract amendment
 
 This section supersedes the placeholder fixture/tests and every Task 007 assumption
