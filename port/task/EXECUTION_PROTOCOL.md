@@ -7,27 +7,28 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Review 5 is in progress after its Review-4 closure pass.
-                       The approved Task-012 `folly::call_once`
-                       corrective is accepted at Velox `26325e8a32`; the
-                       Task-014 truncation/rename corrective is accepted at
-                       Velox `cda6c03703`.
+Current state:        Review 5 is accepted.
+                       ClickHouse head: 31aa159dd61 (ch-filecache, clean).
+                       Velox head: cda6c03703 (filecache, clean).
+                       Verdict file:
+                         port/task/fullreview/root-oss/5/003-018-whole-port-review.md
+                       task_017b_authorized: true
+                       implementation_authorized: false (stale plan must be
+                         rewritten and independently reviewed first)
 Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
-                       Review 5 -> Task 017B -> Task 019 Gluten/Spark integration.
-                       Task 017A/018 executable plans are independently reviewed;
-                       the Task 017B plan is stale and requires rewrite/review.
-                       Task 017A is accepted at Velox a856d836c.
-                       Task 018 non-TPCH work is accepted and 018-P is approved.
-                       Task 018's one-driver baseline and four-driver addendum
-                       are accepted. Review 5 corrective implementation is
-                       complete and its synthesis may resume.
+                       Review 5 [ACCEPTED] -> Task 017B -> Task 019
+                       Gluten/Spark integration.
 Non-blocking debt:    `R2-D4` and `R2-D6` remain pending; their six rows remain
                        UNPROVEN in the 215-row denominator by user decision.
-                       Task 017B remains unauthorized until final Review 5,
-                       not because of D4/D6.
-Immediate next dispatch:
-                       resume Review 5 Task 3 integrated tracing, then Task 4
-                       independent verdict.
+                       These are non-blocking forward debt and do not gate 017B.
+Immediate next action:
+                       Task 017B written-spec review of the binding design at
+                       port/design/filecache-task-017b-logging-exception-stack.md,
+                       then stale plan rewrite of
+                       port/task/017b-filecache-logging-exception-stack-plan.md,
+                       then independent plan review, then explicit Controller
+                       authorization of implementation_authorized: true.
+                       Do not begin 017B implementation before that authorization.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.

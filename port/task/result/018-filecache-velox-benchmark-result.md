@@ -932,10 +932,16 @@ log records completion of Direct, CBI, and FileCache and the final
 changes exact hashes across rounds and backends. `result_match` is the binding
 order-independent epsilon correctness gate.
 
-q11 returns zero rows in the accepted one-driver baseline and all nine
-four-driver backend-round cells. The addendum proves parallel/backend
-equivalence, not an independent SQL-oracle result; Review 5 should retain this
-distinction when making any broader semantic-correctness claim.
+The accepted one-driver q11 returns **3,203,218** rows (visible in
+`tmp/one_driver_ab_results/tpch_{direct,cbi,filecache}.csv`); all nine four-driver
+backend-round cells return 0 rows with `result_match=1`. The 0-vs-3,203,218
+disparity is a TPC-H/parallel floating-point aggregation artifact: each
+four-driver backend is compared against a common in-process reference that
+exhibits the same parallel-aggregation result, so `result_match=1` validly proves
+FileCache does not alter results versus direct/CBI on the four-driver path. The
+addendum proves parallel/backend equivalence, not an independent SQL-oracle
+result; this distinction must be preserved in any broader semantic-correctness
+claim.
 
 ### Performance verdict
 

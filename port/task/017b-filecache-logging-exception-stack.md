@@ -5,10 +5,12 @@
 ```text
 environment_profile: root-oss
 disposition: design_approved_plan_revision_required
+review_5_status: accepted
+task_017b_authorized: true
 implementation_authorized: false
-prerequisite: Task 018 four-driver addendum and Review 5 accepted
+prerequisite: Task 018 four-driver addendum and Review 5 accepted [DONE]
 task_017a_dependency: none
-execution_after: accepted Review 5 for Tasks 003-018
+execution_after: accepted Review 5 for Tasks 003-018 [DONE]
 task_019_dependency: Task 019 implementation requires accepted Task 017B
 implementation_plan_status: stale_do_not_execute
 implementation_plan: port/task/017b-filecache-logging-exception-stack-plan.md

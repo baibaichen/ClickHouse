@@ -74,18 +74,42 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after the Review-5 Task-012 corrective:
+Current verified snapshot after Review 5 acceptance:
 
 environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
 - ClickHouse accepted receipt HEAD:
-    the latest planning/receipt commit containing this handoff update; resolve
-    with `git log -1 --oneline` because a commit cannot contain its own SHA.
+    31aa159dd61 (ch-filecache, clean, 0/0 vs baibaichen/ch-filecache at Review 5
+    acceptance; resolve with `git log -1 --oneline` if this handoff is updated by
+    a subsequent commit)
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
     cda6c03703cf4ed0b1b515465915dbfd599bcb6c (Review-5 Task-014
-    truncation/rename corrective)
+    truncation/rename corrective; clean, 0/0 vs baibaichen/filecache)
+- Review 5 verdict: accepted
+    review_scope:       Tasks 003-018
+    verdict_file:       port/task/fullreview/root-oss/5/003-018-whole-port-review.md
+    decisions_file:     port/task/fullreview/root-oss/5/003-018-review-decisions-needed.md
+    ch_head:            31aa159dd61
+    velox_head:         cda6c03703
+    critical_findings:  0
+    important_findings: 0
+    low_findings:       3 (all non-blocking; Low-2 receipt misstatement corrected)
+    unproven_rows:      6 (R2-D4 × 4, R2-D6 × 2 — non-blocking forward debt)
+    task_017b_authorized: true
+    implementation_authorized: false (stale plan must be rewritten first)
+- Task 017B status:
+    task_017b_authorized: true (Review 5 accepted)
+    implementation_authorized: false
+    implementation_plan_status: stale_do_not_execute
+    next required steps: (1) written-spec review of binding design at
+      port/design/filecache-task-017b-logging-exception-stack.md,
+      (2) stale plan rewrite of
+      port/task/017b-filecache-logging-exception-stack-plan.md,
+      (3) independent plan review,
+      (4) explicit Controller authorization of implementation_authorized: true.
+- Both branches are clean and pushed at the accepted heads above.
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -304,7 +328,12 @@ Historical accepted-task context (superseded by Review-5 items 19-22 above):
     22. Task 017B has an approved design at
         `port/design/filecache-task-017b-logging-exception-stack.md`, but its
         implementation plan is stale and `task_017b_authorized` remains false.
-- Tasks 003-015 are accepted.
+    23. Review 5 is accepted (ch `31aa159dd61`, velox `cda6c03703`). Verdict: 0
+        critical, 0 important, 3 Low non-blocking (Low-2 receipt q11 misstatement
+        corrected). Six D4/D6 UNPROVEN rows preserved. `task_017b_authorized:
+        true`; `implementation_authorized: false`; stale plan must be rewritten
+        and independently reviewed before implementation.
+- Tasks 003-015, Task 017A, Task 018, and Review 5 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
 Resume procedure:
@@ -342,11 +371,16 @@ Continuous execution target:
   Task 2 closed Review-4 debt as far as current decisions permit. Its
   Task-012 `folly::call_once` corrective is accepted at Velox `26325e8a32`.
   Task-014 external-truncation/rename corrective is accepted at Velox
-  `cda6c03703`. Review 5 may resume integrated tracing and final independent
-  review. D4/D6 remain visible but do not block acceptance.
-- Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
-  continues with resumed Review 5, Task 017B, then Task 019 Gluten/Spark
-  integration. Task 017B and Task 019 are blocked.
+  `cda6c03703`. Review 5 is **accepted** (ch `31aa159dd61`, velox `cda6c03703`;
+  0 critical, 0 important, 3 Low non-blocking; 6 D4/D6 UNPROVEN rows preserved
+  as non-blocking forward debt; `task_017b_authorized: true`).
+- Tasks 003-015, Task 017A, Task 018, and Review 5 are accepted. Task 016 is
+  deferred. Task 017B is authorized (`task_017b_authorized: true`) but
+  `implementation_authorized: false` — stale plan must be rewritten and
+  independently reviewed first. Task 019 remains blocked on Task 017B.
+  Planned order: Task 017B written-spec review → stale plan rewrite →
+  independent plan review → Controller authorization of
+  `implementation_authorized: true` → Task 017B implementation → Task 019.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
