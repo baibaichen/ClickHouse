@@ -14,7 +14,8 @@
 Environment profile: root-oss (port/task/ENVIRONMENT.md). Name it and use only its values.
 Binding design: port/design/filecache-task-018-019-hard-split.md.
 Task 019 is the full Gluten integration owner. Task 018 is Velox-only and does not build Gluten.
-Prerequisites (all accepted before dispatch): Task 017A, Velox-only Task 018, Review 5, Task 017B.
+Prerequisites (all accepted before dispatch): Task 017A, the Velox-only Task 018
+four-driver addendum, Review 5, and Task 017B.
 019-A (compatible Velox baseline) is a HARD GATE. 019-B..019-F do not start until 019-A is green.
 No Gluten source fallback, feature removal, or out-of-scope compatibility shim may hide a mismatched Velox baseline.
 Worker never stages or commits; Controller reviews and commits accepted work.

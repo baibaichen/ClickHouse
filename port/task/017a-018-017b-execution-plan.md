@@ -2,9 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Execute the remaining mainline `FileCache` work in the binding order `017A -> 018 -> Review 5 -> 017B -> 019`, with Task 018 Velox-only and Task 019 owning all Gluten/Spark integration.
+**Goal:** Execute the remaining mainline `FileCache` work in the binding order
+`017A -> 018 -> Task 018 four-driver addendum -> Review 5 -> 017B -> 019`, with
+Task 018 Velox-only and Task 019 owning all Gluten/Spark integration.
 
-**Architecture:** Task 017A establishes the Velox statistics, cancellation, caller identity, and scheduler APIs. Task 018 consumes those APIs only in Velox correctness and benchmark binaries. Review 5 reviews Tasks 003–018 as a Velox system and closes Review-4 findings; Task 017B then replaces the logging/exception shim. Task 019 finally establishes a Gluten-compatible Velox baseline and owns lifecycle, Builder, metric bridge, native E2E, and Spark E2E.
+**Architecture:** Task 017A establishes the Velox statistics, cancellation,
+caller identity, and scheduler APIs. Task 018 consumes those APIs only in Velox
+correctness and benchmark binaries. The four-driver addendum closes Task 018's
+parallel evidence before Review 5 reviews Tasks 003–018 as a Velox system and
+closes Review-4 findings. Task 017B then replaces the logging/exception shim.
+Task 019 finally establishes a Gluten-compatible Velox baseline and owns
+lifecycle, Builder, metric bridge, native E2E, and Spark E2E.
 
 **Tech Stack:** C++20, Folly, Velox, Gluten C++/JNI/Java/Scala, CMake/Ninja, GoogleTest, Maven/ScalaTest, shell benchmark orchestration.
 
@@ -143,7 +151,8 @@ Expected: Review 5 records an accepted verdict and explicitly authorizes Task
 ### Task 4: Execute and accept Task 017B
 
 **Files:**
-- Execute: `port/task/017b-filecache-logging-exception-stack-plan.md`
+- Binding design: `port/design/filecache-task-017b-logging-exception-stack.md`
+- Execute only after revision: `port/task/017b-filecache-logging-exception-stack-plan.md`
 - Write: `port/task/result/017b-filecache-logging-exception-stack-result.md`
 - Update after acceptance: `port/task/CONTROLLER_HANDOFF.md`
 
@@ -151,27 +160,38 @@ Expected: Review 5 records an accepted verdict and explicitly authorizes Task
 - Consumes: the accepted Velox branch after Task 018
 - Produces: lazy attributed FileCache logging, current-exception formatting, optional Velox stack output, and `noexcept` logging overloads
 
-- [ ] **Step 1: Confirm Task 018 and Review 5 are accepted**
+- [ ] **Step 1: Confirm the Task 018 four-driver addendum and Review 5 are accepted**
 
 ```bash
-grep -n 'controller_status: accepted' \
+grep -n 'parallel_four_driver_addendum_status: accepted' \
   port/task/result/018-filecache-velox-benchmark-result.md
 grep -n 'review_status: accepted' \
   port/task/fullreview/root-oss/5/003-018-whole-port-review.md
 ```
 
-Expected: accepted Task-018 Controller review and accepted Review-5 verdict with
-no unresolved blocking cross-repository finding.
+Expected: accepted Task-018 Controller review including the four-driver
+addendum, and accepted Review-5 verdict with no unresolved blocking
+cross-repository finding.
 
-- [ ] **Step 2: Execute every checkbox in the Task-017B plan**
+- [ ] **Step 2: Require a revised, independently reviewed Task-017B plan**
 
-Use `port/task/017b-filecache-logging-exception-stack-plan.md` as the complete contract.
+The current plan is marked `stale_do_not_execute`. Rewrite it from
+`port/design/filecache-task-017b-logging-exception-stack.md`, complete an
+independent plan review, and obtain explicit Controller authorization. Stop if
+the plan still contains `stale_do_not_execute`.
 
-- [ ] **Step 3: Run the Task-017B review and acceptance gate**
+- [ ] **Step 3: Execute the revised plan**
 
-The Controller verifies lazy argument evaluation, logger attribution, exception
-type/stack formatting, preservation of the original exception, real glog sink
-evidence, CMake linkage, mutations, and mono/non-mono accumulated tests.
+Only a revised plan whose disposition records plan-review acceptance and
+Controller authorization becomes the complete executable contract.
+
+- [ ] **Step 4: Run the Task-017B review and acceptance gate**
+
+The Controller verifies filtered logger/argument non-evaluation for every
+level, enabled severity mapping, zero `LoggerPtr` ownership copy, logger
+attribution, exception type/stack formatting, preservation of the original
+exception, emergency `stderr` evidence, real glog sink evidence, CMake linkage,
+mutations, and mono/non-mono accumulated tests.
 
 Expected: Task 017B is accepted with zero unresolved findings.
 

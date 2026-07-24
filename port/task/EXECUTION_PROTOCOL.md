@@ -9,12 +9,14 @@ cross-task correctness, acceptance, and commits.
 ```text
 Current state:        Tasks 003-015 are accepted. Task 015 closed B1 with 20
                        E2E cases and the checked seek benchmark.
-Next dispatch order:   Task 017A -> Task 018 -> Review 5 -> Task 017B ->
-                       Task 019 Gluten/Spark integration.
-                       The three executable plans are independently reviewed.
+Next dispatch order:   Task 017A -> Task 018 -> four-driver addendum ->
+                       Review 5 -> Task 017B -> Task 019 Gluten/Spark integration.
+                       Task 017A/018 executable plans are independently reviewed;
+                       the Task 017B plan is stale and requires rewrite/review.
                        Task 017A is accepted at Velox a856d836c.
                        Task 018 non-TPCH work is accepted and 018-P is approved.
-                       Task 018 is accepted; the pipeline is stopped for Review 5.
+                       Task 018's one-driver baseline is accepted; the pipeline
+                       is stopped for the four-driver addendum before Review 5.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
@@ -23,7 +25,8 @@ Velox-only and owns correctness, core/buffered-input/wrapper microbenchmarks,
 safe orchestration, and TPCH. Task 017A and Task 018 non-TPCH work are accepted;
 018-P is approved, so 018-C may run before gated 018-H2.
 Task 017B independently owns logging and exception stacks. It executes after
-Task 018 and accepted Review 5, and must be accepted before Task 019.
+the accepted Task 018 four-driver addendum and Review 5, and must be accepted
+before Task 019.
 Task 018 has an additional mandatory stop after all non-TPCH work and before any
 TPCH source copy/build/run. Benchmark evidence must come from RelWithDebInfo or
 Release, never Debug. TPCH resumes only after explicit user approval.
@@ -33,10 +36,11 @@ Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   and explicit stop conditions.
 Deferred Velox work:  Task 016
 Planned Velox work:   `017a-filecache-statistics-cancellation-plan.md`, then
-                      post-018 `017b-filecache-logging-exception-stack-plan.md`
+                      post-018/Review-5 Task 017B from the approved design;
+                      its current implementation plan is stale and non-executable
 Planned Gluten work:  `019-filecache-gluten-integration-spark-e2e-plan.md`
-Deferred Gluten:      Task 019, blocked on Task 018, Review 5, Task 017B, and
-                      the compatible Velox hard gate
+Deferred Gluten:      Task 019, blocked on the Task 018 four-driver addendum,
+                      Review 5, Task 017B, and the compatible Velox hard gate
 ```
 
 Task 011 and Task 012 form one atomic SCC migration stage. Run them

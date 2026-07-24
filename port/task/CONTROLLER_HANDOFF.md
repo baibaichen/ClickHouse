@@ -247,21 +247,26 @@ Current task:
         `baibaichen/ch-filecache`;
     11. Tasks 017A/018 are jointly designed because benchmark output consumes
         Task-017A statistics;
-    12. user-selected execution order is Task 017A -> Task 018 -> Review 5 ->
-        Task 017B -> Task 019;
-    13. executable plans are independently reviewed and stored at
-        `port/task/017a-filecache-statistics-cancellation-plan.md`,
-        `port/task/018-filecache-gluten-benchmark-plan.md`, and
-        `port/task/017b-filecache-logging-exception-stack-plan.md`; the binding
+    12. user-selected execution order is Task 017A -> Task 018 -> accepted
+        four-driver addendum -> Review 5 -> Task 017B -> Task 019;
+    13. independently reviewed executable plans for Tasks 017A and 018 are
+        stored at `port/task/017a-filecache-statistics-cancellation-plan.md` and
+        `port/task/018-filecache-gluten-benchmark-plan.md`. The approved Task
+        017B design is
+        `port/design/filecache-task-017b-logging-exception-stack.md`; its old
+        implementation plan is marked `stale_do_not_execute` and must be
+        rewritten and independently reviewed before authorization. The binding
         orchestration is `port/task/017a-018-017b-execution-plan.md`;
     14. Review 4's unresolved parity items are explicitly non-blocking for Tasks
-        017A/018 by user decision. After Task 018, dispatch stops for Review 5:
-        a Tasks 003–018 whole-port review whose first section closes the Review-4
-        corrective/decision debt. No complete-parity or production-ready claim
-        is allowed before Review 5 acceptance;
-    15. Task 017A is accepted at Velox `a856d836c`. Task 018 non-TPCH work is
-        authorized through 018-P. TPCH retains its separate explicit checkpoint
-        approval; Review 5 and Task 017B retain their gates.
+        017A/018 by user decision. After the accepted Task 018 one-driver
+        baseline, dispatch stops for the four-driver addendum. Only after its
+        Controller acceptance may Review 5 start as a Tasks 003–018 whole-port
+        review whose first section closes the Review-4 corrective/decision debt.
+        No complete-parity or production-ready claim is allowed before Review 5
+        acceptance;
+    15. Task 017A is accepted at Velox `a856d836c`. Task 018's one-driver
+        baseline is accepted; the four-driver addendum remains pending. Review 5
+        and Task 017B are blocked until that addendum is accepted.
     16. Task 018 is Velox-only and stops after non-TPCH correctness,
         micro/wrapper/orchestration work and Waves 1–3. No TPCH source copy,
         target build, data requirement, or run is
@@ -309,11 +314,12 @@ Continuous execution target:
   Velox `683b56076d` after all 22×3 SF100 runs matched. The real Hive FCBI
   adapter is accepted at `609cf21da9`; final one-driver H2 at `4f3cb3c047`
   passed 276/276 gates and records 2.5% warm overhead versus Direct and 8.1%
-  versus CBI. Task 018 is accepted. The pipeline is stopped for Review 5.
+  versus CBI. That Task 018 baseline is accepted; the pipeline is stopped for
+  the four-driver addendum before Review 5.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
-  continues with Task 018, Review 5, Task 017B, then Task 019 Gluten/Spark
-  integration. Task 019 is blocked on its prerequisites and compatible Velox
-  baseline.
+  continues with the Task 018 four-driver addendum, Review 5, Task 017B, then
+  Task 019 Gluten/Spark integration. Task 019 is blocked on its prerequisites
+  and compatible Velox baseline.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

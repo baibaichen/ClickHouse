@@ -13,8 +13,9 @@
 ```text
 Task 018 is Velox-only: no Gluten or Spark integration is in scope.
 Task 017A: accepted; Task 018 consumes its APIs only.
-Task 017B: independent; executes after Task 018 and accepted Review 5 (Review 5
-reviews Tasks 003-018 as a Velox-only FileCache system).
+Task 017B: independent; executes after the accepted Task 018 four-driver
+addendum and Review 5 (Review 5 reviews Tasks 003-018 as a Velox-only
+FileCache system).
 Task 019: excluded from this plan entirely.
 No hard performance regression threshold (baseline only).
 No commit by worker; controller commits accepted subtasks.
@@ -2227,8 +2228,8 @@ and `VeloxBackend`/`FileCacheManager` lifecycle (former 018-E), the
 of that is built, tested, or depended on by Task 018.
 
 ```text
-Task 017B (logging) — independent, executes after Task 018 and accepted Review 5, not a dependency
-Review 5 — reviews Tasks 003-018 as a Velox-only FileCache system after Task 018 is accepted; does not review Task 019 integration
+Task 017B (logging) — independent, executes after the accepted Task 018 four-driver addendum and Review 5, not a dependency
+Review 5 — reviews Tasks 003-018 as a Velox-only FileCache system after the Task 018 four-driver addendum is accepted; does not review Task 019 integration
 pageLoadTimeNs key mismatch — existing bug, out of scope
 Hard performance regression thresholds — baseline only
 Multi-cache configuration — single "default" only

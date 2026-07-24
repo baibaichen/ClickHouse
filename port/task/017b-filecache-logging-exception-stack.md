@@ -4,30 +4,32 @@
 
 ```text
 environment_profile: root-oss
-disposition: implementation_plan_ready_independent
+disposition: design_approved_plan_revision_required
 implementation_authorized: false
-prerequisite: Tasks 003-015 accepted
+prerequisite: Task 018 four-driver addendum and Review 5 accepted
 task_017a_dependency: none
 execution_after: accepted Review 5 for Tasks 003-018
 task_019_dependency: Task 019 implementation requires accepted Task 017B
+implementation_plan_status: stale_do_not_execute
 implementation_plan: port/task/017b-filecache-logging-exception-stack-plan.md
 ```
 
 Binding design:
 
 ```text
-port/design/filecache-task-017-018-joint-design.md
+port/design/filecache-task-017b-logging-exception-stack.md
 ```
 
-The executable contract is:
+There is no executable Task 017B contract yet. The previous plan at:
 
 ```text
 port/task/017b-filecache-logging-exception-stack-plan.md
 ```
 
-It passed independent plan review. Do not implement until Task 018 and Review 5
-are accepted and the Controller records explicit authorization; after
-authorization, the plan supersedes this index.
+is stale and must not be executed. It predates the approved lazy-gate,
+`LOG_TEST`→`VLOG(3)`, ownership-copy, and emergency-logging decisions. Rewrite
+and independently review it from the binding design before requesting
+implementation authorization.
 
 ## Scope
 
@@ -35,19 +37,23 @@ Task 017B owns only:
 
 ```text
 real lazy FileCache logging behind logger_useful.h;
-LOG_TEST non-evaluation;
-trace/debug/info lazy formatting;
-warning/error logger attribution;
+LOG_TEST/trace/debug lazy VLOG formatting;
+info/warning/error native glog severity;
+zero evaluation for every filtered level;
+zero LoggerPtr ownership copy in enabled macros;
+logger attribution;
 current Velox/std/unknown exception formatting;
 optional Velox exception stack output;
 LoggerPtr and function/log-name tryLogCurrentException overloads;
 noexcept behavior that never replaces the original exception;
+emergency stderr diagnostics when exception logging itself fails;
 focused mono/non-mono tests and mutation evidence.
 ```
 
 Task 017B is independent of Task 017A and does not block Task 018. Per user
-decision it is executed after Task 018 and accepted Review 5, and becomes a
-mandatory gate before Task 019 implementation and production readiness.
+decision it is executed after the accepted Task 018 four-driver addendum and
+Review 5, and becomes a mandatory gate before Task 019 implementation and
+production readiness.
 
 ## Exclusions
 

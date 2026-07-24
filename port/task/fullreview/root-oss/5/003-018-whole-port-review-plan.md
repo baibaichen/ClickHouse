@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Review the accepted Tasks 003–018 implementation as one `FileCache` system, close or disposition Review-4 debt, and decide whether Task 017B may start.
+**Goal:** Review the accepted Tasks 003–018 implementation, including the
+accepted Task 018 four-driver addendum, as one `FileCache` system; close or
+disposition Review-4 debt; and decide whether Task 017B may start.
 
 **Architecture:** Freeze exact ClickHouse and Velox baselines after Task 018. First reconcile every unresolved Review-4 decision/finding against the accepted implementation, then trace Task-017A statistics/cancellation/scheduler contracts through the Velox-only Task-018 correctness and benchmark consumers. An independent reviewer validates the evidence and verdict. Gluten integration belongs to Task 019 and is excluded.
 
@@ -10,7 +12,8 @@
 
 ## Global Constraints
 
-- Run only after accepted Task 018 and before Task 017B.
+- Run only after the Task 018 four-driver addendum is accepted and before Task
+  017B.
 - Environment profile is `root-oss`; never mix profile paths.
 - Review CH production source and real callers as the behavior oracle.
 - Read all task-owned tracked and untracked files; default `git diff` is insufficient.
@@ -28,13 +31,24 @@
 **Files:**
 - Create: `port/task/fullreview/root-oss/5/evidence/003-018-baselines.md`
 - Read: `port/task/result/*-result.md`
+- Read: `port/task/result/018-filecache-velox-benchmark-result.md`
 - Read: `port/task/fullreview/root-oss/4/003-015-ch-parity-audit.md`
 
 **Interfaces:**
 - Consumes: accepted implementation and receipt commits through Task 018
 - Produces: immutable baseline table for ClickHouse and Velox
 
-- [ ] **Step 1: Record repository state**
+- [ ] **Step 1: Verify the Task 018 four-driver addendum gate**
+
+```bash
+grep -n 'parallel_four_driver_addendum_status: accepted' \
+  port/task/result/018-filecache-velox-benchmark-result.md
+```
+
+Expected: exactly one accepted marker in a later Controller addendum section.
+Stop while the current marker remains `pending`.
+
+- [ ] **Step 2: Record repository state**
 
 ```bash
 git -C /root/oss/clickhouse --no-pager status --short --branch
@@ -45,7 +59,7 @@ git -C /root/oss/velox --no-pager log -5 --oneline
 
 Expected: exact accepted Task-018 SHAs are identifiable and no unexplained task-owned changes remain.
 
-- [ ] **Step 2: Write the baseline evidence file**
+- [ ] **Step 3: Write the baseline evidence file**
 
 Record repository, branch, accepted HEAD, dirty files, accepted receipt, and
 build/test/benchmark log locations. Stop if any receipt or Git state disagrees.
@@ -146,6 +160,7 @@ The main review file must contain:
 ```text
 review_status: accepted | blocked | waiting_for_user
 review_scope: Tasks 003-018
+parallel_four_driver_addendum_status: accepted | blocked
 review_4_closure_status:
 critical_findings:
 important_findings:
@@ -153,5 +168,6 @@ unproven_rows:
 task_017b_authorized: true | false
 ```
 
-Expected: Task 017B starts only when `review_status: accepted` and
-`task_017b_authorized: true`.
+Expected: Task 017B starts only when
+`parallel_four_driver_addendum_status: accepted`, `review_status: accepted`,
+and `task_017b_authorized: true`.

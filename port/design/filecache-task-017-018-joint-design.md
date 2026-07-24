@@ -45,7 +45,7 @@ the complete Velox correctness/micro/wrapper/TPCH benchmark suite.
 
 Task 019 owns Gluten configuration/lifecycle, Builder selection, the
 RuntimeMetric-to-Spark SQLMetric bridge, native Gluten E2E, and Spark E2E after
-Task 018, Review 5, and Task 017B are accepted.
+Task 018's four-driver addendum, Review 5, and Task 017B are accepted.
 
 ## 2. Existing debts closed by this design
 
@@ -284,45 +284,25 @@ condition-variable registration mechanism is needed.
 
 ## 5. Task 017B: logging and exception stacks
 
-Task 017B is independent of Task 017A and does not block Task 018. By user
-decision Task 018 acceptance is followed by Review 5, a Tasks 003–018 whole-port
-review that also closes Review-4 debt. Task 017B runs only after Review 5 is
-accepted, and must complete before Task 019 implementation and before the overall
-FileCache integration is declared production-ready.
-
-Preserve the current logger type and both exception-logging call shapes:
+The binding Task 017B design is:
 
 ```text
-tryLogCurrentException(LoggerPtr, ...)
-tryLogCurrentException(const char * name, ...)
+port/design/filecache-task-017b-logging-exception-stack.md
 ```
 
-`LOG_TEST` remains non-evaluating. Trace/debug/info formatting is lazy.
-Warning/error messages retain logger-name attribution.
+Task 017B keeps `FileCacheLogger` as a name-holder and uses glog as the backend.
+`LOG_TEST`, `LOG_TRACE`, and `LOG_DEBUG` map to `VLOG(3)`, `VLOG(2)`, and
+`VLOG(1)`; INFO, WARNING, and ERROR use their native glog severities. Every
+filtered record evaluates neither the logger nor any message expression.
 
-`getCurrentExceptionMessage(with_stacktrace)` must:
+`getCurrentExceptionMessage` safely formats the current Velox, standard, or
+unknown exception. `tryLogCurrentException` is `noexcept`, preserves the
+original control flow, uses glog ERROR normally, and attempts a fixed emergency
+`stderr` diagnostic if formatting or primary logging fails.
 
-```text
-format the currently handled Velox/std exception without changing it;
-include the Velox exception stack only when requested and available;
-return a useful fallback for unknown exceptions;
-never throw while formatting/logging an existing exception.
-```
-
-`tryLogCurrentException` is `noexcept`, preserves the original exception, and
-logs through either the supplied `LoggerPtr` or function/log name.
-
-Task 017B owns only:
-
-```text
-logger_useful implementation;
-exception formatting and stack behavior;
-logger macro laziness and attribution;
-focused tests and mutation evidence.
-```
-
-It does not own metrics, cancellation, scheduler, caller identity, Gluten, or
-benchmark changes.
+Task 017B remains independent of Task 017A and does not block Task 018. It runs
+only after the Task 018 four-driver addendum and Review 5 are accepted, and must
+complete before Task 019 implementation and production readiness.
 
 ## 6. Task 017A: caller identity and scheduler
 
@@ -599,14 +579,16 @@ accumulated CTest.
 Focused tests cover:
 
 ```text
-LOG_TEST argument non-evaluation;
-lazy trace/debug/info argument evaluation;
-warning/error logger attribution;
+filtered LOG_TEST/trace/debug/info/warning/error logger and argument non-evaluation;
+combined VLOG and minloglevel filtering;
+enabled severity mapping and logger attribution;
+LoggerPtr ownership-copy prevention;
 VeloxException message with and without stack;
 std::exception formatting;
 unknown-exception fallback;
 LoggerPtr and function-name tryLogCurrentException overloads;
-formatting/logging failure never replaces the original exception.
+formatting/logging failure never replaces the original exception;
+emergency stderr diagnostics.
 ```
 
 Every behavior receives a buildable mutation RED. Task 017B must pass in mono
@@ -651,9 +633,10 @@ No broad catch or success-shaped fallback is introduced.
 1. Rewrite Task 017A and Task 017B from this design.
 2. Implement and independently accept Task 017A.
 3. Implement and independently accept Velox-only Task 018.
-4. Run and accept Review 5 over Tasks 003–018 Velox.
-5. Implement and independently accept Task 017B.
-6. Execute Task 019 compatible-baseline, Gluten, and Spark integration.
+4. Run and independently accept the Task 018 four-driver addendum.
+5. Run and accept Review 5 over Tasks 003–018 Velox.
+6. Implement and independently accept Task 017B.
+7. Execute Task 019 compatible-baseline, Gluten, and Spark integration.
 
 Real kernel `O_DIRECT` integration remains a recorded forward obligation but is
 deferred and does not block Tasks 017-018.

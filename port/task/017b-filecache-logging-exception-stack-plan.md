@@ -1,10 +1,18 @@
-# Task 017B: FileCache Logging and Exception Stack Formatting — Implementation Plan
+# Task 017B: FileCache Logging and Exception Stack Formatting — Stale Implementation Plan
+
+> [!CAUTION]
+> **Do not execute this plan.** The approved binding design is now
+> `port/design/filecache-task-017b-logging-exception-stack.md`. This plan
+> predates the approved `LOG_TEST`→`VLOG(3)` mapping, complete glog filtering
+> gate, zero-ownership-copy contract, native INFO mapping, and emergency
+> `stderr` path. It must be rewritten and independently reviewed before Task
+> 017B can be authorized.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> - **Disposition:** implementation_plan_ready
+> - **Disposition:** stale_do_not_execute
 > - **Task ID:** 017B
-> - **Binding design:** `port/design/filecache-task-017-018-joint-design.md` §5
+> - **Binding design:** `port/design/filecache-task-017b-logging-exception-stack.md`
 > - **Prerequisite:** Tasks 003–018 and Review 5 accepted
 > - **Successor:** Task 019 implementation begins after 017B acceptance
 > - **Execution order:** 017A → 018 → Review 5 → 017B → 019

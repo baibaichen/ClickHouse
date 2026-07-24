@@ -13,7 +13,7 @@ result: port/task/result/017a-filecache-statistics-cancellation-result.md
 prerequisite: Tasks 003-015 accepted
 task_016_dependency: none
 task_018_dependency: Task 018 requires accepted Task 017A
-task_017b_order: Task 017B executes after Task 018 and accepted Review 5
+task_017b_order: Task 017B executes after the Task 018 four-driver addendum and accepted Review 5
 implementation_plan: port/task/017a-filecache-statistics-cancellation-plan.md
 ```
 

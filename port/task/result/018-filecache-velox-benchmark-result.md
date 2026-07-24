@@ -846,3 +846,19 @@ is required for Task-018 acceptance.
 The pre-adapter all-zero-metric result and the non-equivalent four-driver result
 remain preserved but explicitly invalid. Task 018 is complete. Execution stops
 for the mandatory Tasks 003–018 Review 5 before Task 017B.
+
+## Parallel four-driver addendum gate
+
+The accepted one-driver result above remains the Task 018 baseline. Subsequent
+parallel-verifier and q15 work created a candidate four-driver addendum, but the
+full H2 run and Controller review are still pending.
+
+```text
+parallel_four_driver_addendum_status: pending
+review_5_authorized: false
+task_017b_authorized: false
+```
+
+This addendum status supersedes the earlier `next_gate: Review 5` transition.
+Do not begin Review 5 or Task 017B until a later Controller section changes
+`parallel_four_driver_addendum_status` from `pending` to `accepted`.
