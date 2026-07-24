@@ -1497,3 +1497,99 @@ Task 012: Complete concurrency evidence
 
 Task 012's B4 half and B5 are closed. Task 014's caller-order confirmation is
 the remaining B4 gate.
+
+---
+
+## Controller review 8 — Review-5 Task 012 corrective accepted (2026-07-24)
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+scope: Controller focus only (FileCache::initialize — folly::once_flag)
+```
+
+Two independent task reviews were completed. Both returned APPROVED on
+specification compliance and code quality; no Critical or Important findings
+were raised.
+
+### Changes delivered
+
+`FileCache.h` and `FileCache.cpp` on branch `baibaichen/filecache`:
+
+- Removed `std::mutex initialize_mutex` and `bool initialize_completed` fields.
+- Added `folly::once_flag initialize_once_flag` field (includes
+  `folly/synchronization/CallOnce.h`).
+- `FileCache::initialize()` body wrapped in
+  `folly::call_once(initialize_once_flag, [this]{ … })`.
+- All other members preserved: `is_initialized`, `init_mutex`, `init_exception`,
+  `status_file`, async-init path, exception propagation, background-task cleanup.
+
+**Forward observation (non-blocking):** `throwInitExceptionIfNeeded` does not
+check `is_initialized` before re-throwing `init_exception`, so a stale exception
+from a prior failing call could be re-thrown after a successful retry. This is a
+pre-existing behavior identical to ClickHouse production; there are currently no
+Velox callers of `throwInitExceptionIfNeeded`; it is not part of this corrective
+and is recorded as a forward observation only.
+
+### Tests added
+
+Three focused `ControllerTest` cases in `FileCacheTest.cpp` covering the
+`FileCache::initialize()` contract:
+
+```text
+InitializeOnce                    — single caller; body runs exactly once; StatusFile present
+SecondProcessStatusLockFails      — lock fails → VELOX_FAIL; retry after lock release succeeds;
+                                    second retry is a no-op (flag already done)
+ConcurrentInitializersSucceedOnce — N threads race from std::latch barrier;
+                                    body executes exactly once; all callers return clean
+```
+
+No existing tests were modified. No production source outside `FileCache.h` /
+`FileCache.cpp` was changed. No CMake changes.
+
+### Controller evidence
+
+```text
+mono (VELOX_MONO_LIBRARY=ON):
+  focused ControllerTest 3/3 (InitializeOnce, SecondProcessStatusLockFails,
+                               ConcurrentInitializersSucceedOnce)
+
+non-mono (VELOX_MONO_LIBRARY=OFF):
+  focused ControllerTest 3/3
+
+failed/skipped/disabled:
+  0/0/0
+
+mutations (all RED):
+  local mutex/flag restored — structural RED (structural pin: once_flag field absent)
+  std::once_flag substituted — structural RED (folly::basic_once_flag type mismatch)
+  retry semantics removed    — runtime RED (SecondProcessStatusLockFails retry assertions fail)
+
+git diff --check:
+  clean
+```
+
+Coverage claim: focused mono/non-mono only. No full-suite run is required or
+claimed for this corrective; the three new tests cover the `initialize()` contract
+and no production path outside `initialize()` was modified.
+
+### Log paths
+
+```text
+All under /root/oss/velox/:
+  mono build:     _build/debug/build_review5_task012_controller_final.log        EXIT:0
+  mono test:      _build/debug/test_review5_task012_controller_final.log         3/3
+  non-mono build: _build/debug-task017a-nonmono/build_review5_task012_controller_final.log  EXIT:0
+  non-mono test:  _build/debug-task017a-nonmono/test_review5_task012_controller_final.log   3/3
+```
+
+### Accepted Velox commit
+
+```text
+26325e8a32
+Use Folly once guard for FileCache initialization
+```
+
+`L-CALLONCE-01` is closed. `R2-D2` is closed. `D-INIT-01` remains `UNPROVEN`
+solely because `R2-D4` is still pending. Task 014's external-truncation self-heal
+is the remaining approved-but-absent `reopen_task` obligation.
