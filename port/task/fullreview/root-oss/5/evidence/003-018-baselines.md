@@ -190,3 +190,39 @@ _build/debug-task017a-nonmono/test_review5_task012_controller_final.log   3/3
 Effect on parity: `L-CALLONCE-01` moves from UNPROVEN to EQUIVALENT. `R2-D2`
 moves from `reopen_task` to `closed`. See
 `port/task/fullreview/root-oss/5/evidence/review-4-closure.md` §2.1, §3.2, §7.
+
+## 8. Task 014 corrective baseline transition (Review 5, 2026-07-24)
+
+Velox `filecache` advanced from `26325e8a32` to:
+
+```text
+cda6c03703  Task 014: Recover truncated and renamed cache reads
+```
+
+The accepted corrective closes both:
+
+```text
+G-CACHEBUF-01:
+  externally shortened terminal cache files bypass and re-fetch
+G-CACHEOPEN-RENAME-01:
+  an old cache path renamed before open is recomputed under segment lock and
+  retried once only for kFileNotFound
+```
+
+Controller logs:
+
+```text
+/root/oss/velox/_build/debug/test_task014_controller_final_selected.log
+  2/2
+/root/oss/velox/_build/debug/test_task014_controller_final_accumulated.log
+  16/16
+/root/oss/velox/_build/debug-task012-nonmono/test_task014_controller_final_selected.log
+  2/2
+```
+
+Receipt:
+
+```text
+port/task/result/014-filecache-buffered-input-result.md
+  → ## Controller review 7 — Review-5 Task-014 corrective accepted
+```

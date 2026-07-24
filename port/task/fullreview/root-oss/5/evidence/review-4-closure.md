@@ -208,22 +208,22 @@ D6 implementation; user approval not given.
 
 ---
 
-### 2.8 `G-CACHEBUF-01` — UNPROVEN → **reopen_task** (Task 014)
+### 2.8 `G-CACHEBUF-01` — UNPROVEN → **EQUIVALENT**
 
 ```text
 task_owner:    014
 old_status:    UNPROVEN
-new_status:    UNPROVEN (unchanged)
-disposition:   reopen_task
-task_to_reopen: Task 014
-blocking_for_parity: yes
+new_status:    EQUIVALENT
+disposition:   closed
+closed_at:     cda6c03703 (Task 014 corrective, Review 5)
+blocking_for_parity: resolved
 ```
 
 **User decision (Review-4):** `G-CACHEBUF-01 = approve_fix` — restore CH
 external-truncation self-heal (physical file size < recorded downloaded size →
 warn + bypass + re-fetch).
 
-**Verification at frozen head `7c52b47ecb`:**
+**Gap verification at frozen head `7c52b47ecb`:**
 
 `velox/ch/Interpreters/FileCache/FileCache.cpp:395-400`:
 ```cpp
@@ -240,14 +240,28 @@ No size-mismatch check exists. The stale comment at
 discards the broken entry (re-fetching from the source)" — but the code at
 `FileCache.cpp:395-400` performs no such comparison.
 
-This is an approved fix that is source-confirmed absent at the frozen head.
+The gap was source-confirmed absent at the frozen head.
 
-**Required action:** Reopen Task 014; implement the external-truncation
-size-mismatch check in `createCacheReadBuffer` and provide the four-point
-evidence: (1) cache and fully download a segment; (2) truncate the on-disk file;
-(3) prove the next read returns complete remote bytes through the
-warning/bypass/re-fetch path; (4) prove a mutation removing the check makes the
-test fail. Also correct the stale `FileSegment.cpp:1237-1238` comment.
+**Accepted corrective at `cda6c03703`:**
+
+```text
+FileCacheInputStream:
+  size-suffixed DOWNLOADED/DETACHED files compare physical and recorded sizes;
+  a shorter file returns no cache reader and switches to source bypass;
+  cache metadata/priority state is preserved;
+  a concurrent <offset> -> <offset>_<size> rename retries the changed path once,
+  only for kFileNotFound and after recomputing under the segment lock.
+
+Evidence:
+  physical truncation RED and mutation: short pread 4096 vs 8192;
+  rename/open RED and mutation: FILE_NOT_FOUND on old <offset>;
+  Controller final mono selected 2/2, accumulated 16/16, non-mono 2/2;
+  independent final review: APPROVE, no Blocker/Major findings.
+```
+
+This is EQUIVALENT rather than MATCH because the Velox port uses
+`ReadBufferFromVeloxReadFile::tryGetFileSize`, `kFileNotFound`, and a
+`TestValue` seam instead of ClickHouse's file-descriptor/Poco infrastructure.
 
 ---
 
@@ -405,11 +419,12 @@ decision recorded. No denominator row depends on this.
 decision_id:   G-CACHEBUF-01
 user_decision: approve_fix
 implementation_at_frozen_head: ABSENT
-disposition:   reopen_task (Task 014)
+implementation_at_cda6c03703: PRESENT
+disposition:   closed
 ```
 
-See row 2.8 above for full evidence. This is both an UNPROVEN denominator row
-and a decision item; it is treated as one `reopen_task` obligation for Task 014.
+See row 2.8 above for full evidence. The approved fix is implemented and the
+row/decision are closed as one obligation.
 
 ---
 
@@ -650,17 +665,18 @@ Only rows that changed from Review-4 are listed. All other rows are unchanged.
 | `B-WAIT-01` | INTENTIONAL_DEVIATION | EQUIVALENT | Task 017A wired real `folly::CancellationToken` with tested cancellation |
 | `B-CALLERID-01` | INTENTIONAL_DEVIATION | MATCH | Task 017A restored `None:<threadname>:<tid>` format via `folly::getCurrentThreadName()` |
 | `L-CALLONCE-01` | UNPROVEN | EQUIVALENT | Task 012 corrective at `26325e8a32`: `folly::once_flag` / `folly::call_once` implemented; 3/3 focused tests in mono and non-mono |
+| `G-CACHEBUF-01` | UNPROVEN | EQUIVALENT | Task 014 corrective at `cda6c03703`: physical truncation bypass/refetch plus rename/open retry; Controller 2/2, 16/16, 2/2 |
 
 Updated aggregate counts (denominator = 215):
 
-| status | Review-4 | Review-5 frozen | Review-5 Task 012 corrective |
-|---|---|---|---|
-| MATCH | 172 | **173** | **173** |
-| EQUIVALENT | 30 | **31** | **32** |
-| INTENTIONAL_DEVIATION | 5 | **3** | **3** |
-| UNPROVEN | 8 | **8** | **7** |
-| MISSING | 0 | 0 | 0 |
-| **total** | **215** | **215** | **215** |
+| status | Review-4 | Review-5 frozen | Task 012 corrective | Task 014 corrective |
+|---|---|---|---|---|
+| MATCH | 172 | **173** | **173** | **173** |
+| EQUIVALENT | 30 | **31** | **32** | **33** |
+| INTENTIONAL_DEVIATION | 5 | **3** | **3** | **3** |
+| UNPROVEN | 8 | **8** | **7** | **6** |
+| MISSING | 0 | 0 | 0 | 0 |
+| **total** | **215** | **215** | **215** | **215** |
 
 ```text
 Review-5 frozen:
@@ -670,11 +686,15 @@ Review-5 frozen:
 Review-5 Task 012 corrective:
   semantic parity   = (173 + 32) / 215 = 205/215 = 95.3%
   accepted coverage = (173 + 32 +  3) / 215 = 208/215 = 96.7%
+
+Review-5 Task 014 corrective:
+  semantic parity   = (173 + 33) / 215 = 206/215 = 95.8%
+  accepted coverage = (173 + 33 +  3) / 215 = 209/215 = 97.2%
 ```
 
-7 UNPROVEN rows persist. The overall verdict remains **PARITY_BLOCKED**:
-one approved fix is absent from the corrective head (G-CACHEBUF-01 / Task 014)
-and six rows are blocked on pending decisions (D4 × 4, D6 × 2).
+6 UNPROVEN rows persist. The overall verdict remains **PARITY_BLOCKED** solely
+because the governing decisions remain pending (D4 × 4, D6 × 2). No approved
+corrective implementation is absent.
 
 ---
 
@@ -689,7 +709,7 @@ and six rows are blocked on pending decisions (D4 × 4, D6 × 2).
 | `E-UPDCFG-01` | UNPROVEN row | `waiting_for_user` | R2-D4 pending |
 | `P-RB-SETDETACH-01` | UNPROVEN row | `waiting_for_user` | R2-D6 pending |
 | `G-NEXTIMPL-01` | UNPROVEN row | `waiting_for_user` | R2-D6 pending |
-| `G-CACHEBUF-01` | UNPROVEN row + corrective task | `reopen_task` | Task 014 |
+| `G-CACHEBUF-01` | UNPROVEN row + corrective task | `closed` | Task 014 corrective at `cda6c03703` |
 | `B-WAIT-01` | Important INTENTIONAL_DEVIATION | `closed` | 017A resolved |
 | `B-CALLERID-01` | Low INTENTIONAL_DEVIATION | `closed` | 017A resolved |
 | `R2-D1` | user decision | `waiting_for_user` | — |
@@ -701,7 +721,7 @@ and six rows are blocked on pending decisions (D4 × 4, D6 × 2).
 | `R2-D7` | user decision | `waiting_for_user` | — |
 | `R2-D8` | user decision | `waiting_for_user` | — |
 | `T015-D5` | user decision | `waiting_for_user` | — |
-| `G-CACHEBUF-01` | user decision | `reopen_task` | Task 014 (same as row) |
+| `G-CACHEBUF-01` | user decision | `closed` | Task 014 corrective at `cda6c03703` (same obligation as row) |
 | `SD4-EVIDENCE` | user decision + evidence debt | `waiting_for_user` | — |
 | SD8 scheduler recursive-mutex | §9.3 forward obligation | `closed` | 017A resolved |
 | F-USED-01/F-METRIC-01 | §9.3 forward obligation | `closed` | 017A resolved |
@@ -715,33 +735,29 @@ and six rows are blocked on pending decisions (D4 × 4, D6 × 2).
 
 | disposition | count |
 |---|---|
-| `closed` | 6 (B-WAIT-01, B-CALLERID-01, SD8, F-USED-01/F-METRIC-01, L-CALLONCE-01, R2-D2) |
+| `closed` | 7 (B-WAIT-01, B-CALLERID-01, SD8, F-USED-01/F-METRIC-01, L-CALLONCE-01, R2-D2, G-CACHEBUF-01 row+decision) |
 | `accepted_deviation` | 0 |
 | `forward_deferred` | 6 (L-FP-EVICTSEG-01, L-FP-EVICTPUSH-01, P-META-REMOTEMETA-01, FWD-ODIRECT-01, errno producer, StatusFile) |
-| `reopen_task` | 1 (G-CACHEBUF-01 row+decision → Task 014) |
+| `reopen_task` | 0 |
 | `waiting_for_user` | 15 (D-INIT-01, E-GETORCREATE-01, E-CREATE-01, E-UPDCFG-01, P-RB-SETDETACH-01, G-NEXTIMPL-01, R2-D1, R2-D3, R2-D4, R2-D5, R2-D6, R2-D7, R2-D8, T015-D5, SD4-EVIDENCE) |
 
 ### Unique task reopens
 
-| task | reason | items |
-|---|---|---|
-| **Task 014** | external-truncation self-heal approved (`approve_fix`) but absent | G-CACHEBUF-01 row+decision |
+None.
 
 ---
 
 ## 9. Verdict
 
 ```text
-review_5_task_2_verdict:      BLOCKED (Task 014 pending)
-reason:                       one approved-but-absent implementation at corrective head
+review_5_task_2_verdict:      BLOCKED (D4/D6 pending)
+reason:                       six parity rows await user decisions
 reopen_task_012:              closed at 26325e8a32 (Task 012 corrective; L-CALLONCE-01 EQUIVALENT; R2-D2 closed)
-reopen_task_014:              external-truncation self-heal required (G-CACHEBUF-01 approve_fix given; code absent)
+reopen_task_014:              closed at cda6c03703 (G-CACHEBUF-01 EQUIVALENT; G-CACHEOPEN-RENAME-01 closed)
 waiting_for_user_count:       15 items (blocking D4/D6 decisions for 6 UNPROVEN rows)
 parity_verdict:               PARITY_BLOCKED (unchanged)
-unproven_rows:                7 (was 8; L-CALLONCE-01 moved to EQUIVALENT at 26325e8a32)
+unproven_rows:                6 (L-CALLONCE-01 and G-CACHEBUF-01 moved to EQUIVALENT)
 ```
 
-Task 012 `folly::call_once` corrective is closed at `26325e8a32`. Review 5
-must still wait for Task 014 to implement the external-truncation self-heal
-with the required evidence; then resume Review-5 synthesis with updated parity
-classifications for the affected rows.
+Task 012 and Task 014 corrective implementations are closed. Review 5 remains
+blocked only on user-pending D4/D6 for the six remaining UNPROVEN rows.

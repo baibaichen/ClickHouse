@@ -9,7 +9,9 @@ cross-task correctness, acceptance, and commits.
 ```text
 Current state:        Review 5 is in progress and blocked after its Review-4
                        closure pass. The approved Task-012 `folly::call_once`
-                       corrective is accepted at Velox `26325e8a32`.
+                       corrective is accepted at Velox `26325e8a32`; the
+                       Task-014 truncation/rename corrective is accepted at
+                       Velox `cda6c03703`.
 Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
                        Review 5 -> Task 017B -> Task 019 Gluten/Spark integration.
                        Task 017A/018 executable plans are independently reviewed;
@@ -17,18 +19,13 @@ Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
                        Task 017A is accepted at Velox a856d836c.
                        Task 018 non-TPCH work is accepted and 018-P is approved.
                        Task 018's one-driver baseline and four-driver addendum
-                       are accepted. Review 5 is now stopped before a fresh
-                       Task-014 external-truncation corrective Worker.
-Review 5 blockers:    Task 014 `G-CACHEBUF-01` is approved but not implemented.
-                       `R2-D4` and `R2-D6` remain pending by user decision.
+                       are accepted. Review 5 corrective implementation is
+                       complete and its synthesis may resume.
+Review 5 blockers:    `R2-D4` and `R2-D6` remain pending by user decision.
                        Task 017B remains unauthorized.
 Immediate next dispatch:
-                       a fresh Task-014 corrective Worker using the canonical
-                       numbered task/result handoff. Do not treat the historical
-                       local branch `11111111111111111111111111111111111`
-                       (`d83660e638`, parent `feef5972ff`, merge-base
-                       `43a9e6f75f` with current accepted head) as an accepted
-                       or current-baseline implementation.
+                       resume Review 5 Task 3 integrated tracing; final Review-5
+                       acceptance still waits for D4/D6 decisions.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.

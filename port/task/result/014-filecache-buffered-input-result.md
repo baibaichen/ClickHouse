@@ -1063,3 +1063,289 @@ file-scope extension:
 
 Redispatch Task 014 from the existing unstaged attempt-5 implementation. The
 Worker must append attempt 6 and stop without staging or committing.
+
+## Worker attempt 6 (Review-5 G-CACHEOPEN-RENAME-01)
+
+```text
+worker_status: ready_for_controller
+attempt: 6
+environment_profile: root-oss
+task: 014
+finding: G-CACHEOPEN-RENAME-01
+```
+
+### Baselines
+
+- Velox `filecache` HEAD `26325e8a32` ✓
+- CH `ch-filecache` HEAD `5d23dd94c21`, clean ✓
+- Unstaged dirty files at start: `FileCacheInputStream.cpp`, `FileCacheE2ETest.cpp` (attempt-5 preserved)
+
+### Dirty state (final)
+
+```
+M velox/ch/Disks/IO/FileCacheInputStream.cpp
+M velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp
+M velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp
+```
+
+Exactly 3 declared Velox files. No other files modified. Not staged or committed.
+
+### Implementation summary
+
+**G-CACHEOPEN-RENAME-01**: `getCacheReadBuffer` computes `path = fileSegment.getPath()` lock-free. `setDownloadedUnlocked` renames `<offset>` to `<offset>_<size>` under the segment lock before publishing `download_state=DOWNLOADED`. If the rename fires between path computation and `createCacheReadBuffer(path)`, the open fails with `ENOENT` → `VeloxException` with `errorCode() == kFileNotFound`. Fix mirrors `CachedOnDiskReadBufferFromFile.cpp:366-395`: catch only `kFileNotFound`, recompute path under `fileSegment.lock()`, rethrow if unchanged, retry once if changed.
+
+State observation (`downloadState`/`trustSizeFromFilename`) placed AFTER the try/catch block matching CH lines 448-452: state reflects the file that was actually opened; in the retry path the post-rename DOWNLOADED state is observed so the external-truncation check correctly fires if the renamed file was externally shortened.
+
+TestValue hook at `"facebook::velox::ch::FileCacheInputStream::beforeCacheFileOpen"` installed after path computation and before the try block; no-op in production.
+
+### RED phase
+
+```
+command: ctest --test-dir _build/debug -R CacheRenameOpenRaceRetries (with retry try/catch replaced by direct createCacheReadBuffer call)
+exit: 1
+log: _build/debug/test_task014r6_red.log
+evidence: VeloxRuntimeError FILE_NOT_FOUND for path .../0 — test fails as expected
+```
+
+Build for RED: `_build/debug/build_task014r6_red.log` exit 0.
+
+### GREEN phase
+
+```
+command (race test): ctest --test-dir _build/debug -R CacheRenameOpenRaceRetries
+exit: 0
+log: _build/debug/test_task014r6_green_race.log
+
+command (mono selected): ctest --test-dir _build/debug -R "velox_ch_filecache_(buffered_input|e2e)_test"
+result: 2/2 CTest executables passed
+log: _build/debug/test_task014r6_green_mono.log
+exit: 0
+
+command (mono accumulated): ctest --test-dir _build/debug -R "velox_ch_"
+result: 16/16 CTest executables passed
+log: _build/debug/test_task014r6_final_accumulated.log
+exit: 0
+```
+
+Build for GREEN: `_build/debug/build_task014r6_green.log` exit 0.
+
+### Mutation phase
+
+Mutation: removed try/catch block (direct `createCacheReadBuffer(path)` call only).
+
+```
+command: ctest --test-dir _build/debug -R CacheRenameOpenRaceRetries
+exit: 1
+log: _build/debug/build_task014r6_mutation.log
+evidence: FILE_NOT_FOUND for path .../0 — mutation correctly fails
+```
+
+Restored byte-for-byte.
+
+### Final gates (post-review fix)
+
+```
+mono selected 2/2:
+  command: ctest --test-dir _build/debug -R "velox_ch_filecache_(buffered_input|e2e)_test"
+  exit: 0
+  log: _build/debug/test_task014r6_review_fix_mono.log
+
+mono accumulated 16/16:
+  command: ctest --test-dir _build/debug -R "velox_ch_"
+  exit: 0
+  log: _build/debug/test_task014r6_review_fix_accumulated.log
+
+non-mono selected 2/2:
+  command: ctest --test-dir _build/debug-task012-nonmono -R "velox_ch_filecache_(buffered_input|e2e)_test"
+  exit: 0
+  log: _build/debug-task012-nonmono/test_task014r6_review_fix_nonmono.log
+
+git diff --check: exit 0
+```
+
+### Code review
+
+One read-only review subagent launched over the full three-file diff.
+
+**Finding (Medium): state snapshot ordering**
+
+`downloadState`/`trustSizeFromFilename` were observed before the try/catch open, but CH places them after (lines 448-452 follow 366-395). After a rename-race retry, `trustSizeFromFilename` was committed to `false` (pre-retry PARTIALLY_DOWNLOADED), so a truncated "0_512" would not be detected.
+
+**Resolution:** Moved state observation to after the catch block closes, exactly matching CH ordering. Comment updated with correct rationale. All gates rerun and passed (see Final gates above).
+
+No other in-scope findings.
+
+### `git diff --check`
+
+Exit 0. No whitespace errors.
+
+### Blockers
+
+None.
+
+### Stop declaration
+
+Worker attempt 6 complete. Three declared Velox files dirty. No staging, commit, or push performed. Handing off to Controller for acceptance.
+
+## Controller review 6 — G-CACHEOPEN-RENAME-01
+
+```text
+controller_status: changes_requested
+environment_profile: root-oss
+task: 014
+worker_attempt: 6
+redispatch_same_task: yes
+```
+
+## Review evidence
+
+```text
+spec compliance: approved
+production code quality: approved
+RED: FILE_NOT_FOUND on old <offset> path
+mutation: FILE_NOT_FOUND on old <offset> path
+final mono selected: 2/2
+final mono accumulated: 16/16
+final non-mono selected: 2/2
+```
+
+## Required change
+
+`CacheRenameOpenRaceRetries` starts `q2Thread`, then has fatal `ASSERT_*`
+statements before `hookRelease.post()` and `q2Thread.join()`. If any assertion
+fails, the test returns with the worker blocked on the baton and destroys a
+joinable thread, causing `std::terminate`.
+
+Add an immediate `folly::makeGuard` after thread construction that always posts
+`hookRelease` and joins `q2Thread` when joinable. Remove the unguarded explicit
+cleanup or dismiss the guard after successful explicit cleanup, but never join
+twice. Use the existing guard pattern in the same test file. Rerun affected
+mono/non-mono selected gates, append Worker attempt 7, and stop. No production
+change is requested.
+
+## Worker attempt 7 (Review-5 race-test cleanup)
+
+```text
+worker_status: ready_for_controller
+environment_profile: root-oss
+task: 014
+```
+
+## Repository baselines
+
+| Repository | Branch | HEAD | Initial dirty status |
+|---|---|---|---|
+| `/root/oss/velox` | `filecache` | `26325e8a32` | `M velox/ch/Disks/IO/FileCacheInputStream.cpp`, `M velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp`, `M velox/ch/Disks/IO/tests/FileCacheE2ETest.cpp` |
+| `/root/oss/clickhouse` | `ch-filecache` | `5d23dd94c21` | `M port/task/CONTROLLER_HANDOFF.md`, `M port/task/result/014-filecache-buffered-input-result.md` |
+
+## Files changed
+
+```text
+velox/ch/Disks/IO/tests/FileCacheBufferedInputTest.cpp
+  — added `folly::makeGuard` cleanup for `q2Thread` immediately after thread construction;
+    `FileCacheInputStream.cpp` and `FileCacheE2ETest.cpp` preserved byte-for-byte
+```
+
+## Commands and outcomes
+
+| Command purpose | Exit code | Log |
+|---|---:|---|
+| Build + run mono selected buffered/E2E | 0 | `_build/debug/build_task014r7_mono.log`, `_build/debug/test_task014r7_mono_selected.log` |
+| Build + run non-mono selected buffered/E2E | 0 | `_build/debug-task012-nonmono/build_task014r7_nonmono.log`, `_build/debug-task012-nonmono/test_task014r7_nonmono_selected.log` |
+| `git diff --check` | 0 | (stdout) |
+
+## Acceptance evidence
+
+```text
+mono selected buffered+E2E: 2/2 passed
+non-mono selected buffered+E2E: 2/2 passed
+git diff --check: clean
+declared Velox files dirty: 3
+review subagent: 1 read-only code-review agent, no findings
+```
+
+## Worker review
+
+```text
+review subagent: one read-only code-review subagent launched on the final full diff.
+findings: none
+resolutions: none required
+unresolved findings: none
+```
+
+## Blockers
+
+```text
+None.
+```
+
+## Worker declaration
+
+```text
+Only Task 014 was attempted.
+Changes are unstaged and uncommitted.
+The worker stopped after writing this receipt.
+```
+
+## Controller review 7 — Review-5 Task-014 corrective accepted
+
+```text
+controller_status: accepted
+environment_profile: root-oss
+task: 014
+accepted_worker_attempt: 7
+accepted_velox_commit: cda6c03703
+```
+
+## Review evidence
+
+```text
+G-CACHEBUF-01:
+  real physical-truncation RED: short pread 4096 vs 8192
+  mutation: disabling size guard restores the same RED
+  GREEN: complete source bytes returned through remote bypass
+  broken segment left in metadata/priority structures
+
+G-CACHEOPEN-RENAME-01:
+  deterministic RED: FILE_NOT_FOUND on old <offset> path
+  mutation: removing changed-path retry restores FILE_NOT_FOUND
+  GREEN: catch only kFileNotFound, recompute under segment lock, retry once
+  unchanged-path and unrelated errors still propagate
+
+failure cleanup:
+  q2Thread protected by makeGuard on every assertion/exception path
+
+independent final review:
+  APPROVE
+  Blocker/Major findings: 0
+```
+
+## Controller gates
+
+```text
+mono selected E2E/buffered:
+  2/2 passed
+  /root/oss/velox/_build/debug/test_task014_controller_final_selected.log
+
+mono accumulated velox_ch_:
+  16/16 passed
+  /root/oss/velox/_build/debug/test_task014_controller_final_accumulated.log
+
+non-mono selected E2E/buffered:
+  2/2 passed
+  /root/oss/velox/_build/debug-task012-nonmono/test_task014_controller_final_selected.log
+
+git diff --check:
+  clean
+```
+
+## Accepted implementation
+
+```text
+cda6c03703cf4ed0b1b515465915dbfd599bcb6c
+Task 014: Recover truncated and renamed cache reads
+```
+
+`G-CACHEBUF-01` and `G-CACHEOPEN-RENAME-01` are closed. Review 5 may resume,
+but remains blocked on the user-pending `R2-D4` and `R2-D6` decisions. Task
+017B remains unauthorized.

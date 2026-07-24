@@ -84,8 +84,8 @@ environment_profile: root-oss
     with `git log -1 --oneline` because a commit cannot contain its own SHA.
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    26325e8a32108258d737a820f928d93662a3d7c0 (Review-5 Task-012
-    `folly::call_once` corrective)
+    cda6c03703cf4ed0b1b515465915dbfd599bcb6c (Review-5 Task-014
+    truncation/rename corrective)
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -286,41 +286,18 @@ Historical accepted-task context (superseded by Review-5 items 19-22 above):
         `port/task/fullreview/root-oss/5/evidence/`. The Task-012
         `folly::call_once` corrective is accepted and pushed at Velox
         `26325e8a32`; its Controller receipt/evidence commit is ClickHouse
-        `73449b8366c`. Both `filecache` and `ch-filecache` are clean and pushed.
-    20. Review 5 remains blocked. `R2-D4` (Manager mutation serialization /
+        `73449b8366c`.
+    20. Review 5 remains blocked only on decisions. `R2-D4` (Manager mutation serialization /
         transactional reload) and `R2-D6` (reader detach / query-pool lifetime)
         were explicitly kept `pending` by the user on 2026-07-24.
-    21. The only approved-but-absent corrective is Task 014
-        `G-CACHEBUF-01`: a size-suffixed, terminal cache file truncated outside
-        the process currently reaches a short local `pread` exception instead
-        of bypassing the broken cache file and re-fetching source bytes. The
-        existing E2E named `TruncatedOrInvalidCachedDataSourceRecovery` only
-        removes the key and refills, so it is false-green for physical
-        truncation. A historical local-only Velox branch
-        `11111111111111111111111111111111111` contains commit `d83660e638`
-        (`Task 014: Recover from externally truncated cache files`), whose
-        parent is `feef5972ff` and whose merge-base with current accepted head
-        is Review-4 commit `43a9e6f75f`. It has no canonical Worker result, no
-        Controller acceptance, and is not based on current accepted head
-        `26325e8a32`; treat it as abandoned evidence only and dispatch a fresh
-        Task-014 Worker from the current baseline.
-        The binding corrective is now recorded in
-        `port/task/014-filecache-buffered-input.md`; the reopened Controller
-        audit and next Worker handoff live in
+    21. Task 014 Review-5 corrective is accepted at Velox `cda6c03703`.
+        `G-CACHEBUF-01` now bypasses an externally shortened terminal cache file
+        and re-fetches source bytes without deleting metadata. The user-approved
+        `G-CACHEOPEN-RENAME-01` addition retries exactly once on structured
+        `kFileNotFound` when concurrent completion renamed the path. Worker
+        attempts 4-7, Controller changes, mutation evidence, and Controller
+        review 7 are recorded in
         `port/task/result/014-filecache-buffered-input-result.md`.
-        Worker attempt 4 implemented the behavior and final Controller
-        production gates are green, but Controller review 4 records
-        `changes_requested`: its cited post-review mutation log is actually
-        green and its full-path underscore assertion is false-green-prone.
-        Worker attempt 5 corrected both evidence defects; external-truncation
-        RED/mutation/final mono/non-mono gates are now valid. Controller review
-        5 is `waiting_for_user` on a new impacted-surface finding:
-        `G-CACHEOPEN-RENAME-01`. `getCacheReadBuffer` is reachable for partial
-        `DOWNLOADING` segments, so its path can be renamed away before open;
-        ClickHouse retries the new path, Velox does not. The user decided
-        `fix_now_in_task_014` on 2026-07-24. The task/result carry the structured
-        `kFileNotFound` retry and deterministic attempt-6 RED contract. Current
-        Velox changes remain unstaged and uncommitted; redispatch attempt 6.
     22. Task 017B has an approved design at
         `port/design/filecache-task-017b-logging-exception-stack.md`, but its
         implementation plan is stale and `task_017b_authorized` remains false.
@@ -361,11 +338,12 @@ Continuous execution target:
   11.6% versus CBI. Task 018 is accepted. Review 5 Task 1 froze the baseline;
   Task 2 closed Review-4 debt as far as current decisions permit. Its
   Task-012 `folly::call_once` corrective is accepted at Velox `26325e8a32`.
-  Review 5 is stopped before a fresh Task-014 external-truncation corrective
-  Worker; `R2-D4` and `R2-D6` remain pending.
+  Task-014 external-truncation/rename corrective is accepted at Velox
+  `cda6c03703`. Review 5 may resume integrated tracing, but final acceptance
+  remains blocked while `R2-D4` and `R2-D6` are pending.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
-  continues with Task 014 corrective, resumed Review 5, Task 017B, then Task
-  019 Gluten/Spark integration. Task 017B and Task 019 are blocked.
+  continues with resumed Review 5, Task 017B, then Task 019 Gluten/Spark
+  integration. Task 017B and Task 019 are blocked.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,
