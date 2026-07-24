@@ -1,84 +1,70 @@
-# Task 017B: FileCache Logging and Exception Stack Formatting — Stale Implementation Plan
-
-> [!CAUTION]
-> **Do not execute this plan.** The approved binding design is now
-> `port/design/filecache-task-017b-logging-exception-stack.md`. This plan
-> predates the approved `LOG_TEST`→`VLOG(3)` mapping, complete glog filtering
-> gate, zero-ownership-copy contract, native INFO mapping, and emergency
-> `stderr` path. It must be rewritten and independently reviewed before Task
-> 017B can be authorized.
+# Task 017B: FileCache Logging and Exception Stack — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> - **Disposition:** stale_do_not_execute
+> - **Disposition:** reviewed_executable — implementation_authorized
 > - **Task ID:** 017B
 > - **Binding design:** `port/design/filecache-task-017b-logging-exception-stack.md`
-> - **Prerequisite:** Tasks 003–018 and Review 5 accepted
+> - **Prerequisite:** Review 5 accepted, Task 018 four-driver addendum accepted [DONE]
 > - **Successor:** Task 019 implementation begins after 017B acceptance
-> - **Execution order:** 017A → 018 → Review 5 → 017B → 019
-> - **Environment:** `root-oss` (`/root/oss/velox`, branch `filecache`)
-> - **Commit policy:** Worker never commits (`worker_commits: false`); Controller commits after independent review (`controller_commits: true`).
+> - **Execution order:** 017A → 018 → Review 5 → **017B** → 019
+> - **Environment:** `root-oss` (`/root/oss/velox`, branch `filecache`, head `cda6c03703`)
+> - **Commit policy:** Worker never stages, commits, or pushes. Controller commits after independent review.
+> - **Implementation status:** AUTHORIZED (2026-07-24). Plan is reviewed and executable. Controller
+>   authorization recorded in `port/task/fullreview/root-oss/5/017b-implementation-plan-review.md`.
+> - **implementation_authorized:** true
 
-**Goal:** Replace the no-op `logger_useful.h` shim (accepted in Task 003) with real lazy logging, real exception formatting, and real exception logging — while preserving the existing `FileCacheLogger`/`LoggerPtr`/`getLogger` shape, the `LOG_TEST` non-evaluation invariant, and the `noexcept` exception-logging guarantee.
+**Goal:** Replace the no-op `logger_useful.h` shim (Task 003) with real lazy
+logging through glog, real exception formatting, and real exception logging —
+while preserving the existing `FileCacheLogger`/`LoggerPtr`/`getLogger` shape,
+zero evaluation for every filtered log record, zero `shared_ptr` ownership copy,
+and a `noexcept` exception-logging guarantee with emergency `stderr` fallback.
 
-**Architecture:** Keep the Task-003 `FileCacheLogger`/`LoggerPtr`/`getLogger` surface and the header-only `LOG_TEST` no-op, but move every non-template exception function out of the header into a new `logger_useful.cpp` translation unit to avoid ODR problems in non-mono builds. The logging macros become real: `LOG_TRACE`/`DEBUG`/`INFO` are lazy `glog` `VLOG` calls guarded by `VLOG_IS_ON`, while `LOG_WARNING`/`ERROR` emit unconditionally with logger-name attribution. Exception formatting and `noexcept` exception logging are declared in the header and defined in the new `.cpp`. The component layout:
+**Architecture:** Keep `FileCacheLogger` as an immutable name-holder. Use glog as
+the only backend. `LOG_TEST`/`TRACE`/`DEBUG` map to `VLOG(3/2/1)` with a
+three-gate filter (compile-strip, `FLAGS_minloglevel`, `VLOG_IS_ON`).
+`LOG_INFO`/`WARNING`/`ERROR` map to native glog `LOG(INFO/WARNING/ERROR)` with a
+two-gate filter (compile-strip, `FLAGS_minloglevel`). No call-site rewrite, no
+new backend abstraction. Exception formatting captures `std::current_exception`
+once (never bare `throw`). `tryLogCurrentException` emits via an internal
+function-pointer emitter (default: `LOG(ERROR)`), with a fixed allocation-free
+`stderr` emergency path when everything else fails. The emitter pointer is the
+sole test-injection seam — it is not a `google::LogSink` and is not a production
+backend.
 
-```text
-logger_useful.h
-  ├── FileCacheLogger class (unchanged)
-  ├── LoggerPtr = shared_ptr<FileCacheLogger> (unchanged)
-  ├── getLogger() factory (unchanged)
-  ├── LOG_TEST: empty do-while (unchanged invariant)
-  ├── LOG_TRACE/DEBUG/INFO: VLOG_IS_ON guard → lazy fmt → glog VLOG
-  ├── LOG_WARNING/ERROR: unconditional → attributed glog LOG(severity)
-  ├── detail::chLogFormat() template (header-only)
-  └── declarations: getCurrentExceptionMessage, tryLogCurrentException overloads
-
-logger_useful.cpp
-  ├── getCurrentExceptionMessage: std::current_exception guard, rethrow/catch chain
-  └── tryLogCurrentException: noexcept overloads (LoggerPtr, const char*, std::string)
-```
-
-**Tech Stack:** C++20 (Velox baseline), `glog::glog`, `fmt::fmt`, `Folly::folly`, GoogleTest, built via `velox_add_library` + ninja. Details:
-
-| Component | Version/Source |
-|-----------|---------------|
-| C++ | C++20 (Velox baseline) |
-| glog | vcpkg-installed, target `glog::glog` |
-| fmt | vcpkg-installed, target `fmt::fmt` |
-| Folly | `Folly::folly` (for `folly::makeGuard`, transitively links glog) |
-| GTest | `GTest::gtest` + `GTest::gtest_main` |
-| Build | CMake via `velox_add_library`; ninja |
+**Tech Stack:** C++20 (Velox baseline), `glog::glog`, `fmt::fmt`, Velox
+`velox_exception` + `velox_process`, GoogleTest, CMake via `velox_add_library` +
+ninja.
 
 ## Global Constraints
 
-1. Worker never commits; Controller commits after independent review.
-2. Allman-style braces in all C++ code.
-3. No C++ sleeps.
-4. `LOG_TEST` must never evaluate its arguments (zero-evaluation invariant).
-5. `getCurrentExceptionMessage` is `noexcept`; safe outside catch (returns empty).
-6. `tryLogCurrentException` is `noexcept`; never replaces the original exception.
-7. No broad catch-success fallbacks. Inside `getCurrentExceptionMessage`, internal
-   `catch (...)` blocks return deterministic fallback text (e.g. "formatting
-   failed"), never silently succeeding with an empty string. The outer
-   `catch (...)` in `tryLogCurrentException` is different: it fires only when the
-   logging backend itself throws, and swallows solely to uphold `noexcept` and
-   preserve the original exception — it makes no diagnostic claim.
-8. `##__VA_ARGS__` for empty-varargs portability (GCC/Clang required by Velox).
-9. Macro arguments evaluated at most once (captured into a local variable).
-10. Expression lifetimes: logger pointer captured before streaming to avoid dangling.
-11. Use "exception" not "crash" for logical failures; "process terminates" for `std::terminate`.
-12. Source registration must work in both mono and non-mono builds.
-13. Execution authorized only after Task 018 and Review 5 are accepted.
+1. Worker never stages, commits, or pushes. Controller commits after independent review.
+2. Implementation IS authorized. Controller authorized on 2026-07-24 after independent plan
+   re-review (0 Critical, 0 Important). Authorization receipt:
+   `port/task/fullreview/root-oss/5/017b-implementation-plan-review.md`.
+   Worker no-commit and result-handoff rules in Constraint #1 and §10 remain in full effect.
+3. Allman-style braces in all C++ code.
+4. No C++ sleeps; no `ninja -j`; no `nproc`.
+5. Every build/test command redirects output to a unique `.log` file inside the build directory.
+6. A `task` subagent analyzes each log and returns only a concise summary; the Worker never pastes full build/test logs inline.
+7. `LOG_TEST` is `VLOG(3)`, NOT a permanent no-op. It evaluates when `--v=3` and is zero-cost only at default verbosity.
+8. `getCurrentExceptionMessage` is `noexcept`; safe outside catch (returns empty); never uses bare `throw`.
+9. `tryLogCurrentException` is `noexcept`; never replaces the original exception.
+10. `##__VA_ARGS__` for zero-varargs portability (GCC/Clang, required by Velox).
+11. `auto&&` for logger binding — no `shared_ptr` ownership copy.
+12. No Poco/raw logger, level argument, `std::string` name overload, `markAsLogged`, metrics, cancellation, Gluten, benchmark scope.
+13. No ClickHouse `system.text_log` structured-argument claims.
+14. No stacked PRs; no implementation beyond Task 017B scope.
+15. Use "exception" not "crash" for logical failures.
 
 ---
 
 ## Acceptance Checklist
 
 - [ ] All Milestone gates GREEN
-- [ ] Mutation evidence RED for every M1–M7
+- [ ] Mutation evidence RED for every MUT-01 through MUT-09
 - [ ] Accumulated CTest gate: zero failures across all `velox_ch_*` targets (mono + non-mono)
-- [ ] Worker never commits; Controller commits after independent review
+- [ ] Worker never commits; result receipt written with `worker_status: ready_for_controller`
 
 ---
 
@@ -86,17 +72,20 @@ logger_useful.cpp
 
 | Source | Path | Purpose |
 |--------|------|---------|
-| Current shim | `velox/ch/Common/logger_useful.h` | No-op shim (Task 003) |
-| VeloxException | `velox/common/base/VeloxException.h:205,220,232,236` | `stackTrace`, `message`, `errorCode`, `errorSource` |
-| StackTrace | `velox/common/process/StackTrace.h:46` | `const std::string& toString() const` (lazy-init) |
-| glog LogSink | `velox/common/time/tests/HierarchicalTimerTest.cpp:32-62` | Verified capture pattern |
-| Library CMake | `velox/ch/Common/CMakeLists.txt:74-100` | `velox_add_library` positional source list |
-| Non-mono link | `velox/ch/Common/CMakeLists.txt:114-123` | `if(NOT VELOX_MONO_LIBRARY)` link block (comment at 108-113) |
-| Test CMake | `velox/ch/Common/tests/CMakeLists.txt:15-28` | `velox_ch_common_test` target |
-| Existing tests | `velox/ch/Common/tests/BasicShimsTest.cpp:58-109` | Tests to preserve/replace |
-| FileCache callers | `velox/ch/Interpreters/FileCache/FileCache.cpp`, `FileSegment.cpp`, `Metadata.cpp` | `tryLogCurrentException(__PRETTY_FUNCTION__)`, `tryLogCurrentException(getLog(), msg)` |
-| Stack flag | `velox/common/base/VeloxException.h:33-34` | `FLAGS_velox_exception_system_stacktrace_enabled` |
-| velox_add_library | `CMake/VeloxUtils.cmake:91-213` | Mono: `target_sources(velox PRIVATE ${_sources})` (:114; first invocation `add_library(velox ${_type} ${_sources})` at :124); non-mono: `velox_base_add_library(${TARGET} ${library_type} ${_sources})` (:182) |
+| Binding design | `port/design/filecache-task-017b-logging-exception-stack.md` | Approved specification |
+| Task index | `port/task/017b-filecache-logging-exception-stack.md` | Task status and scope |
+| Current shim | `velox/ch/Common/logger_useful.h` | No-op shim (Task 003), lines 1–72 |
+| VeloxException | `velox/common/base/VeloxException.h:140,205,220,232,236,270` | `stackTrace`, `message`, `errorCode`, `errorSource`, `State::stackTrace` |
+| StackTrace | `velox/common/process/StackTrace.h:29–46` | `const std::string& toString() const` (lazy-init) |
+| Stack flags | `velox/common/base/VeloxException.h:33–34` | `FLAGS_velox_exception_system_stacktrace_enabled/user` |
+| glog LogSink pattern | `velox/common/time/tests/HierarchicalTimerTest.cpp:32–62` | Verified `google::LogSink` / `AddLogSink` / `RemoveLogSink` capture pattern |
+| Library CMake | `velox/ch/Common/CMakeLists.txt:74–100` | `velox_add_library` positional source list |
+| Non-mono link | `velox/ch/Common/CMakeLists.txt:108–123` | `if(NOT VELOX_MONO_LIBRARY)` link block |
+| Test CMake | `velox/ch/Common/tests/CMakeLists.txt:15–28` | `velox_ch_common_test` target |
+| Existing tests | `velox/ch/Common/tests/BasicShimsTest.cpp:58–109` | Tests to preserve/replace |
+| velox_add_library | `CMake/VeloxUtils.cmake:91–213` | Mono: `target_sources(velox PRIVATE ...)` / Non-mono: standalone lib |
+| FileCache callers | `velox/ch/Interpreters/FileCache/FileCache.cpp`, `FileSegment.cpp`, `Metadata.cpp`, `EvictionCandidates.cpp` | `tryLogCurrentException(__PRETTY_FUNCTION__)`, `tryLogCurrentException(log, "msg")`, `tryLogCurrentException(log)`. These are the actual `tryLogCurrentException` callers and are in `velox_ch_filecache_core` (rebuilt at M3-C1). |
+| Getter-only call sites | `velox/ch/Interpreters/FileCache/SLRUFileCachePriority.cpp`, `velox/ch/Common/FileCacheScheduler.cpp` | These call `getCurrentExceptionMessage` only; they are not `tryLogCurrentException` callers. `FileCacheScheduler.cpp` is part of `velox_ch_filecache` (rebuilt at M1-G1). |
 
 ---
 
@@ -106,42 +95,116 @@ logger_useful.cpp
 
 | File | Purpose |
 |------|---------|
-| `velox/ch/Common/logger_useful.cpp` | Non-template exception formatting and logging function definitions |
+| `velox/ch/Common/logger_useful.cpp` | Non-template function definitions: `detail::formatExceptionPtr`, `getCurrentExceptionMessage`, `tryLogCurrentException` overloads, `detail::defaultExceptionEmitter`, `detail::testExceptionEmitter` |
+| `velox/ch/Common/tests/CompileStripProbe.cpp` | Separate executable compiled with `GOOGLE_STRIP_LOG=1`; proves stripped levels evaluate no expressions |
 
 ### Modified files
 
 | File | Change summary |
 |------|----------------|
-| `velox/ch/Common/logger_useful.h` | Add `#include <glog/logging.h>`, `#include <fmt/format.h>`; keep class/accessors; replace macro section; add `detail::chLogFormat`; declare `getCurrentExceptionMessage` and `tryLogCurrentException` overloads; remove old inline stubs |
-| `velox/ch/Common/tests/BasicShimsTest.cpp` | Replace `AllLogMacrosDoNotEvaluateArguments`, `CurrentExceptionMessageRemainsEmptyFirstPhase`, `TryLogCurrentExceptionIsNoOpFirstPhase` with real-behavior tests |
+| `velox/ch/Common/logger_useful.h` | Add `#include <fmt/format.h>`, `#include <glog/logging.h>`; keep `FileCacheLogger`/`LoggerPtr`/`getLogger` unchanged; add `detail::chLogFormat` helper and `detail::ExceptionEmitter`/`testExceptionEmitter`/`defaultExceptionEmitter` declarations; replace macro section with real three-gate/two-gate macros; replace `getCurrentExceptionMessage` and `tryLogCurrentException` declarations (remove old inline stubs) |
+| `velox/ch/Common/tests/BasicShimsTest.cpp` | Replace `AllLogMacrosDoNotEvaluateArguments` (line 65), `CurrentExceptionMessageRemainsEmptyFirstPhase` (line 85), `TryLogCurrentExceptionIsNoOpFirstPhase` (line 98) with real-behavior tests; add new test cases; add `TestLogSink` and `EmitterGuard` helpers |
 | `velox/ch/Common/CMakeLists.txt` | Add `logger_useful.cpp` to `velox_add_library` source list; add `velox_process` and `glog::glog` to non-mono link block |
-| `velox/ch/Common/tests/CMakeLists.txt` | Add `glog::glog` to `velox_ch_common_test` link |
+| `velox/ch/Common/tests/CMakeLists.txt` | Add `glog::glog` to `velox_ch_common_test` link; add `velox_ch_compile_strip_probe` executable |
 
 ---
 
-## 3. Milestones
+## 3. Logging-Level Mapping
 
-### Milestone 1: Exception Formatting
+| Compatibility macro | glog backend | Compile-strip gate | Runtime gate | Default state |
+|---|---|---|---|---|
+| `LOG_TEST` | `VLOG(3)` | `GOOGLE_STRIP_LOG <= 0` | `0 >= FLAGS_minloglevel && VLOG_IS_ON(3)` | disabled |
+| `LOG_TRACE` | `VLOG(2)` | `GOOGLE_STRIP_LOG <= 0` | `0 >= FLAGS_minloglevel && VLOG_IS_ON(2)` | disabled |
+| `LOG_DEBUG` | `VLOG(1)` | `GOOGLE_STRIP_LOG <= 0` | `0 >= FLAGS_minloglevel && VLOG_IS_ON(1)` | disabled |
+| `LOG_INFO` | `LOG(INFO)` | `GOOGLE_STRIP_LOG <= 0` | `0 >= FLAGS_minloglevel` | enabled |
+| `LOG_WARNING` | `LOG(WARNING)` | `GOOGLE_STRIP_LOG <= 1` | `1 >= FLAGS_minloglevel` | enabled |
+| `LOG_ERROR` | `LOG(ERROR)` | `GOOGLE_STRIP_LOG <= 2` | `2 >= FLAGS_minloglevel` | enabled |
 
-**Goal:** `getCurrentExceptionMessage` correctly handles VeloxException (with stack),
-std::exception, unknown, and the no-active-exception case.
+glog severity constants: `INFO=0`, `WARNING=1`, `ERROR=2`, `FATAL=3`.
+`GOOGLE_STRIP_LOG` defaults to 0 (nothing stripped). `FLAGS_minloglevel` defaults to 0 (INFO).
+`VLOG` uses `INFO` (0) as its underlying severity: stripped when `GOOGLE_STRIP_LOG > 0`, suppressed when `FLAGS_minloglevel > 0`.
 
-#### 3.1 Interface (`logger_useful.h` declaration)
+---
+
+## 4. Milestones
+
+### Milestone 1: Exception Formatting & CMake Infrastructure
+
+**Goal:** Create `logger_useful.cpp`, register it in CMake, implement
+`getCurrentExceptionMessage` with TDD, and prove mutations RED.
+
+**Files:**
+- Create: `velox/ch/Common/logger_useful.cpp`
+- Modify: `velox/ch/Common/logger_useful.h` (exception declarations)
+- Modify: `velox/ch/Common/CMakeLists.txt` (source + link)
+- Modify: `velox/ch/Common/tests/CMakeLists.txt` (glog link)
+- Modify: `velox/ch/Common/tests/BasicShimsTest.cpp` (exception tests)
+
+**Interfaces:**
+- Produces: `getCurrentExceptionMessage(bool withStackTrace = false) noexcept -> std::string`
+- Produces: `detail::formatExceptionPtr(std::exception_ptr, bool) -> std::string` (internal)
+- Consumes: `velox::VeloxException::stackTrace()`, `::message()`, `::errorSource()`, `::errorCode()`
+- Consumes: `velox::process::StackTrace::toString()`
+
+#### 4.1 Header declarations (in `logger_useful.h`)
+
+Remove the existing inline stubs for `getCurrentExceptionMessage` and
+`tryLogCurrentException` (lines 53–61) and replace with declarations only.
+The `tryLogCurrentException` declarations are placed here for compilation but
+implemented in Milestone 3.
+
+Add after the existing `#include <utility>` (line 21):
 
 ```cpp
-/// Formats the currently-handled exception. Safe to call at any point:
-/// returns empty string when no exception is active.
-/// Never throws (noexcept).
-std::string getCurrentExceptionMessage(bool withStackTrace = false) noexcept;
+#include <fmt/format.h>
+#include <glog/logging.h>
 ```
 
-#### 3.2 Implementation (`logger_useful.cpp`)
+Replace the two inline stubs (lines 53–61) with:
+
+```cpp
+/// Formats the currently-handled exception. Safe outside catch (returns empty).
+/// Captures std::current_exception exactly once; never uses bare throw.
+std::string getCurrentExceptionMessage(bool withStackTrace = false) noexcept;
+
+/// Log the current exception through a LoggerPtr. Noexcept, never replaces
+/// the original exception being handled.
+void tryLogCurrentException(
+    const LoggerPtr & logger,
+    const std::string & context = {}) noexcept;
+
+/// Log the current exception using a function/log name.
+void tryLogCurrentException(
+    const char * logName,
+    const std::string & context = {}) noexcept;
+
+namespace detail
+{
+
+/// Internal emitter function pointer for exception logging.
+/// Default: glog LOG(ERROR) with attribution.
+/// Tests may inject a different function via testExceptionEmitter().
+/// This is NOT a google::LogSink and NOT a production backend.
+using ExceptionEmitter = void (*)(const char * attribution, const char * message);
+
+/// Returns a reference to the currently installed exception emitter.
+ExceptionEmitter & testExceptionEmitter();
+
+/// Default emitter: writes to glog LOG(ERROR) with [attribution] prefix.
+void defaultExceptionEmitter(const char * attribution, const char * message);
+
+} // namespace detail
+```
+
+#### 4.2 Implementation (`logger_useful.cpp`)
 
 ```cpp
 #include "velox/ch/Common/logger_useful.h"
 
 #include <exception>
 #include <string>
+
+#include <unistd.h>
 
 #include <fmt/format.h>
 #include <glog/logging.h>
@@ -152,19 +215,19 @@ std::string getCurrentExceptionMessage(bool withStackTrace = false) noexcept;
 namespace facebook::velox::ch
 {
 
-std::string getCurrentExceptionMessage(bool withStackTrace) noexcept
+namespace detail
 {
-    std::exception_ptr eptr = std::current_exception();
-    if (!eptr)
-    {
-        return {};
-    }
 
+/// Internal formatter: accepts an exception_ptr and inspects its type
+/// via std::rethrow_exception (not bare throw). Not noexcept: callers
+/// must contain any failure from string construction.
+std::string formatExceptionPtr(std::exception_ptr eptr, bool withStackTrace)
+{
     try
     {
         std::rethrow_exception(eptr);
     }
-    catch (const velox::VeloxException& e)
+    catch (const velox::VeloxException & e)
     {
         try
         {
@@ -175,10 +238,9 @@ std::string getCurrentExceptionMessage(bool withStackTrace) noexcept
                 e.message());
             if (withStackTrace)
             {
-                const auto* st = e.stackTrace();
-                if (st)
+                if (const auto * st = e.stackTrace())
                 {
-                    const std::string& trace = st->toString();
+                    const std::string & trace = st->toString();
                     if (!trace.empty())
                     {
                         msg += "\nStack trace:\n";
@@ -193,7 +255,7 @@ std::string getCurrentExceptionMessage(bool withStackTrace) noexcept
             return "VeloxException (formatting failed)";
         }
     }
-    catch (const std::exception& e)
+    catch (const std::exception & e)
     {
         try
         {
@@ -210,28 +272,203 @@ std::string getCurrentExceptionMessage(bool withStackTrace) noexcept
     }
 }
 
+void defaultExceptionEmitter(const char * attribution, const char * message)
+{
+    LOG(ERROR) << "[" << (attribution ? attribution : "null") << "] " << message;
+}
+
+ExceptionEmitter & testExceptionEmitter()
+{
+    static ExceptionEmitter emitter = defaultExceptionEmitter;
+    return emitter;
+}
+
+} // namespace detail
+
+std::string getCurrentExceptionMessage(bool withStackTrace) noexcept
+{
+    try
+    {
+        auto eptr = std::current_exception();
+        if (!eptr)
+        {
+            return {};
+        }
+        return detail::formatExceptionPtr(eptr, withStackTrace);
+    }
+    catch (...)
+    {
+        // Catastrophic: even the fixed fallback string could not be
+        // represented (e.g. OOM during small-string construction).
+        // Empty return is reserved for this case per the binding spec.
+        return {};
+    }
+}
+
+void tryLogCurrentException(
+    const LoggerPtr & logger,
+    const std::string & context) noexcept
+{
+    try
+    {
+        const char * attribution =
+            logger ? logger->name().c_str() : "null";
+
+        auto eptr = std::current_exception();
+        if (!eptr)
+        {
+            detail::testExceptionEmitter()(
+                attribution,
+                "tryLogCurrentException called with no active exception");
+            return;
+        }
+
+        std::string msg = detail::formatExceptionPtr(eptr, /*withStackTrace=*/true);
+        if (!context.empty())
+        {
+            msg = context + ": " + msg;
+        }
+
+        detail::testExceptionEmitter()(attribution, msg.c_str());
+    }
+    catch (...)
+    {
+        static constexpr char kEmergency[] =
+            "tryLogCurrentException: emergency — logging failure, "
+            "original exception may be lost\n";
+        [[maybe_unused]] auto rc =
+            ::write(STDERR_FILENO, kEmergency, sizeof(kEmergency) - 1);
+    }
+}
+
+void tryLogCurrentException(
+    const char * logName,
+    const std::string & context) noexcept
+{
+    try
+    {
+        const char * attribution = logName ? logName : "null";
+
+        auto eptr = std::current_exception();
+        if (!eptr)
+        {
+            detail::testExceptionEmitter()(
+                attribution,
+                "tryLogCurrentException called with no active exception");
+            return;
+        }
+
+        std::string msg = detail::formatExceptionPtr(eptr, /*withStackTrace=*/true);
+        if (!context.empty())
+        {
+            msg = context + ": " + msg;
+        }
+
+        detail::testExceptionEmitter()(attribution, msg.c_str());
+    }
+    catch (...)
+    {
+        static constexpr char kEmergency[] =
+            "tryLogCurrentException: emergency — logging failure, "
+            "original exception may be lost\n";
+        [[maybe_unused]] auto rc =
+            ::write(STDERR_FILENO, kEmergency, sizeof(kEmergency) - 1);
+    }
+}
+
 } // namespace facebook::velox::ch
 ```
 
-**Design notes:**
-- `std::current_exception()` returns null outside a catch block — no UB, no
-  `std::terminate`. Never uses bare `throw;`.
-- VeloxException is caught first (more specific than `std::exception`).
-- `stackTrace()` returns `nullptr` when
-  `FLAGS_velox_exception_system_stacktrace_enabled` is false (flag controls
-  capture at throw-time; we respect whatever was captured).
-- Inner `catch (...)` blocks return deterministic fallback text (e.g.
-  `"VeloxException (formatting failed)"`), never silently returning empty. This is
-  targeted internal containment within a `noexcept` function; the fallback text is
-  returned to the caller and logged like any other message.
+#### 4.3 CMake changes
 
-#### 3.3 TDD Steps
+**`velox/ch/Common/CMakeLists.txt`** — add `logger_useful.cpp` to the source
+list (works for both mono and non-mono via `velox_add_library`):
 
-- [ ] **M1-T1** (3 min): Write `ExceptionFormattingTest.VeloxExceptionWithStack`:
+```cmake
+velox_add_library(
+  velox_ch_filecache
+  CurrentMetrics.cpp
+  ProfileEvents.cpp
+  FileCacheStats.cpp
+  StatusFile.cpp
+  ThreadPool.cpp
+  FileCacheQueryIdScope.cpp
+  FileCacheScheduler.cpp
+  SipHash128.cpp
+  logger_useful.cpp
+  HEADERS
+    ClickHouseAliases.h
+    ClickHouseAssert.h
+    CurrentMetrics.h
+    FailPoint.h
+    FileCacheBoundedQueue.h
+    FileCacheException.h
+    FileCacheFilesystem.h
+    FileCacheQueryIdScope.h
+    FileCacheScheduler.h
+    FileCacheStats.h
+    FilesystemCacheLog.h
+    logger_useful.h
+    OpenTelemetryTraceContext.h
+    ProfileEvents.h
+    QueryStatus.h
+    SharedMutex.h
+    SipHash128.h
+    StatusFile.h
+    ThreadPool.h
+)
+```
+
+Extend the non-mono link block with `velox_process` (for `StackTrace::toString`)
+and `glog::glog` (for `LOG(ERROR)` in emitter, `VLOG`/`VLOG_IS_ON` in macros):
+
+```cmake
+if(NOT VELOX_MONO_LIBRARY)
+  target_link_libraries(
+    velox_ch_filecache
+    PUBLIC
+      velox_common_config
+      velox_exception
+      velox_process
+      Folly::folly
+      fmt::fmt
+      glog::glog
+  )
+endif()
+```
+
+**`velox/ch/Common/tests/CMakeLists.txt`** — add `glog::glog` to the
+`velox_ch_common_test` link list:
+
+```cmake
+target_link_libraries(
+  velox_ch_common_test
+  PRIVATE
+    velox_ch_filecache
+    velox_test_util
+    velox_exception
+    Folly::folly
+    fmt::fmt
+    glog::glog
+    GTest::gtest
+    GTest::gtest_main
+)
+```
+
+#### 4.4 TDD Steps — Exception Formatting
+
+- [ ] **M1-T1** Write `ExceptionFormattingTest.VeloxExceptionWithStack` in
+  `BasicShimsTest.cpp`:
 
 ```cpp
 TEST(ExceptionFormattingTest, VeloxExceptionWithStack)
 {
+    // Ensure stack capture is enabled for this test.
+    const auto saved = FLAGS_velox_exception_system_stacktrace_enabled;
+    FLAGS_velox_exception_system_stacktrace_enabled = true;
+    auto restore = folly::makeGuard(
+        [&] { FLAGS_velox_exception_system_stacktrace_enabled = saved; });
+
     try
     {
         VELOX_FAIL("test error");
@@ -242,15 +479,12 @@ TEST(ExceptionFormattingTest, VeloxExceptionWithStack)
         EXPECT_NE(msg.find("VeloxException"), std::string::npos);
         EXPECT_NE(msg.find("RUNTIME"), std::string::npos);
         EXPECT_NE(msg.find("test error"), std::string::npos);
-        if (FLAGS_velox_exception_system_stacktrace_enabled)
-        {
-            EXPECT_NE(msg.find("Stack trace"), std::string::npos);
-        }
+        EXPECT_NE(msg.find("Stack trace"), std::string::npos);
     }
 }
 ```
 
-- [ ] **M1-T2** (2 min): Write `ExceptionFormattingTest.VeloxExceptionWithoutStack`:
+- [ ] **M1-T2** Write `ExceptionFormattingTest.VeloxExceptionWithoutStack`:
 
 ```cpp
 TEST(ExceptionFormattingTest, VeloxExceptionWithoutStack)
@@ -264,12 +498,13 @@ TEST(ExceptionFormattingTest, VeloxExceptionWithoutStack)
         auto msg = getCurrentExceptionMessage(/*withStackTrace=*/false);
         EXPECT_NE(msg.find("VeloxException"), std::string::npos);
         EXPECT_NE(msg.find("test error"), std::string::npos);
-        EXPECT_EQ(msg.find("Stack trace"), std::string::npos);
+        EXPECT_EQ(msg.find("Stack trace"), std::string::npos)
+            << "withStackTrace=false must suppress stack. Got: " << msg;
     }
 }
 ```
 
-- [ ] **M1-T3** (2 min): Write `ExceptionFormattingTest.StdException`:
+- [ ] **M1-T3** Write `ExceptionFormattingTest.StdException`:
 
 ```cpp
 TEST(ExceptionFormattingTest, StdException)
@@ -287,7 +522,7 @@ TEST(ExceptionFormattingTest, StdException)
 }
 ```
 
-- [ ] **M1-T4** (2 min): Write `ExceptionFormattingTest.UnknownException`:
+- [ ] **M1-T4** Write `ExceptionFormattingTest.UnknownException`:
 
 ```cpp
 TEST(ExceptionFormattingTest, UnknownException)
@@ -304,77 +539,149 @@ TEST(ExceptionFormattingTest, UnknownException)
 }
 ```
 
-- [ ] **M1-T5** (2 min): Write `ExceptionFormattingTest.NoActiveException`:
+- [ ] **M1-T5** Write `ExceptionFormattingDeathTest.NoActiveExceptionDoesNotTerminate`:
 
 ```cpp
-TEST(ExceptionFormattingTest, NoActiveException)
+TEST(ExceptionFormattingDeathTest, NoActiveExceptionDoesNotTerminate)
 {
-    auto msg = getCurrentExceptionMessage(true);
-    EXPECT_TRUE(msg.empty());
+    // Runs in a subprocess (EXPECT_EXIT death-test boundary) so that a mutation
+    // that both removes the null guard and replaces std::rethrow_exception(eptr)
+    // with bare throw; terminates only the child and makes the
+    // ExitedWithCode(0) assertion RED.  In production the null guard returns {}
+    // and the subprocess exits 0 normally.
+    EXPECT_EXIT(
+    {
+        auto msg = getCurrentExceptionMessage(true);
+        if (!msg.empty())
+        {
+            std::cerr << "Expected empty result outside catch, got non-empty\n";
+            _exit(1);
+        }
+        _exit(0);
+    },
+    ::testing::ExitedWithCode(0),
+    "");
 }
 ```
 
-- [ ] **M1-I1** (5 min): Create `logger_useful.cpp` with body from §3.2. Register in CMake (§5.1).
-- [ ] **M1-G1** (3 min): Build `velox_ch_common_test` (mono). All M1 tests GREEN.
+- [ ] **M1-T6** Write `ExceptionFormattingTest.StackRespectedWhenDisabled`:
+
+```cpp
+TEST(ExceptionFormattingTest, StackRespectedWhenDisabled)
+{
+    // Disable stack capture at throw-time, then request stack at format-time.
+    // The formatter must not collect a new stack; it only uses the existing one.
+    const auto saved = FLAGS_velox_exception_system_stacktrace_enabled;
+    FLAGS_velox_exception_system_stacktrace_enabled = false;
+    auto restore = folly::makeGuard(
+        [&] { FLAGS_velox_exception_system_stacktrace_enabled = saved; });
+
+    try
+    {
+        VELOX_FAIL("no stack error");
+    }
+    catch (...)
+    {
+        auto msg = getCurrentExceptionMessage(/*withStackTrace=*/true);
+        EXPECT_NE(msg.find("VeloxException"), std::string::npos);
+        EXPECT_NE(msg.find("no stack error"), std::string::npos);
+        // Stack was not captured at throw-time, so even with withStackTrace=true
+        // there is no stack trace in the output.
+        EXPECT_EQ(msg.find("Stack trace"), std::string::npos)
+            << "Stack must not appear when throw-time capture was disabled. Got: " << msg;
+    }
+}
+```
+
+- [ ] **M1-DEL** Delete the three stale first-phase tests from
+  `BasicShimsTest.cpp`:
+  - `AllLogMacrosDoNotEvaluateArguments` (line 65) — contradicts new semantics
+    where `LOG_WARNING`/`LOG_ERROR` evaluate, and `LOG_TEST` evaluates when
+    `--v=3`.
+  - `CurrentExceptionMessageRemainsEmptyFirstPhase` (line 85) — contradicts real
+    formatting.
+  - `TryLogCurrentExceptionIsNoOpFirstPhase` (line 98) — contradicts real
+    logging.
+
+  Preserve `ArgumentsAreNotEvaluated` (line 58) and
+  `GetLoggerReturnsNonNullWithNameIdentity` (line 78) unchanged.
+
+- [ ] **M1-I1** Create `logger_useful.cpp` with the body from §4.2.
+
+- [ ] **M1-I2** Apply CMake changes from §4.3.
+
+- [ ] **M1-I3** Add required includes to `BasicShimsTest.cpp`:
+
+```cpp
+#include <unistd.h>
+
+#include <folly/ScopeGuard.h>
+#include <glog/logging.h>
+
+#include "velox/common/base/VeloxException.h"
+```
+
+- [ ] **M1-G1** Build and run (mono):
 
 ```bash
-ninja -C _build/debug velox_ch_common_test > _build/debug/build_017b_m1.log 2>&1
-cd _build/debug && ctest -R velox_ch_common_test --output-on-failure \
-  > ctest_017b_m1.log 2>&1
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  ninja -C _build/debug velox_ch_common_test \
+    > _build/debug/build_017b_m1.log 2>&1
+```
+
+```bash
+source /root/oss/velox-helper/env.sh && \
+  cd /root/oss/velox/_build/debug && \
+  ctest -R velox_ch_common_test --output-on-failure \
+    > ctest_017b_m1.log 2>&1
 ```
 
 **Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug/build_017b_m1.log` and `_build/debug/ctest_017b_m1.log` and return
-only a concise summary — build success/failure with any compiler or linker errors
-quoted verbatim, and per-test PASS/FAIL for the M1 `ExceptionFormattingTest`
-cases. Do not read the logs inline.
+`_build/debug/build_017b_m1.log` and `_build/debug/ctest_017b_m1.log` and
+return only a concise summary. Do not read the logs inline.
 
-#### 3.4 Mutations
-
-| ID | Mutation | Affected test | Expected RED |
-|----|----------|---------------|--------------|
-| M1 | Remove `std::current_exception()` guard, use bare `throw;` | `NoActiveException` | Process terminates (`std::terminate` called outside catch) |
-| M2 | VeloxException catch → `return {}` | `VeloxExceptionWithStack`, `VeloxExceptionWithoutStack` | `string::find` fails |
-| M3 | std::exception catch → `return {}` | `StdException` | `string::find` fails |
-| M4 | unknown catch → `return {}` | `UnknownException` | `string::find` fails |
+**GREEN gate:** All `ExceptionFormattingTest` cases and
+`ExceptionFormattingDeathTest.NoActiveExceptionDoesNotTerminate` PASS;
+preserved tests (`ArgumentsAreNotEvaluated`,
+`GetLoggerReturnsNonNullWithNameIdentity`) still PASS.
 
 ---
 
-### Milestone 2: Lazy/Attributed Logging
+### Milestone 2: Lazy Logging Macros
 
-**Goal:** `LOG_TRACE`/`DEBUG`/`INFO` are lazy (args not evaluated at default
-`FLAGS_v=0`); `LOG_WARNING`/`ERROR` always emit with logger-name attribution.
-`LOG_TEST` remains a no-op that never evaluates arguments.
+**Goal:** Replace the no-op macro block with real three-gate/two-gate macros.
+Prove lazy evaluation, exactly-once evaluation, zero ownership copy, severity
+capture, logger-name attribution, null attribution, and one-message overload.
 
-#### 3.5 Header changes (`logger_useful.h`)
+**Files:**
+- Modify: `velox/ch/Common/logger_useful.h` (macro block + `detail::chLogFormat`)
+- Modify: `velox/ch/Common/tests/BasicShimsTest.cpp` (logging tests)
 
-Milestone 2 adds the logging includes, the `detail::chLogFormat` helper, and the
-real macro definitions. Apply three edits to the current shim (live line numbers
-from `velox/ch/Common/logger_useful.h`, branch `filecache`):
+**Interfaces:**
+- Produces: `LOG_TEST`, `LOG_TRACE`, `LOG_DEBUG`, `LOG_INFO`, `LOG_WARNING`,
+  `LOG_ERROR` macros with signature `(logger, fmt_str, ...)`
+- Produces: `detail::chLogFormat(std::string_view)` → one-message overload
+- Produces: `detail::chLogFormat(fmt::format_string<Args...>, Args&&...)` → fmt overload
 
-**Edit 1 — add two includes** to the existing include block, immediately after
-`#include <utility>` (`logger_useful.h:21`):
+#### 4.5 Formatting helper (in `logger_useful.h`, new namespace block after line 62)
 
-```cpp
-#include <fmt/format.h>
-#include <glog/logging.h>
-```
-
-**Edit 2 — insert the `detail` helper** immediately after the closing brace of
-`namespace facebook::velox::ch` (`logger_useful.h:62`) and before the macro
-block. This is a new, self-contained block:
+Insert between the closing brace of `namespace facebook::velox::ch` (line 62) and
+the macro block (line 64):
 
 ```cpp
 namespace facebook::velox::ch::detail
 {
 
+/// One-message overload: already-formatted string, no format arguments.
 inline std::string chLogFormat(std::string_view msg)
 {
     return std::string(msg);
 }
 
+/// Compile-time checked format: fmt::format_string validates placeholders.
 template <typename... Args>
-std::string chLogFormat(fmt::format_string<Args...> fmtStr, Args&&... args)
+std::string chLogFormat(fmt::format_string<Args...> fmtStr, Args &&... args)
 {
     return fmt::format(fmtStr, std::forward<Args>(args)...);
 }
@@ -382,117 +689,97 @@ std::string chLogFormat(fmt::format_string<Args...> fmtStr, Args&&... args)
 } // namespace facebook::velox::ch::detail
 ```
 
-**Edit 3 — replace the six no-op shim macros** (`logger_useful.h:64-72`, i.e.
-`LOG_TEST`/`LOG_TRACE`/`LOG_DEBUG`/`LOG_INFO`/`LOG_WARNING`/`LOG_ERROR`) in their
-entirety with:
+#### 4.6 Macro block (replaces lines 64–72 in `logger_useful.h`)
+
+Replace the entire `#define LOG_TEST` through `#define LOG_ERROR` block with:
 
 ```cpp
-#define LOG_TEST(...) \
-    do               \
-    {                \
+// glog severity: INFO=0 WARNING=1 ERROR=2 FATAL=3
+// GOOGLE_STRIP_LOG: compile-time strip (default 0, nothing stripped).
+// FLAGS_minloglevel: runtime filter (default 0, INFO).
+// VLOG_IS_ON(level): runtime, true when FLAGS_v >= level.
+
+// --- VLOG-based helper (underlying severity = INFO = 0) ---
+// Three-gate: compile-strip, minloglevel, VLOG_IS_ON.
+// When any gate rejects: no logger, format, or argument evaluation.
+// When all gates pass: logger bound once (auto&&), format args once.
+#if GOOGLE_STRIP_LOG <= 0
+#define CH_VLOG_IMPL_(logger, vlog_level, fmt_str, ...)                         \
+    do                                                                           \
+    {                                                                            \
+        if (0 >= FLAGS_minloglevel && VLOG_IS_ON(vlog_level))                   \
+        {                                                                        \
+            auto && _ch_log_ = (logger);                                        \
+            VLOG(vlog_level)                                                     \
+                << "["                                                           \
+                << (_ch_log_                                                     \
+                        ? std::string_view{_ch_log_->name()}                    \
+                        : std::string_view{"null"})                             \
+                << "] "                                                          \
+                << ::facebook::velox::ch::detail::chLogFormat(                  \
+                       fmt_str, ##__VA_ARGS__);                                 \
+        }                                                                        \
+    } while (false)
+#else
+#define CH_VLOG_IMPL_(logger, vlog_level, fmt_str, ...)                         \
+    do                                                                           \
+    {                                                                            \
+    } while (false)
+#endif
+
+// --- Native-severity helper ---
+// Two-gate: compile-strip (via #if around each user macro), minloglevel.
+#define CH_SEVERITY_IMPL_(logger, glog_sev, sev_int, fmt_str, ...)              \
+    do                                                                           \
+    {                                                                            \
+        if ((sev_int) >= FLAGS_minloglevel)                                     \
+        {                                                                        \
+            auto && _ch_log_ = (logger);                                        \
+            LOG(glog_sev)                                                        \
+                << "["                                                           \
+                << (_ch_log_                                                     \
+                        ? std::string_view{_ch_log_->name()}                    \
+                        : std::string_view{"null"})                             \
+                << "] "                                                          \
+                << ::facebook::velox::ch::detail::chLogFormat(                  \
+                       fmt_str, ##__VA_ARGS__);                                 \
+        }                                                                        \
     } while (false)
 
-#define CH_LOG_IMPL(logger, vlog_level, fmt_str, ...)          \
-    do                                                          \
-    {                                                           \
-        if (VLOG_IS_ON(vlog_level))                            \
-        {                                                       \
-            auto _ch_log_ptr = (logger);                       \
-            VLOG(vlog_level)                                    \
-                << "[" << (_ch_log_ptr ? _ch_log_ptr->name()   \
-                                      : std::string("(null)")) \
-                << "] "                                         \
-                << ::facebook::velox::ch::detail::              \
-                       chLogFormat(fmt_str, ##__VA_ARGS__);     \
-        }                                                       \
-    } while (false)
+// --- VLOG compatibility macros ---
+#define LOG_TEST(logger, fmt_str, ...)  CH_VLOG_IMPL_(logger, 3, fmt_str, ##__VA_ARGS__)
+#define LOG_TRACE(logger, fmt_str, ...) CH_VLOG_IMPL_(logger, 2, fmt_str, ##__VA_ARGS__)
+#define LOG_DEBUG(logger, fmt_str, ...) CH_VLOG_IMPL_(logger, 1, fmt_str, ##__VA_ARGS__)
 
-#define CH_LOG_SEVERITY_IMPL(logger, severity, fmt_str, ...)   \
-    do                                                          \
-    {                                                           \
-        auto _ch_log_ptr = (logger);                           \
-        LOG(severity)                                           \
-            << "[" << (_ch_log_ptr ? _ch_log_ptr->name()       \
-                                  : std::string("(null)"))     \
-            << "] "                                             \
-            << ::facebook::velox::ch::detail::                  \
-                   chLogFormat(fmt_str, ##__VA_ARGS__);         \
-    } while (false)
-
-#define LOG_TRACE(logger, fmt_str, ...) \
-    CH_LOG_IMPL(logger, 3, fmt_str, ##__VA_ARGS__)
-
-#define LOG_DEBUG(logger, fmt_str, ...) \
-    CH_LOG_IMPL(logger, 2, fmt_str, ##__VA_ARGS__)
-
+// --- Native severity compatibility macros ---
+#if GOOGLE_STRIP_LOG <= 0
 #define LOG_INFO(logger, fmt_str, ...) \
-    CH_LOG_IMPL(logger, 1, fmt_str, ##__VA_ARGS__)
+    CH_SEVERITY_IMPL_(logger, INFO, 0, fmt_str, ##__VA_ARGS__)
+#else
+#define LOG_INFO(logger, fmt_str, ...) do {} while (false)
+#endif
 
+#if GOOGLE_STRIP_LOG <= 1
 #define LOG_WARNING(logger, fmt_str, ...) \
-    CH_LOG_SEVERITY_IMPL(logger, WARNING, fmt_str, ##__VA_ARGS__)
+    CH_SEVERITY_IMPL_(logger, WARNING, 1, fmt_str, ##__VA_ARGS__)
+#else
+#define LOG_WARNING(logger, fmt_str, ...) do {} while (false)
+#endif
 
+#if GOOGLE_STRIP_LOG <= 2
 #define LOG_ERROR(logger, fmt_str, ...) \
-    CH_LOG_SEVERITY_IMPL(logger, ERROR, fmt_str, ##__VA_ARGS__)
+    CH_SEVERITY_IMPL_(logger, ERROR, 2, fmt_str, ##__VA_ARGS__)
+#else
+#define LOG_ERROR(logger, fmt_str, ...) do {} while (false)
+#endif
 ```
 
-**Design notes:**
-- `logger` is evaluated exactly once (captured into `_ch_log_ptr`).
-- `VLOG_IS_ON` short-circuits: at default `FLAGS_v=0`, TRACE/DEBUG/INFO never
-  evaluate `fmt_str` or varargs.
-- `##__VA_ARGS__` handles zero variadic args (GCC/Clang extension, required by Velox).
-- `LOG(WARNING)` and `LOG(ERROR)` always evaluate — this is intentional for
-  production visibility. The existing `AllLogMacrosDoNotEvaluateArguments` test
-  (which asserts WARNING/ERROR don't evaluate) must be **replaced**, not preserved.
-- glog's `LOG(severity)` includes file/line/severity prefix; we add `[name]` attribution.
+#### 4.7 Test helpers (in `BasicShimsTest.cpp`, anonymous namespace)
 
-#### 3.6 TDD Steps
-
-- [ ] **M2-T1** (3 min): Write `LoggerUsefulTest.LogTestNeverEvaluates` (preserves the
-  invariant from the existing `ArgumentsAreNotEvaluated` test):
+Add after the existing anonymous namespace opening:
 
 ```cpp
-TEST(LoggerUsefulTest, LogTestNeverEvaluates)
-{
-    int evaluated = 0;
-    auto logger = getLogger("test");
-    LOG_TEST(logger, "value {}", ++evaluated);
-    EXPECT_EQ(evaluated, 0);
-}
-```
-
-- [ ] **M2-T2** (5 min): Write `LoggerUsefulTest.LazyEvaluation` — verify TRACE/DEBUG/INFO
-  don't evaluate at `FLAGS_v=0`; WARNING/ERROR do evaluate:
-
-```cpp
-TEST(LoggerUsefulTest, LazyEvaluation)
-{
-    const auto savedV = FLAGS_v;
-    FLAGS_v = 0;
-    auto restore = folly::makeGuard([&] { FLAGS_v = savedV; });
-
-    int evaluated = 0;
-    auto logger = getLogger("test");
-    LOG_TEST(logger, "value {}", ++evaluated);
-    LOG_TRACE(logger, "value {}", ++evaluated);
-    LOG_DEBUG(logger, "value {}", ++evaluated);
-    LOG_INFO(logger, "value {}", ++evaluated);
-    EXPECT_EQ(evaluated, 0);
-    // WARNING/ERROR always emit, so their args ARE evaluated:
-    LOG_WARNING(logger, "value {}", ++evaluated);
-    EXPECT_EQ(evaluated, 1);
-    LOG_ERROR(logger, "value {}", ++evaluated);
-    EXPECT_EQ(evaluated, 2);
-}
-```
-
-- [ ] **M2-T3** (5 min): Write `LoggerUsefulTest.WarningAttributionCaptured` and
-  `LoggerUsefulTest.ErrorAttributionCaptured`:
-
-```cpp
-namespace
-{
-
-/// Test sink capturing glog messages. Verified pattern from
+/// Test sink capturing glog messages. Pattern verified from
 /// velox/common/time/tests/HierarchicalTimerTest.cpp:32-62.
 class TestLogSink : public google::LogSink
 {
@@ -507,244 +794,359 @@ public:
         google::RemoveLogSink(this);
     }
 
-    TestLogSink(const TestLogSink&) = delete;
-    TestLogSink& operator=(const TestLogSink&) = delete;
+    TestLogSink(const TestLogSink &) = delete;
+    TestLogSink & operator=(const TestLogSink &) = delete;
 
     void send(
-        google::LogSeverity /*severity*/,
-        const char* /*full_filename*/,
-        const char* /*base_filename*/,
+        google::LogSeverity severity,
+        const char * /*full_filename*/,
+        const char * /*base_filename*/,
         int /*line*/,
-        const struct ::tm* /*tm_time*/,
-        const char* message,
+        const struct ::tm * /*tm_time*/,
+        const char * message,
         size_t message_len) override
     {
+        last_severity_ = severity;
         captured_ += std::string(message, message_len);
     }
 
-    const std::string& captured() const
-    {
-        return captured_;
-    }
+    const std::string & captured() const { return captured_; }
+    google::LogSeverity lastSeverity() const { return last_severity_; }
 
     void clear()
     {
         captured_.clear();
+        last_severity_ = google::GLOG_INFO;
     }
 
 private:
     std::string captured_;
+    google::LogSeverity last_severity_ = google::GLOG_INFO;
 };
 
-} // namespace
-
-TEST(LoggerUsefulTest, WarningAttributionCaptured)
+/// RAII guard: saves/restores glog flags and optionally swaps the
+/// exception emitter. Prevents cross-test leakage.
+struct GlogFlagGuard
 {
-    TestLogSink sink;
-    auto logger = getLogger("MyComponent");
-    LOG_WARNING(logger, "something went wrong: {}", 42);
-    EXPECT_NE(sink.captured().find("MyComponent"), std::string::npos)
-        << "Logger name must appear in output. Got: " << sink.captured();
-    EXPECT_NE(sink.captured().find("something went wrong: 42"), std::string::npos)
-        << "Formatted message must appear. Got: " << sink.captured();
-}
+    int32_t saved_v;
+    int32_t saved_minloglevel;
+    GlogFlagGuard()
+        : saved_v(FLAGS_v)
+        , saved_minloglevel(FLAGS_minloglevel)
+    {
+    }
+    ~GlogFlagGuard()
+    {
+        FLAGS_v = saved_v;
+        FLAGS_minloglevel = saved_minloglevel;
+    }
+};
 
-TEST(LoggerUsefulTest, ErrorAttributionCaptured)
+/// RAII guard for the exception emitter function pointer.
+struct EmitterGuard
 {
-    TestLogSink sink;
-    auto logger = getLogger("ErrorComp");
-    LOG_ERROR(logger, "fatal: {}", "disk full");
-    EXPECT_NE(sink.captured().find("ErrorComp"), std::string::npos);
-    EXPECT_NE(sink.captured().find("fatal: disk full"), std::string::npos);
+    detail::ExceptionEmitter old_;
+    explicit EmitterGuard(detail::ExceptionEmitter newEmitter)
+        : old_(detail::testExceptionEmitter())
+    {
+        detail::testExceptionEmitter() = newEmitter;
+    }
+    ~EmitterGuard()
+    {
+        detail::testExceptionEmitter() = old_;
+    }
+};
+```
+
+#### 4.8 TDD Steps — Lazy Logging
+
+- [ ] **M2-T1** Write `LazyLoggingTest.LogTestEvaluatesWhenEnabled` — proves
+  `LOG_TEST` is NOT a permanent no-op:
+
+```cpp
+TEST(LazyLoggingTest, LogTestEvaluatesWhenEnabled)
+{
+    GlogFlagGuard guard;
+    FLAGS_v = 3;
+    FLAGS_minloglevel = 0;
+
+    int evaluated = 0;
+    auto logger = getLogger("test");
+    LOG_TEST(logger, "value {}", ++evaluated);
+    EXPECT_EQ(evaluated, 1)
+        << "LOG_TEST must evaluate when --v=3 and minloglevel=0";
 }
 ```
 
-- [ ] **M2-I1** (3 min): Implement macros in header (as shown in §3.5).
-- [ ] **M2-G1** (3 min): Build and run. All M2 tests GREEN.
+- [ ] **M2-T2** Write `LazyLoggingTest.VlogLevelsFilteredAtDefaultV` — uses a
+  side-effect lambda for the logger expression to also catch MUT-03 (pre-gate
+  logger eval):
+
+```cpp
+TEST(LazyLoggingTest, VlogLevelsFilteredAtDefaultV)
+{
+    GlogFlagGuard guard;
+    FLAGS_v = 0;
+    FLAGS_minloglevel = 0;
+
+    int logger_eval = 0;
+    int arg_eval = 0;
+    auto makeLogger = [&]() -> LoggerPtr
+    {
+        ++logger_eval;
+        return getLogger("test");
+    };
+
+    LOG_TEST(makeLogger(), "v {}", ++arg_eval);
+    LOG_TRACE(makeLogger(), "v {}", ++arg_eval);
+    LOG_DEBUG(makeLogger(), "v {}", ++arg_eval);
+    EXPECT_EQ(arg_eval, 0)
+        << "VLOG-based macros must not evaluate args at default FLAGS_v=0";
+    EXPECT_EQ(logger_eval, 0)
+        << "VLOG-based macros must not evaluate logger at default FLAGS_v=0";
+}
+```
+
+- [ ] **M2-T3** Write `LazyLoggingTest.VlogMinloglevelGate` — the combined gate
+  case from the binding spec (`--v=3 --minloglevel=1`):
+
+```cpp
+TEST(LazyLoggingTest, VlogMinloglevelGate)
+{
+    GlogFlagGuard guard;
+    FLAGS_v = 3;            // enables VLOG_IS_ON(3)
+    FLAGS_minloglevel = 1;  // suppresses underlying INFO (0)
+
+    int evaluated = 0;
+    auto logger = getLogger("test");
+    LOG_TEST(logger, "v {}", ++evaluated);
+    LOG_TRACE(logger, "v {}", ++evaluated);
+    LOG_DEBUG(logger, "v {}", ++evaluated);
+    EXPECT_EQ(evaluated, 0)
+        << "VLOG macros must not evaluate when minloglevel suppresses INFO";
+}
+```
+
+- [ ] **M2-T4** Write `LazyLoggingTest.NativeSeverityMinloglevelGate`:
+
+```cpp
+TEST(LazyLoggingTest, NativeSeverityMinloglevelGate)
+{
+    GlogFlagGuard guard;
+    FLAGS_minloglevel = 3; // suppress INFO, WARNING, ERROR
+
+    int info_eval = 0, warn_eval = 0, error_eval = 0;
+    auto logger = getLogger("test");
+    LOG_INFO(logger, "v {}", ++info_eval);
+    LOG_WARNING(logger, "v {}", ++warn_eval);
+    LOG_ERROR(logger, "v {}", ++error_eval);
+    EXPECT_EQ(info_eval, 0);
+    EXPECT_EQ(warn_eval, 0);
+    EXPECT_EQ(error_eval, 0);
+}
+```
+
+- [ ] **M2-T5** Write `LazyLoggingTest.ExactlyOnceEvaluation`:
+
+```cpp
+TEST(LazyLoggingTest, ExactlyOnceEvaluation)
+{
+    GlogFlagGuard guard;
+    FLAGS_v = 3;
+    FLAGS_minloglevel = 0;
+
+    int logger_eval = 0;
+    int fmt_eval = 0;
+    int arg_eval = 0;
+
+    auto makeLogger = [&]() -> LoggerPtr
+    {
+        ++logger_eval;
+        return getLogger("once");
+    };
+
+    LOG_TEST(makeLogger(), "{}", (++arg_eval, ++fmt_eval, 42));
+    EXPECT_EQ(logger_eval, 1) << "Logger evaluated more than once";
+    EXPECT_EQ(fmt_eval, 1) << "Format args evaluated more than once";
+    EXPECT_EQ(arg_eval, 1) << "Arguments evaluated more than once";
+}
+```
+
+- [ ] **M2-T6** Write `LazyLoggingTest.NoOwnershipCopy`:
+
+```cpp
+TEST(LazyLoggingTest, NoOwnershipCopy)
+{
+    GlogFlagGuard guard;
+    FLAGS_minloglevel = 0;
+
+    auto logger = getLogger("ownership");
+    ASSERT_EQ(logger.use_count(), 1);
+
+    long use_count_during = 0;
+    LOG_WARNING(logger, "count={}",
+        (use_count_during = logger.use_count(), 42));
+
+    EXPECT_EQ(use_count_during, 1)
+        << "auto&& must not copy shared_ptr (would be 2 with auto)";
+    EXPECT_EQ(logger.use_count(), 1);
+}
+```
+
+- [ ] **M2-T7** Write `LazyLoggingTest.SeverityNameMessageCapture`:
+
+```cpp
+TEST(LazyLoggingTest, SeverityNameMessageCapture)
+{
+    GlogFlagGuard guard;
+    FLAGS_minloglevel = 0;
+    FLAGS_v = 3;
+    TestLogSink sink;
+
+    auto logger = getLogger("MyComponent");
+
+    sink.clear();
+    LOG_WARNING(logger, "warn {}", 1);
+    EXPECT_NE(sink.captured().find("[MyComponent]"), std::string::npos);
+    EXPECT_NE(sink.captured().find("warn 1"), std::string::npos);
+    EXPECT_EQ(sink.lastSeverity(), google::GLOG_WARNING);
+
+    sink.clear();
+    LOG_ERROR(logger, "err {}", 2);
+    EXPECT_NE(sink.captured().find("[MyComponent]"), std::string::npos);
+    EXPECT_NE(sink.captured().find("err 2"), std::string::npos);
+    EXPECT_EQ(sink.lastSeverity(), google::GLOG_ERROR);
+
+    sink.clear();
+    LOG_INFO(logger, "info {}", 3);
+    EXPECT_NE(sink.captured().find("[MyComponent]"), std::string::npos);
+    EXPECT_NE(sink.captured().find("info 3"), std::string::npos);
+    EXPECT_EQ(sink.lastSeverity(), google::GLOG_INFO);
+
+    sink.clear();
+    LOG_TEST(logger, "test {}", 4);
+    EXPECT_NE(sink.captured().find("[MyComponent]"), std::string::npos);
+    EXPECT_NE(sink.captured().find("test 4"), std::string::npos);
+}
+```
+
+- [ ] **M2-T8** Write `LazyLoggingTest.NullLoggerAttribution`:
+
+```cpp
+TEST(LazyLoggingTest, NullLoggerAttribution)
+{
+    GlogFlagGuard guard;
+    FLAGS_minloglevel = 0;
+    TestLogSink sink;
+
+    LoggerPtr null_logger;
+    LOG_WARNING(null_logger, "null test");
+    EXPECT_NE(sink.captured().find("[null]"), std::string::npos)
+        << "Null logger must be attributed as [null]. Got: " << sink.captured();
+}
+```
+
+- [ ] **M2-T9** Write `LazyLoggingTest.OneMessageOverload`:
+
+```cpp
+TEST(LazyLoggingTest, OneMessageOverload)
+{
+    GlogFlagGuard guard;
+    FLAGS_minloglevel = 0;
+    TestLogSink sink;
+
+    auto logger = getLogger("test");
+    LOG_WARNING(logger, "already formatted message");
+    EXPECT_NE(sink.captured().find("already formatted message"), std::string::npos);
+}
+```
+
+- [ ] **M2-I1** Apply header changes from §4.5 and §4.6.
+
+- [ ] **M2-G1** Build and run (mono):
 
 ```bash
-ninja -C _build/debug velox_ch_common_test > _build/debug/build_017b_m2.log 2>&1
-cd _build/debug && ctest -R velox_ch_common_test --output-on-failure \
-  > ctest_017b_m2.log 2>&1
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  ninja -C _build/debug velox_ch_common_test \
+    > _build/debug/build_017b_m2.log 2>&1
 ```
 
-**Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug/build_017b_m2.log` and `_build/debug/ctest_017b_m2.log` and return
-only a concise summary — build success/failure with any compiler or linker errors
-quoted verbatim, and per-test PASS/FAIL for the M2 `LoggerUsefulTest` laziness and
-attribution cases. Do not read the logs inline.
+```bash
+source /root/oss/velox-helper/env.sh && \
+  cd /root/oss/velox/_build/debug && \
+  ctest -R velox_ch_common_test --output-on-failure \
+    > ctest_017b_m2.log 2>&1
+```
 
-**Existing test changes** (the `LoggerUsefulTest` and exception cases in
-`BasicShimsTest.cpp:58-109`):
-- `ArgumentsAreNotEvaluated` (line 58): **kept** — identical to `LogTestNeverEvaluates`.
-- `AllLogMacrosDoNotEvaluateArguments` (line 65): **replaced** by `LazyEvaluation` (M2) —
-  the old test asserts WARNING/ERROR don't evaluate, which contradicts the new real behavior.
-- `GetLoggerReturnsNonNullWithNameIdentity` (line 78): **preserved unchanged**.
-- `CurrentExceptionMessageRemainsEmptyFirstPhase` (line 85): **replaced** by the M1
-  `ExceptionFormattingTest` cases (§3.3) — the old test asserts an empty string even with
-  an active exception, which the real formatter contradicts. Delete it when M1 lands.
-- `TryLogCurrentExceptionIsNoOpFirstPhase` (line 98): **replaced** by the M3
-  `ExceptionLoggingTest` cases (§3.10) — the old test asserts no-op behavior, which the
-  real logger contradicts. Delete it when M3 lands.
+**Log analysis (required):** dispatch a `task` subagent to analyze each log.
 
-#### 3.7 Mutations
-
-| ID | Mutation | Affected test | Expected RED |
-|----|----------|---------------|--------------|
-| M5 | Make `LOG_TEST` evaluate: replace its no-op body with `CH_LOG_SEVERITY_IMPL(logger, WARNING, fmt_str, ##__VA_ARGS__)` (unconditional) | `LogTestNeverEvaluates` | `evaluated != 0` |
-| M6 | Remove the `if (VLOG_IS_ON(vlog_level))` guard from `CH_LOG_IMPL` | `LazyEvaluation` | `evaluated != 0` at TRACE/DEBUG/INFO |
-| M7 | Remove `"[" << _ch_log_ptr->name() << "] "` from `CH_LOG_SEVERITY_IMPL` | `WarningAttributionCaptured`, `ErrorAttributionCaptured` | LogSink find of logger name fails |
+**GREEN gate:** All `LazyLoggingTest` cases PASS; all M1 tests still PASS.
 
 ---
 
-### Milestone 3: Exception Logging & Call-Site Compatibility
+### Milestone 3: Exception Logging
 
-**Goal:** `tryLogCurrentException` overloads are `noexcept`, accept
-`LoggerPtr` / `const char*` / `std::string`, never replace the current exception,
-handle formatting/logging failure. All existing FileCache call patterns compile.
+**Goal:** Prove `tryLogCurrentException` overloads with TDD — both call shapes,
+no-active-exception diagnostic, attribution, original rethrow, Velox/std/unknown
+capture, and emergency `stderr` path. The implementation is already in
+`logger_useful.cpp` from M1 (§4.2); this milestone writes and runs the tests.
 
-#### 3.8 Declarations (in `logger_useful.h`, inside namespace)
+**Files:**
+- Modify: `velox/ch/Common/tests/BasicShimsTest.cpp` (exception logging tests)
 
-```cpp
-namespace facebook::velox::ch
-{
+**Interfaces:**
+- Consumes: `tryLogCurrentException(const LoggerPtr&, const std::string&)` noexcept
+- Consumes: `tryLogCurrentException(const char*, const std::string&)` noexcept
+- Consumes: `detail::testExceptionEmitter()` (for injection)
+- Consumes: `detail::defaultExceptionEmitter` (for restore)
 
-/// Log the current exception through a LoggerPtr. Noexcept, never replaces
-/// the original exception being handled.
-void tryLogCurrentException(
-    LoggerPtr logger,
-    const std::string& startOfMessage = "") noexcept;
+#### 4.9 TDD Steps — Exception Logging
 
-/// Log the current exception using a function/log name (e.g. __PRETTY_FUNCTION__).
-void tryLogCurrentException(
-    const char* logName,
-    const std::string& startOfMessage = "") noexcept;
-
-/// Overload for std::string name (delegates to const char*).
-void tryLogCurrentException(
-    const std::string& logName,
-    const std::string& startOfMessage = "") noexcept;
-
-} // namespace facebook::velox::ch
-```
-
-#### 3.9 Implementation (in `logger_useful.cpp`, appended after `getCurrentExceptionMessage`)
+- [ ] **M3-T1** Write `ExceptionLoggingTest.LoggerPtrOverload`:
 
 ```cpp
-void tryLogCurrentException(
-    LoggerPtr logger,
-    const std::string& startOfMessage) noexcept
+TEST(ExceptionLoggingTest, LoggerPtrOverload)
 {
+    TestLogSink sink;
     try
     {
-        std::string msg = getCurrentExceptionMessage(/*withStackTrace=*/true);
-        if (!startOfMessage.empty())
-        {
-            msg = startOfMessage + ": " + msg;
-        }
-        if (logger)
-        {
-            LOG(ERROR) << "[" << logger->name() << "] " << msg;
-        }
-        else
-        {
-            LOG(ERROR) << msg;
-        }
+        throw std::runtime_error("captured");
     }
     catch (...)
     {
-        // Reached only if the logging backend itself throws (e.g. std::bad_alloc
-        // while glog streams the record, or string concatenation runs out of
-        // memory). getCurrentExceptionMessage is noexcept and already yields
-        // deterministic fallback text, so this is not a formatting failure.
-        // Swallowing is unavoidable here: it exists solely to uphold noexcept and
-        // preserve the original exception being handled. No log line is emitted on
-        // this path and none is claimed.
+        EXPECT_NO_THROW(tryLogCurrentException(getLogger("LPO"), "during op"));
     }
-}
-
-void tryLogCurrentException(
-    const char* logName,
-    const std::string& startOfMessage) noexcept
-{
-    try
-    {
-        std::string msg = getCurrentExceptionMessage(/*withStackTrace=*/true);
-        if (!startOfMessage.empty())
-        {
-            msg = startOfMessage + ": " + msg;
-        }
-        LOG(ERROR) << "[" << (logName ? logName : "(null)") << "] " << msg;
-    }
-    catch (...)
-    {
-        // Logging backend threw — swallowed only to uphold noexcept and preserve
-        // the original exception; no log line on this path (see LoggerPtr overload).
-    }
-}
-
-void tryLogCurrentException(
-    const std::string& logName,
-    const std::string& startOfMessage) noexcept
-{
-    tryLogCurrentException(logName.c_str(), startOfMessage);
+    EXPECT_NE(sink.captured().find("[LPO]"), std::string::npos);
+    EXPECT_NE(sink.captured().find("captured"), std::string::npos);
+    EXPECT_NE(sink.captured().find("during op"), std::string::npos);
 }
 ```
 
-**Design notes:**
-- All overloads are `noexcept`. `getCurrentExceptionMessage` is itself `noexcept`
-  and returns deterministic fallback text (e.g. `"Unknown exception"`,
-  `"VeloxException (formatting failed)"`) when its own formatting fails, so `msg`
-  is always well-defined: a formatting failure is logged as that fallback text,
-  not lost.
-- The outer `catch (...)` is reached only if the logging backend itself throws
-  (e.g. `std::bad_alloc` while glog streams the record). On that path swallowing
-  is unavoidable and exists solely to uphold `noexcept` and preserve the original
-  exception being handled. No log line is written on that path, and the plan makes
-  no claim that one is — an absent log line is not treated as a diagnostic.
-- The `LoggerPtr` overload matches: `tryLogCurrentException(getLog(), "context msg")`
-- The `const char*` overload matches: `tryLogCurrentException(__PRETTY_FUNCTION__)`
-- The `std::string` overload matches: `tryLogCurrentException(std::string("name"), "")`
-
-#### 3.10 TDD Steps
-
-- [ ] **M3-T1** (3 min): Write `ExceptionLoggingTest.TryLogWithLoggerPtrDoesNotThrow`:
+- [ ] **M3-T2** Write `ExceptionLoggingTest.ConstCharOverload`:
 
 ```cpp
-TEST(ExceptionLoggingTest, TryLogWithLoggerPtrDoesNotThrow)
+TEST(ExceptionLoggingTest, ConstCharOverload)
 {
+    TestLogSink sink;
     try
     {
-        VELOX_FAIL("test exception");
+        throw std::runtime_error("char overload");
     }
     catch (...)
     {
-        EXPECT_NO_THROW(tryLogCurrentException(getLogger("Test"), "context"));
+        EXPECT_NO_THROW(tryLogCurrentException("MyFunc"));
+        EXPECT_NO_THROW(tryLogCurrentException("MyFunc2", "ctx"));
     }
+    EXPECT_NE(sink.captured().find("[MyFunc]"), std::string::npos);
+    EXPECT_NE(sink.captured().find("char overload"), std::string::npos);
 }
 ```
 
-- [ ] **M3-T2** (3 min): Write `ExceptionLoggingTest.TryLogWithNameDoesNotThrow`:
+- [ ] **M3-T3** Write `ExceptionLoggingTest.OriginalRethrow`:
 
 ```cpp
-TEST(ExceptionLoggingTest, TryLogWithNameDoesNotThrow)
-{
-    try
-    {
-        VELOX_FAIL("test exception");
-    }
-    catch (...)
-    {
-        EXPECT_NO_THROW(tryLogCurrentException(__PRETTY_FUNCTION__));
-        EXPECT_NO_THROW(tryLogCurrentException(std::string("func"), "msg"));
-    }
-}
-```
-
-- [ ] **M3-T3** (3 min): Write `ExceptionLoggingTest.OriginalExceptionPreserved`:
-
-```cpp
-TEST(ExceptionLoggingTest, OriginalExceptionPreserved)
+TEST(ExceptionLoggingTest, OriginalRethrow)
 {
     bool caughtOriginal = false;
     try
@@ -756,44 +1158,43 @@ TEST(ExceptionLoggingTest, OriginalExceptionPreserved)
         catch (...)
         {
             tryLogCurrentException(getLogger("Test"), "logging");
-            throw; // re-throw — must still be the same exception
+            throw; // rethrow — must still be the original exception
         }
     }
-    catch (const velox::VeloxException& e)
+    catch (const velox::VeloxException & e)
     {
         caughtOriginal =
             (e.message().find("original error") != std::string::npos);
     }
-    EXPECT_TRUE(caughtOriginal);
+    EXPECT_TRUE(caughtOriginal)
+        << "tryLogCurrentException must preserve the original exception";
 }
 ```
 
-- [ ] **M3-T4** (3 min): Write `ExceptionLoggingTest.LogOutputContainsExceptionMessage`:
+- [ ] **M3-T4** Write `ExceptionLoggingTest.VeloxExceptionCaptured`:
 
 ```cpp
-TEST(ExceptionLoggingTest, LogOutputContainsExceptionMessage)
+TEST(ExceptionLoggingTest, VeloxExceptionCaptured)
 {
     TestLogSink sink;
     try
     {
-        throw std::runtime_error("captured failure");
+        VELOX_FAIL("velox detail");
     }
     catch (...)
     {
-        tryLogCurrentException(getLogger("CaptureTest"), "during op");
+        tryLogCurrentException(getLogger("VCap"));
     }
-    EXPECT_NE(sink.captured().find("CaptureTest"), std::string::npos);
-    EXPECT_NE(sink.captured().find("captured failure"), std::string::npos);
-    EXPECT_NE(sink.captured().find("during op"), std::string::npos);
+    EXPECT_NE(sink.captured().find("VeloxException"), std::string::npos);
+    EXPECT_NE(sink.captured().find("velox detail"), std::string::npos);
+    EXPECT_NE(sink.captured().find("[VCap]"), std::string::npos);
 }
 ```
 
-- [ ] **M3-T5** (2 min): Write `ExceptionLoggingTest.UnknownExceptionLoggedAsFallback`
-  — a non-`std::exception` throw is logged with deterministic fallback text (never
-  swallowed), and every overload stays `noexcept`:
+- [ ] **M3-T5** Write `ExceptionLoggingTest.UnknownExceptionCaptured`:
 
 ```cpp
-TEST(ExceptionLoggingTest, UnknownExceptionLoggedAsFallback)
+TEST(ExceptionLoggingTest, UnknownExceptionCaptured)
 {
     TestLogSink sink;
     try
@@ -803,318 +1204,555 @@ TEST(ExceptionLoggingTest, UnknownExceptionLoggedAsFallback)
     catch (...)
     {
         EXPECT_NO_THROW(tryLogCurrentException(getLogger("X")));
-        EXPECT_NO_THROW(tryLogCurrentException(__PRETTY_FUNCTION__));
-        EXPECT_NO_THROW(tryLogCurrentException(std::string("Y"), "ctx"));
+        EXPECT_NO_THROW(tryLogCurrentException("Y", "ctx"));
     }
-    // getCurrentExceptionMessage returns the deterministic "Unknown exception"
-    // fallback for a non-std throw, and that text IS logged — it is not swallowed.
     EXPECT_NE(sink.captured().find("Unknown exception"), std::string::npos)
-        << "Unknown exception must be logged as fallback text. Got: "
+        << "Unknown exception must be logged, not swallowed. Got: "
         << sink.captured();
 }
 ```
 
-- [ ] **M3-T6** (2 min): Write `ExceptionLoggingTest.FunctionNameOverloadMatchesCallers`:
+- [ ] **M3-T6** Write `ExceptionLoggingTest.NoActiveExceptionDiagnostic`:
 
 ```cpp
-TEST(ExceptionLoggingTest, FunctionNameOverloadMatchesCallers)
+TEST(ExceptionLoggingTest, NoActiveExceptionDiagnostic)
 {
-    // Verify the exact call patterns used in FileCache.cpp/FileSegment.cpp compile:
+    TestLogSink sink;
+    // Called outside any catch block — misuse diagnostic, never crash.
+    EXPECT_NO_THROW(tryLogCurrentException(getLogger("Misuse")));
+    EXPECT_NE(sink.captured().find("no active exception"), std::string::npos)
+        << "Misuse diagnostic must be emitted. Got: " << sink.captured();
+}
+```
+
+- [ ] **M3-T7** Write `ExceptionLoggingTest.EmergencyStderr`:
+
+```cpp
+TEST(ExceptionLoggingTest, EmergencyStderr)
+{
+    // Inject a throwing emitter to force the emergency stderr path.
+    EmitterGuard emitterGuard([](const char *, const char *)
+    {
+        throw std::runtime_error("injected emitter failure");
+    });
+
+    // Capture stderr via pipe.
+    int pipefd[2];
+    ASSERT_EQ(::pipe(pipefd), 0);
+    int saved_stderr = ::dup(STDERR_FILENO);
+    ASSERT_NE(saved_stderr, -1);
+    ::dup2(pipefd[1], STDERR_FILENO);
+
+    try
+    {
+        throw std::runtime_error("original");
+    }
+    catch (...)
+    {
+        EXPECT_NO_THROW(tryLogCurrentException(getLogger("Emergency")));
+    }
+
+    // Restore stderr before reading.
+    ::dup2(saved_stderr, STDERR_FILENO);
+    ::close(saved_stderr);
+    ::close(pipefd[1]);
+
+    char buf[512];
+    ssize_t n = ::read(pipefd[0], buf, sizeof(buf) - 1);
+    ::close(pipefd[0]);
+    ASSERT_GT(n, 0) << "Emergency stderr path must write output";
+    buf[n] = '\0';
+    std::string captured(buf);
+
+    EXPECT_NE(captured.find("emergency"), std::string::npos)
+        << "Emergency message must appear on stderr. Got: " << captured;
+}
+```
+
+- [ ] **M3-T8** Write `ExceptionLoggingTest.FileSegmentCallPatterns` — verify the
+  exact `tryLogCurrentException` overload shapes used by its four callers
+  (`FileCache.cpp`, `FileSegment.cpp`, `Metadata.cpp`,
+  `EvictionCandidates.cpp`). The getter-only call sites
+  (`SLRUFileCachePriority.cpp`, `FileCacheScheduler.cpp`) are rebuilt through
+  their production library owners at M3-C1/M1-G1 and use the separately tested
+  `getCurrentExceptionMessage` API:
+
+```cpp
+TEST(ExceptionLoggingTest, FileSegmentCallPatterns)
+{
     TestLogSink sink;
     auto log = getLogger("FileCache");
     try
     {
-        VELOX_FAIL("simulated error");
+        VELOX_FAIL("simulated");
     }
     catch (...)
     {
-        // Pattern from FileCache.cpp:458,509,1863
+        // Pattern: FileSegment.cpp:1466, FileCache.cpp:458,507,1861,1877,2551
         tryLogCurrentException(__PRETTY_FUNCTION__);
-        // Pattern from FileCache.cpp:1555,1667
+        // Pattern: FileSegment.cpp:701,1050,1089,1424
+        tryLogCurrentException(log, "Failed to finalize cache writer");
+        // Pattern: FileSegment.cpp:775 (fmt::format context)
+        tryLogCurrentException(
+            log,
+            fmt::format("Failed to rename cache file '{}'", "/tmp/test"));
+        // Pattern: FileCache.cpp:1553,1665,1695,1710,1817,1947,1963
         tryLogCurrentException(log, "Error in background thread");
+        // Pattern: FileSegment.cpp:1424 (no context)
+        tryLogCurrentException(log);
     }
-    EXPECT_NE(sink.captured().find("FileCache"), std::string::npos);
-    EXPECT_NE(sink.captured().find("simulated error"), std::string::npos);
+    EXPECT_NE(sink.captured().find("[FileCache]"), std::string::npos);
+    EXPECT_NE(sink.captured().find("simulated"), std::string::npos);
 }
 ```
 
-- [ ] **M3-I1** (3 min): Implement overloads in `logger_useful.cpp` (§3.9).
-- [ ] **M3-G1** (3 min): Build and run. All M3 tests GREEN.
+- [ ] **M3-G1** Build and run (mono):
 
 ```bash
-ninja -C _build/debug velox_ch_common_test > _build/debug/build_017b_m3.log 2>&1
-cd _build/debug && ctest -R velox_ch_common_test --output-on-failure \
-  > ctest_017b_m3.log 2>&1
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  ninja -C _build/debug velox_ch_common_test \
+    > _build/debug/build_017b_m3.log 2>&1
 ```
-
-**Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug/build_017b_m3.log` and `_build/debug/ctest_017b_m3.log` and return
-only a concise summary — build success/failure with any compiler or linker errors
-quoted verbatim, and per-test PASS/FAIL for the M3 `ExceptionLoggingTest` cases.
-Do not read the logs inline.
-
-- [ ] **M3-C1** (2 min): Build all FileCache targets (mono) to verify call-site compatibility:
 
 ```bash
-ninja -C _build/debug velox_ch_filecache > _build/debug/build_017b_m3_callers.log 2>&1
+source /root/oss/velox-helper/env.sh && \
+  cd /root/oss/velox/_build/debug && \
+  ctest -R velox_ch_common_test --output-on-failure \
+    > ctest_017b_m3.log 2>&1
 ```
 
-**Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug/build_017b_m3_callers.log` and return only a concise summary —
-whether `velox_ch_filecache` compiled and linked, with any errors quoted verbatim
-(especially overload-resolution failures at the `tryLogCurrentException` call
-sites). Do not read the log inline.
+**Log analysis (required):** dispatch a `task` subagent to analyze each log.
 
-No source changes required in callers:
-- `tryLogCurrentException(__PRETTY_FUNCTION__)` → `const char*` overload
-- `tryLogCurrentException(getLog(), "message")` → `LoggerPtr` overload
-- `getCurrentExceptionMessage(true)` → real formatting
-- `LOG_TEST(log, "fmt", args...)` → no-op macro (unchanged)
-- `LOG_TRACE`/`DEBUG`/`INFO`/`WARNING`/`ERROR(log, "fmt", args...)` → real macros
+**GREEN gate:** All `ExceptionLoggingTest` cases PASS; all M1/M2 tests still
+PASS.
+
+- [ ] **M3-C1** Build all FileCache targets (mono) to verify call-site
+  compatibility (no source changes in callers):
+
+```bash
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  ninja -C _build/debug \
+    velox_ch_filecache \
+    velox_ch_filecache_core \
+    velox_ch_filecache_manager \
+    velox_ch_filecache_dwio \
+    > _build/debug/build_017b_m3_callers.log 2>&1
+```
+
+**Log analysis (required):** dispatch a `task` subagent to analyze the log.
+
+**GREEN gate:** All FileCache targets compile and link with the new declarations.
 
 ---
 
-### Milestone 4: CMake & Accumulated Gate
+### Milestone 4: Compile-Strip Proof
 
-**Goal:** All existing `velox_ch_*` targets build and pass in both mono and
-non-mono configurations. Dynamic target discovery.
+**Goal:** A separate executable compiled with `GOOGLE_STRIP_LOG=1` proves that
+stripped levels (`LOG_TEST`, `LOG_TRACE`, `LOG_DEBUG`, `LOG_INFO`) evaluate no
+logger expression, format expression, or arguments.
 
-#### 5.1 CMake Changes
+**Files:**
+- Create: `velox/ch/Common/tests/CompileStripProbe.cpp`
+- Modify: `velox/ch/Common/tests/CMakeLists.txt`
 
-**`velox/ch/Common/CMakeLists.txt`** — add `logger_useful.cpp` to the
-`velox_add_library` source list (works for both mono and non-mono):
+#### 4.10 Probe source
+
+```cpp
+/// Compile-strip probe: compiled with GOOGLE_STRIP_LOG=1.
+/// At strip level 1, all VLOG-based macros (LOG_TEST/TRACE/DEBUG) and
+/// LOG_INFO are compiled out. This probe verifies no expression is
+/// evaluated for stripped levels.
+/// Exit status 0 = pass, non-zero = fail.
+
+// GOOGLE_STRIP_LOG must be set before glog inclusion. This is done
+// via target_compile_definitions in CMake.
+
+#include "velox/ch/Common/logger_useful.h"
+
+using namespace facebook::velox::ch;
+
+int main()
+{
+    int evaluated = 0;
+    auto logger = getLogger("strip-probe");
+
+    // These must all be compiled out at strip level 1.
+    LOG_TEST(logger, "v {}", ++evaluated);
+    LOG_TRACE(logger, "v {}", ++evaluated);
+    LOG_DEBUG(logger, "v {}", ++evaluated);
+    LOG_INFO(logger, "v {}", ++evaluated);
+
+    if (evaluated != 0)
+    {
+        return 1; // FAIL: stripped levels evaluated expressions
+    }
+
+    // LOG_WARNING and LOG_ERROR are NOT stripped at level 1.
+    // We do not test them here because they are expected to be active.
+
+    return 0;
+}
+```
+
+#### 4.11 CMake registration
+
+Append to `velox/ch/Common/tests/CMakeLists.txt`:
 
 ```cmake
-velox_add_library(
-  velox_ch_filecache
-  StatusFile.cpp
-  ThreadPool.cpp
-  FileCacheQueryIdScope.cpp
-  FileCacheScheduler.cpp
-  SipHash128.cpp
-  logger_useful.cpp
-  HEADERS
-    ClickHouseAliases.h
-    ClickHouseAssert.h
-    CurrentMetrics.h
-    FailPoint.h
-    FileCacheBoundedQueue.h
-    FileCacheException.h
-    FileCacheFilesystem.h
-    FileCacheQueryIdScope.h
-    FileCacheScheduler.h
-    FilesystemCacheLog.h
-    logger_useful.h
-    OpenTelemetryTraceContext.h
-    ProfileEvents.h
-    QueryStatus.h
-    SharedMutex.h
-    SipHash128.h
-    StatusFile.h
-    ThreadPool.h
+add_executable(velox_ch_compile_strip_probe CompileStripProbe.cpp)
+add_test(velox_ch_compile_strip_probe velox_ch_compile_strip_probe)
+
+target_compile_definitions(
+  velox_ch_compile_strip_probe
+  PRIVATE
+    GOOGLE_STRIP_LOG=1
 )
-```
 
-**Rationale (verified against `CMake/VeloxUtils.cmake:91-213`):** in mono mode
-(`VELOX_MONO_LIBRARY` set) `velox_add_library` forwards its positional sources to
-`target_sources(velox PRIVATE ${_sources})` when the `velox` target already exists
-(`VeloxUtils.cmake:114`), or to `add_library(velox ${_type} ${_sources})` on the
-first invocation (`:124`), then exposes `velox_ch_filecache` as an alias of
-`velox` (`:178`). In non-mono mode it forwards the same sources to
-`velox_base_add_library(${TARGET} ${library_type} ${_sources})`, creating a
-standalone library (`:182`). Listing `logger_useful.cpp` in this positional source
-list therefore compiles it in BOTH configurations. The draft's previously-considered
-approach (`if(NOT VELOX_MONO_LIBRARY) target_sources(velox_ch_filecache PRIVATE
-logger_useful.cpp)`) would have DROPPED the source from the mono build, because that
-guard is false when `VELOX_MONO_LIBRARY` is set.
-
-**Non-mono link block** — extend the existing `if(NOT VELOX_MONO_LIBRARY)` block
-(`velox/ch/Common/CMakeLists.txt:114-123`) with `velox_process` and `glog::glog`,
-and extend its explanatory comment (`:108-113`) to mention the two new deps. The
-block in full becomes:
-
-```cmake
-if(NOT VELOX_MONO_LIBRARY)
-  target_link_libraries(
-    velox_ch_filecache
-    PUBLIC
-      velox_common_config
-      velox_exception
-      velox_process
-      Folly::folly
-      fmt::fmt
-      glog::glog
-  )
-endif()
-```
-
-**`velox_process`** is needed for `StackTrace::toString()` called in
-`getCurrentExceptionMessage`. **`glog::glog`** is needed for `LOG(ERROR)` in
-`tryLogCurrentException` and `VLOG`/`VLOG_IS_ON` in the macros. In mono builds,
-both are already linked transitively through the mono `velox` target.
-
-**`velox/ch/Common/tests/CMakeLists.txt`** — add `glog::glog` to test link:
-
-```cmake
 target_link_libraries(
-  velox_ch_common_test
+  velox_ch_compile_strip_probe
   PRIVATE
     velox_ch_filecache
-    velox_test_util
-    velox_exception
     Folly::folly
     fmt::fmt
     glog::glog
-    GTest::gtest
-    GTest::gtest_main
 )
 ```
 
-#### 5.2 Build & Test Steps
+#### 4.12 TDD Steps
 
-- [ ] **M4-B1** (5 min): Build ALL `velox_ch_*` targets (mono):
+- [ ] **M4-I1** Create `CompileStripProbe.cpp` from §4.10.
 
-```bash
-targets=$(grep -rh "^add_executable" velox/ch/*/tests/CMakeLists.txt \
-          velox/ch/*/*/tests/CMakeLists.txt 2>/dev/null | \
-          sed 's/add_executable(\([^ )]*\).*/\1/' | sort -u)
-ninja -C _build/debug $targets > _build/debug/build_017b_mono_all.log 2>&1
-```
+- [ ] **M4-I2** Add CMake registration from §4.11.
 
-**Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug/build_017b_mono_all.log` and return only a concise summary —
-per-target build success/failure across all discovered `velox_ch_*` targets, with
-any compiler or linker errors quoted verbatim. Do not read the log inline.
-
-- [ ] **M4-B2** (3 min): Run accumulated CTest (mono):
+- [ ] **M4-G1** Build and run:
 
 ```bash
-cd _build/debug && ctest -R "velox_ch_" --output-on-failure \
-  > ctest_017b_mono.log 2>&1
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  ninja -C _build/debug velox_ch_compile_strip_probe \
+    > _build/debug/build_017b_m4.log 2>&1
 ```
-
-**Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug/ctest_017b_mono.log` and return only a concise summary — total
-tests, per-test PASS/FAIL, and the count of failures (the gate requires zero). Do
-not read the log inline.
-
-**GREEN gate**: zero failures.
-
-- [ ] **M4-B3** (5 min): Configure and build non-mono:
 
 ```bash
-cmake -B _build/debug-nonmono -S . \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DVELOX_MONO_LIBRARY=OFF \
-  -GNinja \
-  > _build/debug-nonmono/cmake_017b.log 2>&1
-
-targets=$(grep -rh "^add_executable" velox/ch/*/tests/CMakeLists.txt \
-          velox/ch/*/*/tests/CMakeLists.txt 2>/dev/null | \
-          sed 's/add_executable(\([^ )]*\).*/\1/' | sort -u)
-ninja -C _build/debug-nonmono $targets > _build/debug-nonmono/build_017b_all.log 2>&1
+source /root/oss/velox-helper/env.sh && \
+  cd /root/oss/velox/_build/debug && \
+  ctest -R velox_ch_compile_strip_probe --output-on-failure \
+    > ctest_017b_m4.log 2>&1
 ```
 
-**Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug-nonmono/cmake_017b.log` and `_build/debug-nonmono/build_017b_all.log`
-and return only a concise summary — whether CMake configured with
-`VELOX_MONO_LIBRARY=OFF` and whether every `velox_ch_*` target built, with any
-configure/compiler/linker errors quoted verbatim. Do not read the logs inline.
+**Log analysis (required):** dispatch a `task` subagent to analyze each log.
 
-- [ ] **M4-B4** (3 min): Run accumulated CTest (non-mono):
-
-```bash
-cd _build/debug-nonmono && ctest -R "velox_ch_" --output-on-failure \
-  > ctest_017b_nonmono.log 2>&1
-```
-
-**Log analysis (required):** dispatch a `task` subagent to read
-`_build/debug-nonmono/ctest_017b_nonmono.log` and return only a concise summary —
-total tests, per-test PASS/FAIL, and the count of failures (the gate requires
-zero). Do not read the log inline.
-
-**GREEN gate**: zero failures.
+**GREEN gate:** Probe exits with status 0.
 
 ---
 
-## 4. RED/GREEN/Mutation Outcome Matrix
+### Milestone 5: Accumulated Gate (Mono + Non-Mono)
 
-| ID | Mutation | Affected test(s) | Expected RED |
-|----|----------|-------------------|--------------|
-| M1 | Remove `std::current_exception()` guard, use bare `throw;` | `NoActiveException` | Process terminates (`std::terminate`) |
-| M2 | VeloxException catch → `return {}` | `VeloxExceptionWithStack`, `VeloxExceptionWithoutStack` | `string::find` assertion fails |
-| M3 | std::exception catch → `return {}` | `StdException` | `string::find` assertion fails |
-| M4 | unknown catch → `return {}` | `UnknownException` | `string::find` assertion fails |
-| M5 | `LOG_TEST` evaluates args: replace its no-op body with `CH_LOG_SEVERITY_IMPL(logger, WARNING, fmt_str, ##__VA_ARGS__)` (unconditional) | `LogTestNeverEvaluates` | `evaluated != 0` |
-| M6 | Remove the `if (VLOG_IS_ON(vlog_level))` guard from `CH_LOG_IMPL` | `LazyEvaluation` | `evaluated != 0` at TRACE/DEBUG/INFO |
-| M7 | Remove `"[" << _ch_log_ptr->name() << "] "` from `CH_LOG_SEVERITY_IMPL` | `WarningAttributionCaptured`, `ErrorAttributionCaptured` | LogSink find of logger name fails |
+**Goal:** All registered `velox_ch_*` targets build and pass in both mono and
+non-mono configurations. This proves that CMake dependencies are complete and
+that no existing behavior is broken.
 
-All mutations produce a real test failure (not structural inspection).
+#### 5.1 Complete `velox_ch_*` target list
+
+Discovered from CMake at head `cda6c03703`:
+
+**Test targets (add_test):**
+| Target | Source |
+|--------|--------|
+| `velox_ch_common_test` | `velox/ch/Common/tests/CMakeLists.txt` |
+| `velox_ch_threadpool_test` | `velox/ch/Common/tests/CMakeLists.txt` |
+| `velox_ch_scheduler_test` | `velox/ch/Common/tests/CMakeLists.txt` |
+| `velox_ch_chassert_release_probe` | `velox/ch/Common/tests/CMakeLists.txt` |
+| `velox_ch_chassert_sanitizer_gate_test` | `velox/ch/Common/tests/CMakeLists.txt` |
+| `velox_ch_metrics_snapshot_test` | `velox/ch/Common/tests/CMakeLists.txt` |
+| `velox_ch_compile_strip_probe` | `velox/ch/Common/tests/CMakeLists.txt` (new) |
+| `velox_ch_guards_test` | `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt` |
+| `velox_ch_leaf_types_test` | `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt` |
+| `velox_ch_sharded_map_test` | `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt` |
+| `velox_ch_settings_test` | `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt` |
+| `velox_ch_filecache_core_scc_test` | `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt` |
+| `velox_ch_filecache_priority_cursor_test` | `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt` |
+| `velox_ch_filecache_manager_test` | `velox/ch/Interpreters/FileCache/tests/CMakeLists.txt` |
+| `velox_ch_io_test` | `velox/ch/IO/tests/CMakeLists.txt` |
+| `velox_ch_filecache_e2e_test` | `velox/ch/Disks/IO/tests/CMakeLists.txt` |
+
+**Benchmark targets (add_executable, not add_test):**
+| Target | Source |
+|--------|--------|
+| `velox_ch_filecache_seek_benchmark` | `velox/ch/benchmarks/CMakeLists.txt` |
+| `velox_ch_fcbi_benchmark` | `velox/ch/benchmarks/CMakeLists.txt` |
+
+**Library targets:**
+| Target | Source |
+|--------|--------|
+| `velox_ch_filecache` | `velox/ch/Common/CMakeLists.txt` |
+| `velox_ch_filecache_dwio` | `velox/ch/Disks/IO/CMakeLists.txt` |
+| `velox_ch_filecache_core` | `velox/ch/Interpreters/FileCache/CMakeLists.txt` |
+| `velox_ch_filecache_manager` | `velox/ch/Interpreters/FileCache/CMakeLists.txt` |
+
+#### 5.2 TDD Steps
+
+- [ ] **M5-B1** Build ALL `velox_ch_*` targets (mono):
+
+```bash
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  targets=$(grep -rh "^add_executable\|^add_test" \
+    velox/ch/*/tests/CMakeLists.txt \
+    velox/ch/*/*/tests/CMakeLists.txt \
+    velox/ch/benchmarks/CMakeLists.txt 2>/dev/null | \
+    grep -oP '(?<=\()[^ )]+' | sort -u) && \
+  ninja -C _build/debug $targets \
+    > _build/debug/build_017b_mono_all.log 2>&1
+```
+
+**Log analysis (required):** dispatch a `task` subagent to analyze the log.
+
+- [ ] **M5-B2** Run accumulated CTest (mono):
+
+```bash
+source /root/oss/velox-helper/env.sh && \
+  cd /root/oss/velox/_build/debug && \
+  ctest -R "velox_ch_" --output-on-failure \
+    > ctest_017b_mono.log 2>&1
+```
+
+**Log analysis (required):** dispatch a `task` subagent to analyze the log.
+
+**GREEN gate:** zero failures across all `velox_ch_*` test targets.
+
+- [ ] **M5-B3** Configure and build (non-mono):
+
+```bash
+mkdir -p /root/oss/velox/_build/debug-task017b-nonmono && \
+  cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  cmake -B _build/debug-task017b-nonmono -S . \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_TOOLCHAIN_FILE=/root/oss/gluten/dev/vcpkg/toolchain.cmake \
+    -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+    -DVELOX_GFLAGS_TYPE=static \
+    -DVELOX_BUILD_TESTING=ON \
+    -DVELOX_ENABLE_BENCHMARKS=ON \
+    -DVELOX_ENABLE_EXEC=ON \
+    -DVELOX_ENABLE_PARQUET=OFF \
+    -DVELOX_ENABLE_REMOTE_FUNCTIONS=ON \
+    -DVELOX_ENABLE_GROUPED_TESTS=OFF \
+    -DVELOX_MONO_LIBRARY=OFF \
+    -DVELOX_BUILD_RUNNER=OFF \
+    -DVELOX_ENABLE_GEO=OFF \
+    -DVELOX_BUILD_MINIMAL=OFF \
+    -DVELOX_SIMDJSON_SKIPUTF8VALIDATION=ON \
+    -GNinja \
+    > _build/debug-task017b-nonmono/cmake_017b.log 2>&1
+```
+
+```bash
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  targets=$(grep -rh "^add_executable\|^add_test" \
+    velox/ch/*/tests/CMakeLists.txt \
+    velox/ch/*/*/tests/CMakeLists.txt \
+    velox/ch/benchmarks/CMakeLists.txt 2>/dev/null | \
+    grep -oP '(?<=\()[^ )]+' | sort -u) && \
+  ninja -C _build/debug-task017b-nonmono $targets \
+    > _build/debug-task017b-nonmono/build_017b_all.log 2>&1
+```
+
+**Log analysis (required):** dispatch a `task` subagent to analyze the logs.
+
+- [ ] **M5-B4** Run accumulated CTest (non-mono):
+
+```bash
+source /root/oss/velox-helper/env.sh && \
+  cd /root/oss/velox/_build/debug-task017b-nonmono && \
+  ctest -R "velox_ch_" --output-on-failure \
+    > ctest_017b_nonmono.log 2>&1
+```
+
+**Log analysis (required):** dispatch a `task` subagent to analyze the log.
+
+**GREEN gate:** zero failures across all `velox_ch_*` test targets.
 
 ---
 
-## 5. Required Test File Includes
+## 5. RED/GREEN/Mutation Outcome Matrix
 
-The test file (`BasicShimsTest.cpp`) needs these additional includes for the new tests:
+Every mutation below must produce a real test failure (not structural
+inspection). The Worker applies the mutation, rebuilds `velox_ch_common_test`,
+runs the affected test(s), and records the RED failure text.
+
+| ID | Mutation | How to apply | Affected test(s) | Expected RED |
+|----|----------|--------------|-------------------|--------------|
+| MUT-01 | Permanent `LOG_TEST` no-op: replace `CH_VLOG_IMPL_` with `do {} while (false)` in `LOG_TEST` definition only | Change `#define LOG_TEST(...)  CH_VLOG_IMPL_(...)` to `#define LOG_TEST(logger, fmt_str, ...) do {} while (false)` | `LogTestEvaluatesWhenEnabled` | `evaluated` stays 0, expected 1 |
+| MUT-02 | Missing minloglevel gate: remove `0 >= FLAGS_minloglevel &&` from `CH_VLOG_IMPL_` | Delete the `0 >= FLAGS_minloglevel &&` prefix in the `if` condition | `VlogMinloglevelGate` | `evaluated` is nonzero, expected 0 |
+| MUT-03 | Pre-gate logger eval: move `auto && _ch_log_ = (logger);` before the `if` in `CH_VLOG_IMPL_` | Move the `auto && _ch_log_` line above the `if (0 >= FLAGS_minloglevel ...)` | `VlogLevelsFilteredAtDefaultV` | `logger_eval` is 3 (one per macro call), expected 0 |
+| MUT-04 | Ownership copy: change `auto &&` to `auto` in `CH_SEVERITY_IMPL_` | Replace `auto && _ch_log_` with `auto _ch_log_` | `NoOwnershipCopy` | `use_count_during` is 2, expected 1 |
+| MUT-05 | Missing attribution: remove `<< "[" << (...name...) << "] "` from `CH_SEVERITY_IMPL_` | Delete the three `<<` lines that emit `[name]` | `SeverityNameMessageCapture` | `sink.captured().find("[MyComponent]")` returns npos |
+| MUT-06 | Bare throw outside catch: remove `if (!eptr) return {};` null guard from `getCurrentExceptionMessage` AND replace `std::rethrow_exception(eptr);` with `throw;` in `formatExceptionPtr` — together, calling `getCurrentExceptionMessage` outside a catch invokes `throw;` with no active exception → `std::terminate` | Remove `if (!eptr) return {};` (lines 287-290) AND change `std::rethrow_exception(eptr);` to `throw;` in `formatExceptionPtr` | `ExceptionFormattingDeathTest.NoActiveExceptionDoesNotTerminate` | Subprocess terminates non-zero; `EXPECT_EXIT(…, ExitedWithCode(0), "")` fails → RED |
+| MUT-07 | Ignored stack flag: always append stack regardless of `withStackTrace` in `formatExceptionPtr` | Remove the `if (withStackTrace)` guard | `VeloxExceptionWithoutStack` | `"Stack trace"` found when it should be absent |
+| MUT-08 | Swallowed emergency failure: replace emergency `::write(STDERR_FILENO, ...)` with `// nothing` | Comment out the `::write(...)` call in the outer `catch (...)` | `EmergencyStderr` | `n` (bytes read from pipe) is 0, expected > 0 |
+| MUT-09 | Missing verbosity gate: remove `VLOG_IS_ON(vlog_level) &&` from `CH_VLOG_IMPL_` — leaves only the `minloglevel` gate, so at `FLAGS_v=0` (default) all three VLOG macros evaluate their logger and arguments | Delete `VLOG_IS_ON(vlog_level) &&` from the `if` condition in `CH_VLOG_IMPL_` | `VlogLevelsFilteredAtDefaultV` | `arg_eval` and `logger_eval` are non-zero, expected 0 |
+
+> **Compile-strip configuration verification (Milestone 4 only):** `velox_ch_compile_strip_probe` is built with `GOOGLE_STRIP_LOG=1` and its exit code checked in M4-G1. This is a compile-configuration check, not one of the nine spec mutations. No source code mutation is applied; the `GOOGLE_STRIP_LOG` definition is toggled only in the probe target's CMake compile definitions.
+
+**Mutation workflow for each MUT-NN:**
+
+```bash
+# 1. Apply the mutation (edit logger_useful.h or logger_useful.cpp)
+# 2. Rebuild:
+cd /root/oss/velox && \
+  source /root/oss/velox-helper/env.sh && \
+  ninja -C _build/debug velox_ch_common_test \
+    > _build/debug/build_017b_mut_NN.log 2>&1
+# 3. Run the affected test:
+source /root/oss/velox-helper/env.sh && \
+  cd /root/oss/velox/_build/debug && \
+  ctest -R velox_ch_common_test --output-on-failure \
+    > ctest_017b_mut_NN.log 2>&1
+# 4. Log analysis: task subagent confirms RED failure for the expected test.
+# 5. Revert the mutation.
+```
+
+---
+
+## 6. Direct Dependencies (Non-Mono Mode)
+
+`velox_ch_filecache` non-mono link additions (PUBLIC):
+
+| Dependency | CMake target | Required by |
+|------------|--------------|-------------|
+| Velox process (StackTrace) | `velox_process` | `getCurrentExceptionMessage` → `StackTrace::toString()` |
+| glog | `glog::glog` | `LOG(ERROR)` in emitter, `VLOG`/`VLOG_IS_ON`/`LOG` in macros |
+
+Pre-existing PUBLIC dependencies (unchanged):
+
+| Dependency | CMake target |
+|------------|--------------|
+| Velox common config | `velox_common_config` |
+| Velox exception | `velox_exception` |
+| Folly | `Folly::folly` |
+| fmt | `fmt::fmt` |
+
+In mono mode, all dependencies are linked transitively through the mono `velox`
+target. No explicit link additions needed.
+
+`velox_ch_common_test` test link additions (PRIVATE):
+
+| Dependency | CMake target | Required by |
+|------------|--------------|-------------|
+| glog | `glog::glog` | `TestLogSink`, `google::AddLogSink`/`RemoveLogSink`, `FLAGS_v`/`FLAGS_minloglevel` |
+
+`velox_ch_compile_strip_probe` link (PRIVATE):
+
+| Dependency | CMake target |
+|------------|--------------|
+| `velox_ch_filecache` | Library under test |
+| `Folly::folly` | Transitive |
+| `fmt::fmt` | Used by header |
+| `glog::glog` | Used by macros |
+
+---
+
+## 7. Required Test File Includes
+
+The test file (`BasicShimsTest.cpp`) needs these additional includes:
 
 ```cpp
-#include <folly/ScopeGuard.h>
-#include <glog/logging.h>
+#include <unistd.h>           // pipe, dup, dup2, read, write, STDERR_FILENO
 
-#include "velox/common/base/VeloxException.h"
+#include <folly/ScopeGuard.h> // folly::makeGuard (for stack flag RAII)
+#include <glog/logging.h>     // google::LogSink, FLAGS_v, FLAGS_minloglevel
+
+#include "velox/common/base/VeloxException.h" // VELOX_FAIL, VeloxException
 ```
 
-The `TestLogSink` class (§3.6) is defined once in an anonymous namespace and
-shared by Milestone 2 and Milestone 3 tests within the same file.
+Existing includes that remain: `<gtest/gtest.h>`, `"velox/ch/Common/logger_useful.h"`,
+`"velox/common/base/Exceptions.h"`.
 
 ---
 
-## 6. VeloxException API Reference (from live source)
+## 8. VeloxException API Reference (from live source at `cda6c03703`)
 
-Verified from `velox/common/base/VeloxException.h` (filecache branch):
-- `const process::StackTrace* stackTrace() const` (line 205) — returns pointer; null when stack capture was disabled at throw-time
-- `const std::string& message() const` (line 220) — the formatted message
-- `const std::string& errorCode() const` (line 232) — e.g. `"INVALID_STATE"`
-- `const std::string& errorSource() const` (line 236) — e.g. `"RUNTIME"`, `"USER"`
-- `const char* what() const noexcept override` — std::exception interface
-
-Verified from `velox/common/process/StackTrace.h` (line 46):
-- `const std::string& toString() const` — symbolic stack; returns const ref, lazy-initialized on first call
-
-Flags (VeloxException.h:33-34):
-- `DECLARE_bool(velox_exception_system_stacktrace_enabled)` — controls stack capture for RUNTIME errors
-- `DECLARE_bool(velox_exception_user_stacktrace_enabled)` — controls stack capture for USER errors
-
-Stack inclusion rule: `getCurrentExceptionMessage(true)` includes the stack only
-when `stackTrace()` returns non-null AND `toString()` is non-empty. The flags
-control capture at throw-time; we never override them at format-time.
+| Symbol | Location | Signature |
+|--------|----------|-----------|
+| `stackTrace` | `VeloxException.h:205` | `const process::StackTrace* stackTrace() const` — null when stack capture disabled at throw-time |
+| `message` | `VeloxException.h:220` | `const std::string& message() const` |
+| `errorCode` | `VeloxException.h:232` | `const std::string& errorCode() const` — e.g. `"INVALID_STATE"` |
+| `errorSource` | `VeloxException.h:236` | `const std::string& errorSource() const` — e.g. `"RUNTIME"` |
+| `StackTrace::toString` | `StackTrace.h:46` | `const std::string& toString() const` — lazy-init on first call |
+| System stack flag | `VeloxException.h:33` | `DECLARE_bool(velox_exception_system_stacktrace_enabled)` |
+| User stack flag | `VeloxException.h:34` | `DECLARE_bool(velox_exception_user_stacktrace_enabled)` |
 
 ---
 
-## 7. Risk Mitigation
+## 9. Risk Mitigation
 
 | Risk | Mitigation |
 |------|------------|
-| `getCurrentExceptionMessage` called outside catch block | `std::current_exception()` guard returns empty — no UB, no terminate |
-| glog linker errors in mono build | glog is already linked transitively via Folly; explicit dep is belt-and-suspenders for non-mono |
-| `##__VA_ARGS__` portability | GCC and Clang both support this; Velox requires one of these compilers |
-| `StackTrace::toString` expensive on first call | Only invoked when `withStackTrace=true` and pointer is non-null; lazy-init is StackTrace's responsibility |
-| `FLAGS_v` mutation from other tests | Each test saves/restores `FLAGS_v` with `folly::makeGuard` scope guard |
-| `google::LogSink` thread safety | Tests are single-threaded; sink lives on stack with deterministic lifetime |
-| Non-mono ODR violations from inline functions | Non-template function bodies moved to `.cpp`; only templates and macros remain in header |
-| Existing test `AllLogMacrosDoNotEvaluateArguments` conflicts | Explicitly replaced by `LazyEvaluation` which tests the correct new semantics |
-| Macro name collision with system `LOG_ERROR`/`LOG_WARNING` | glog defines these as different macros (`LOG(ERROR)` etc.); our macros take a logger as first arg so overload resolution is unambiguous at the preprocessor level |
+| `getCurrentExceptionMessage` called outside catch | `std::current_exception()` returns null → empty string return. No UB, no `std::terminate`. |
+| glog linker errors in mono | glog linked transitively via Folly/velox mono target. Explicit dep is for non-mono only. |
+| `##__VA_ARGS__` portability | GCC and Clang both support this extension. Velox requires one of these compilers. |
+| `StackTrace::toString` expensive on first call | Only invoked when `withStackTrace=true` and pointer is non-null. Lazy-init is StackTrace's responsibility. |
+| `FLAGS_v`/`FLAGS_minloglevel` cross-test leakage | Every test saves/restores flags with `GlogFlagGuard` RAII. |
+| `google::LogSink` thread safety | Tests are single-threaded. Sink lives on stack with deterministic lifetime. |
+| Non-mono ODR violations from inline functions | Non-template function bodies moved to `.cpp`. Only templates, `inline` functions, and macros remain in header. |
+| Existing test `AllLogMacrosDoNotEvaluateArguments` conflict | Explicitly replaced by `LazyLoggingTest` cases that test correct new semantics. |
+| Emitter injection unsafe in production | Emitter is a static function pointer initialized to `defaultExceptionEmitter`. No LogSink, no virtual dispatch, no runtime registration. Test-only swaps are RAII-guarded. |
+| `std::string_view` streaming to glog | **Toolchain-verified.** Compiled, linked, and ran a probe against the installed vcpkg glog (fmt 11.0.2): `LOG(WARNING) << std::string_view{...}` and `chLogFormat` overload resolution both work correctly on this toolchain. Not a concern. |
+| Emergency stderr path unreliable | `::write(STDERR_FILENO, ...)` is async-signal-safe and allocation-free. A broken stderr is outside our control; the spec promises only a best-effort attempt. |
+| Newly-enabled `fmt::format_string` type check fails at compile time | `fmt::format_string` performs compile-time placeholder/type validation for the first time on ~96 call sites. A scan found 0 placeholder/arg-count mismatches and all argument types are string or integer-like. If a genuine pre-existing type mismatch surfaces during M2-G1 or M3-C1, the Worker stops, records the exact failing call site and error, and escalates to the Controller. No silent call-site rewrite is permitted. |
 
 ---
 
-## 8. Worker Protocol
+## 10. Worker Protocol
 
-- Worker never stages or commits; Controller commits after independent task review.
-- Execution is authorized only after Task 018 and Review 5 are accepted.
-- Execution order: 017A → 018 → Review 5 → **017B** → 019.
-- After Task 017B acceptance, Task 019 implementation may begin.
-- Every redirected build/test log (`ninja`/`ctest`/`cmake` output captured to a
-  `.log` file) is analyzed by a `task` subagent that returns only a concise
-  summary; the Worker never pastes full build/test logs into its context or the
-  result receipt.
-- Result receipt: `port/task/result/017b-filecache-logging-exception-stack-result.md`
+1. Worker never stages, commits, or pushes. Controller commits after independent
+   task review.
+2. Implementation requires the Controller to set
+   `implementation_authorized: true` in the task index; this prerequisite was
+   satisfied on 2026-07-24 and is recorded in the plan-review receipt.
+3. Every redirected build/test log is analyzed by a `task` subagent that returns
+   only a concise summary. The Worker never pastes full build/test logs into its
+   context or the result receipt.
+4. After all milestones GREEN and all mutations RED, the Worker writes the result
+   receipt to the canonical location:
+
+   ```text
+   port/task/result/017b-filecache-logging-exception-stack-result.md
+   ```
+
+   The receipt header must include:
+
+   ```text
+   worker_status: ready_for_controller
+   ```
+
+5. After writing the result receipt, the Worker stops. It does not create a PR,
+   branch, or stacked change.
+6. After Task 017B acceptance, Task 019 implementation may begin.
+
+---
+
+## 11. Deliberate Differences from Stale Plan
+
+| Area | Stale plan | This plan |
+|------|-----------|-----------|
+| `LOG_TEST` | Permanent no-op `do {} while (false)` | `VLOG(3)` — evaluates when `--v=3` |
+| `LOG_TRACE` | `VLOG(3)` | `VLOG(2)` |
+| `LOG_DEBUG` | `VLOG(2)` | `VLOG(1)` |
+| `LOG_INFO` | `VLOG(1)` | Native `LOG(INFO)` — enabled by default |
+| Logger binding | `auto _ch_log_ptr` (copies `shared_ptr`) | `auto && _ch_log_` (reference, no copy) |
+| Null attribution | `(null)` with parentheses | `null` without parentheses: `[null]` |
+| Minloglevel gate | Only `VLOG_IS_ON` check | Three-gate for VLOG: strip + minloglevel + `VLOG_IS_ON` |
+| Native severity gate | Unconditional (no minloglevel check) | Two-gate: strip + minloglevel |
+| tryLogCurrentException failure | Silent `catch (...)` swallow | Emergency `stderr` write with fixed allocation-free diagnostic |
+| tryLogCurrentException overloads | `LoggerPtr`, `const char*`, `std::string` | `LoggerPtr` and `const char*` only — no `std::string` name overload |
+| No-active-exception handling | Not addressed | Fixed `LOG(ERROR)` misuse diagnostic |
+| Test emitter injection | Not designed | `detail::ExceptionEmitter` function pointer with RAII swap |
+| Compile-strip proof | Not present | Separate `CompileStripProbe` binary with `GOOGLE_STRIP_LOG=1` |
+| Ownership-copy test | Not present | `use_count` observation during format argument evaluation |
+| Mutation MUT-02 (minloglevel) | Not present | `VlogMinloglevelGate` catches missing `0 >= FLAGS_minloglevel` |
+| Mutation MUT-08 (emergency) | Not present | `EmergencyStderr` catches swallowed emergency write |

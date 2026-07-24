@@ -4,16 +4,19 @@
 
 ```text
 environment_profile: root-oss
-disposition: design_approved_plan_revision_required
+disposition: implementation_plan_ready
+written_spec_review: approved
 review_5_status: accepted
 task_017b_authorized: true
-implementation_authorized: false
+implementation_authorized: true
+implementation_plan_status: reviewed_executable
+implementation_plan: port/task/017b-filecache-logging-exception-stack-plan.md
+plan_review_receipt: port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
 prerequisite: Task 018 four-driver addendum and Review 5 accepted [DONE]
 task_017a_dependency: none
 execution_after: accepted Review 5 for Tasks 003-018 [DONE]
 task_019_dependency: Task 019 implementation requires accepted Task 017B
-implementation_plan_status: stale_do_not_execute
-implementation_plan: port/task/017b-filecache-logging-exception-stack-plan.md
+authorization_date: 2026-07-24
 ```
 
 Binding design:
@@ -22,16 +25,26 @@ Binding design:
 port/design/filecache-task-017b-logging-exception-stack.md
 ```
 
-There is no executable Task 017B contract yet. The previous plan at:
+The binding design was reviewed and approved by the user on 2026-07-24. The reviewed executable
+implementation plan is at:
 
 ```text
 port/task/017b-filecache-logging-exception-stack-plan.md
 ```
 
-is stale and must not be executed. It predates the approved lazy-gate,
-`LOG_TEST`→`VLOG(3)`, ownership-copy, and emergency-logging decisions. Rewrite
-and independently review it from the binding design before requesting
-implementation authorization.
+The plan was independently reviewed twice. Initial review (3 Critical / 2 Important / 5 Minor)
+rejected the plan. All Critical, Important, and Minor findings were corrected. The re-review
+returned 0 Critical, 0 Important, 2 cosmetic minors, both subsequently corrected. The durable
+review receipt is at:
+
+```text
+port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
+```
+
+Controller authorization of `implementation_authorized: true` was recorded on 2026-07-24.
+A fresh Task 017B Worker may begin implementation by following the reviewed plan verbatim.
+The Worker must write its result receipt with `worker_status: ready_for_controller`, then stop.
+No Task 017B implementation has been performed yet.
 
 ## Scope
 

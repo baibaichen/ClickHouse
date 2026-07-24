@@ -5,9 +5,12 @@
 ```text
 decision_date: 2026-07-24
 decision: approved
-written_spec_review: pending
+written_spec_review: approved
 selected_architecture: glog backend plus FileCacheLogger name-holder
-implementation_authorized: false
+implementation_authorized: true
+authorization_date: 2026-07-24
+reviewed_plan: port/task/017b-filecache-logging-exception-stack-plan.md
+plan_review_receipt: port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
 prerequisite: accepted Task 018 four-driver addendum and Review 5
 successor: Task 019
 ```
@@ -354,13 +357,16 @@ microbenchmark gate.
 
 ## Execution Boundary
 
-This design invalidates the previous Task 017B implementation plan. A new plan
-must be written from this spec after the user reviews the committed document.
-Implementation remains blocked until:
+The binding design was approved by the user on 2026-07-24. The reviewed executable implementation
+plan is at `port/task/017b-filecache-logging-exception-stack-plan.md`. The durable plan review
+receipt is at `port/task/fullreview/root-oss/5/017b-implementation-plan-review.md`.
+
+Controller authorization of `implementation_authorized: true` was recorded on 2026-07-24. All
+prerequisites are satisfied:
 
 ```text
-Task 018 four-driver addendum is accepted;
-Review 5 is accepted;
-the revised Task 017B plan is independently reviewed;
-the Controller explicitly authorizes Task 017B implementation.
+Task 018 four-driver addendum: accepted
+Review 5: accepted
+Task 017B plan independently reviewed: 0 Critical, 0 Important, 0 open minors
+Controller has explicitly authorized Task 017B implementation
 ```

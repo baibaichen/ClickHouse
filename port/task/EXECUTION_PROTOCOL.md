@@ -7,14 +7,15 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Review 5 is accepted.
-                       ClickHouse head: 31aa159dd61 (ch-filecache, clean).
+Current state:        Review 5 is accepted. Task 017B implementation is authorized.
+                       ClickHouse head: 0d510c37d77 (ch-filecache, clean).
                        Velox head: cda6c03703 (filecache, clean).
                        Verdict file:
                          port/task/fullreview/root-oss/5/003-018-whole-port-review.md
                        task_017b_authorized: true
-                       implementation_authorized: false (stale plan must be
-                         rewritten and independently reviewed first)
+                       implementation_authorized: true (Controller authorized 2026-07-24)
+                       plan_review_receipt:
+                         port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
 Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
                        Review 5 [ACCEPTED] -> Task 017B -> Task 019
                        Gluten/Spark integration.
@@ -22,13 +23,13 @@ Non-blocking debt:    `R2-D4` and `R2-D6` remain pending; their six rows remain
                        UNPROVEN in the 215-row denominator by user decision.
                        These are non-blocking forward debt and do not gate 017B.
 Immediate next action:
-                       Task 017B written-spec review of the binding design at
-                       port/design/filecache-task-017b-logging-exception-stack.md,
-                       then stale plan rewrite of
-                       port/task/017b-filecache-logging-exception-stack-plan.md,
-                       then independent plan review, then explicit Controller
-                       authorization of implementation_authorized: true.
-                       Do not begin 017B implementation before that authorization.
+                       Dispatch a fresh Task 017B Worker to implement
+                       port/task/017b-filecache-logging-exception-stack-plan.md
+                       (reviewed_executable, all findings resolved).
+                       Worker must not commit; result receipt expected at
+                       port/task/result/017b-filecache-logging-exception-stack-result.md
+                       with worker_status: ready_for_controller.
+                       Task 019 remains blocked on Task 017B acceptance.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.
@@ -47,12 +48,11 @@ Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   probe requirements, exact CH/Velox source citations, exact test owners,
   and explicit stop conditions.
 Deferred Velox work:  Task 016
-Planned Velox work:   `017a-filecache-statistics-cancellation-plan.md`, then
-                      post-018/Review-5 Task 017B from the approved design;
-                      its current implementation plan is stale and non-executable
+Planned Velox work:   `017a-filecache-statistics-cancellation-plan.md` [DONE],
+                      then Task 017B from the reviewed executable plan at
+                      port/task/017b-filecache-logging-exception-stack-plan.md
 Planned Gluten work:  `019-filecache-gluten-integration-spark-e2e-plan.md`
-Deferred Gluten:      Task 019, blocked on the Task 018 four-driver addendum,
-                      Review 5, Task 017B, and the compatible Velox hard gate
+Deferred Gluten:      Task 019, blocked on Task 017B acceptance
 ```
 
 Task 011 and Task 012 form one atomic SCC migration stage. Run them
