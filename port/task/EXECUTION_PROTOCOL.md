@@ -7,8 +7,8 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Review 5 is in progress and blocked after its Review-4
-                       closure pass. The approved Task-012 `folly::call_once`
+Current state:        Review 5 is in progress after its Review-4 closure pass.
+                       The approved Task-012 `folly::call_once`
                        corrective is accepted at Velox `26325e8a32`; the
                        Task-014 truncation/rename corrective is accepted at
                        Velox `cda6c03703`.
@@ -21,11 +21,13 @@ Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
                        Task 018's one-driver baseline and four-driver addendum
                        are accepted. Review 5 corrective implementation is
                        complete and its synthesis may resume.
-Review 5 blockers:    `R2-D4` and `R2-D6` remain pending by user decision.
-                       Task 017B remains unauthorized.
+Non-blocking debt:    `R2-D4` and `R2-D6` remain pending; their six rows remain
+                       UNPROVEN in the 215-row denominator by user decision.
+                       Task 017B remains unauthorized until final Review 5,
+                       not because of D4/D6.
 Immediate next dispatch:
-                       resume Review 5 Task 3 integrated tracing; final Review-5
-                       acceptance still waits for D4/D6 decisions.
+                       resume Review 5 Task 3 integrated tracing, then Task 4
+                       independent verdict.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
 temporary-data spill consumer and it is not a mainline feature.

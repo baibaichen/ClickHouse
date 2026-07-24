@@ -287,9 +287,12 @@ Historical accepted-task context (superseded by Review-5 items 19-22 above):
         `folly::call_once` corrective is accepted and pushed at Velox
         `26325e8a32`; its Controller receipt/evidence commit is ClickHouse
         `73449b8366c`.
-    20. Review 5 remains blocked only on decisions. `R2-D4` (Manager mutation serialization /
+    20. `R2-D4` (Manager mutation serialization /
         transactional reload) and `R2-D6` (reader detach / query-pool lifetime)
-        were explicitly kept `pending` by the user on 2026-07-24.
+        were explicitly kept `pending` by the user on 2026-07-24. Their six
+        governed rows remain `UNPROVEN` in the 215-row denominator, but a later
+        user decision on the same date made them non-blocking forward debt.
+        Review 5 may accept and authorize Task 017B while reporting them.
     21. Task 014 Review-5 corrective is accepted at Velox `cda6c03703`.
         `G-CACHEBUF-01` now bypasses an externally shortened terminal cache file
         and re-fetches source bytes without deleting metadata. The user-approved
@@ -339,8 +342,8 @@ Continuous execution target:
   Task 2 closed Review-4 debt as far as current decisions permit. Its
   Task-012 `folly::call_once` corrective is accepted at Velox `26325e8a32`.
   Task-014 external-truncation/rename corrective is accepted at Velox
-  `cda6c03703`. Review 5 may resume integrated tracing, but final acceptance
-  remains blocked while `R2-D4` and `R2-D6` are pending.
+  `cda6c03703`. Review 5 may resume integrated tracing and final independent
+  review. D4/D6 remain visible but do not block acceptance.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
   continues with resumed Review 5, Task 017B, then Task 019 Gluten/Spark
   integration. Task 017B and Task 019 are blocked.

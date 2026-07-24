@@ -23,6 +23,12 @@ disposition Review-4 debt; and decide whether Task 017B may start.
 - Task 017B remains blocked until this review records `review_status: accepted`.
 - Task 019 Gluten/Spark integration is excluded and is reviewed only after its
   own implementation.
+- By user decision on 2026-07-24, `R2-D4` and `R2-D6` remain `pending` and
+  their six governed parity rows remain `UNPROVEN`, but they are non-blocking
+  forward debt. Keep them in the 215-row denominator and do not reclassify
+  them. Review 5 may record `review_status: accepted` and
+  `task_017b_authorized: true` with `unproven_rows: 6` if every other gate is
+  satisfied.
 
 ---
 
@@ -170,4 +176,5 @@ task_017b_authorized: true | false
 
 Expected: Task 017B starts only when
 `parallel_four_driver_addendum_status: accepted`, `review_status: accepted`,
-and `task_017b_authorized: true`.
+and `task_017b_authorized: true`. The expected six D4/D6 `UNPROVEN` rows are
+reported as non-blocking forward debt, not as a failed verdict gate.

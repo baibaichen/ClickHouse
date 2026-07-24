@@ -322,6 +322,7 @@ decision_id:   R2-D4
 user_decision: pending (explicitly deferred in decisions file)
 disposition:   waiting_for_user
 affects_unproven_rows: D-INIT-01, E-GETORCREATE-01, E-CREATE-01, E-UPDCFG-01
+blocks_review_5: no (user decision 2026-07-24)
 ```
 
 `003-015-parity-user-decisions.md` records: `| R2-D4 | pending | Do not
@@ -330,7 +331,8 @@ approve, reject, modify, or reclassify…`. Implementation is present
 `rollbackNewBindingsLocked` in `FileCacheManager.cpp`). Approval is absent.
 Four denominator rows (2.2–2.5) remain UNPROVEN.
 
-**User reaffirmation (Review 5, 2026-07-24):** R2-D4 remains `pending`.
+**User reaffirmation (Review 5, 2026-07-24):** R2-D4 remains `pending`; its
+four governed rows remain UNPROVEN as non-blocking forward debt.
 
 ---
 
@@ -356,6 +358,7 @@ decision_id:   R2-D6
 user_decision: pending (explicitly deferred in decisions file)
 disposition:   waiting_for_user
 affects_unproven_rows: P-RB-SETDETACH-01, G-NEXTIMPL-01
+blocks_review_5: no (user decision 2026-07-24)
 ```
 
 `003-015-parity-user-decisions.md` records: `| R2-D6 | pending | Do not
@@ -363,7 +366,8 @@ approve, reject, modify, or reclassify…`. Implementation is present
 (`FileCacheInputStream.cpp:944,974`). Approval is absent. Two denominator rows
 (2.6–2.7) remain UNPROVEN.
 
-**User reaffirmation (Review 5, 2026-07-24):** R2-D6 remains `pending`.
+**User reaffirmation (Review 5, 2026-07-24):** R2-D6 remains `pending`; its two
+governed rows remain UNPROVEN as non-blocking forward debt.
 
 ---
 
@@ -750,14 +754,16 @@ None.
 ## 9. Verdict
 
 ```text
-review_5_task_2_verdict:      BLOCKED (D4/D6 pending)
-reason:                       six parity rows await user decisions
+review_5_task_2_verdict:      accepted_with_non_blocking_forward_debt
+reason:                       D4/D6 remain pending by user decision but do not block Review 5
 reopen_task_012:              closed at 26325e8a32 (Task 012 corrective; L-CALLONCE-01 EQUIVALENT; R2-D2 closed)
 reopen_task_014:              closed at cda6c03703 (G-CACHEBUF-01 EQUIVALENT; G-CACHEOPEN-RENAME-01 closed)
-waiting_for_user_count:       15 items (blocking D4/D6 decisions for 6 UNPROVEN rows)
-parity_verdict:               PARITY_BLOCKED (unchanged)
+waiting_for_user_count:       15 items (all non-blocking for Review 5)
+parity_verdict:               PARITY_INCOMPLETE_NON_BLOCKING
 unproven_rows:                6 (L-CALLONCE-01 and G-CACHEBUF-01 moved to EQUIVALENT)
+blocking_items:               0
 ```
 
 Task 012 and Task 014 corrective implementations are closed. Review 5 remains
-blocked only on user-pending D4/D6 for the six remaining UNPROVEN rows.
+required to report D4/D6 and the six remaining UNPROVEN rows, but they do not
+block integrated tracing, final acceptance, or Task-017B authorization.
