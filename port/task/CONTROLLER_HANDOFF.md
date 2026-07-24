@@ -265,8 +265,8 @@ Current task:
         No complete-parity or production-ready claim is allowed before Review 5
         acceptance;
     15. Task 017A is accepted at Velox `a856d836c`. Task 018's one-driver
-        baseline is accepted; the four-driver addendum remains pending. Review 5
-        and Task 017B are blocked until that addendum is accepted.
+        baseline and four-driver addendum are accepted. The pipeline is stopped
+        for Review 5; Task 017B remains blocked on Review 5 and its stale plan.
     16. Task 018 is Velox-only and stops after non-TPCH correctness,
         micro/wrapper/orchestration work and Waves 1–3. No TPCH source copy,
         target build, data requirement, or run is
@@ -314,12 +314,12 @@ Continuous execution target:
   Velox `683b56076d` after all 22×3 SF100 runs matched. The real Hive FCBI
   adapter is accepted at `609cf21da9`; final one-driver H2 at `4f3cb3c047`
   passed 276/276 gates and records 2.5% warm overhead versus Direct and 8.1%
-  versus CBI. That Task 018 baseline is accepted; the pipeline is stopped for
-  the four-driver addendum before Review 5.
+  versus CBI. The q15-fixed four-driver addendum at `7c52b47ecb` passed
+  198/198 result gates and records 6.2% local warm overhead versus Direct and
+  11.6% versus CBI. Task 018 is accepted; the pipeline is stopped for Review 5.
 - Tasks 003-015 and Task 017A are accepted. Task 016 is deferred. Planned order
-  continues with the Task 018 four-driver addendum, Review 5, Task 017B, then
-  Task 019 Gluten/Spark integration. Task 019 is blocked on its prerequisites
-  and compatible Velox baseline.
+  continues with Review 5, Task 017B, then Task 019 Gluten/Spark integration.
+  Task 019 is blocked on its prerequisites and compatible Velox baseline.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

@@ -1,4 +1,4 @@
-# Task 018 Result: FileCache Velox Benchmark — Non-TPCH Checkpoint (018-H1)
+# Task 018 Result: FileCache Velox Benchmark
 
 ## Worker attempt 1 (Task 018-H1)
 
@@ -862,3 +862,114 @@ task_017b_authorized: false
 This addendum status supersedes the earlier `next_gate: Review 5` transition.
 Do not begin Review 5 or Task 017B until a later Controller section changes
 `parallel_four_driver_addendum_status` from `pending` to `accepted`.
+
+## Controller review — parallel four-driver addendum accepted
+
+```text
+review_date: 2026-07-24
+controller_status: accepted
+parallel_four_driver_addendum_status: accepted
+review_5_authorized: true
+task_017b_authorized: false
+velox_head: 7c52b47ecb
+build_type: RelWithDebInfo
+performance_evidence_class: local-only
+critical_findings: 0
+important_findings: 0
+```
+
+### Run identity
+
+The user ran the previously supplied command with:
+
+```text
+dataset: /root/oss/test-data/tpch-sf100-parquet-double
+query_id: 0
+rounds: 3
+num_splits_per_file: 1
+num_drivers: 4
+reference_num_drivers: 1
+query_mem_gb: 32
+cbi_cache_gb: 32
+cbi_cache_mem_gb: 4
+filecache_disk_gib: 80
+```
+
+Artifacts:
+
+```text
+/root/oss/velox/tmp/parallel_verified4_q15fixed_results/tpch_direct.csv
+/root/oss/velox/tmp/parallel_verified4_q15fixed_results/tpch_cbi.csv
+/root/oss/velox/tmp/parallel_verified4_q15fixed_results/tpch_filecache.csv
+/root/oss/velox/_build/relwithdebinfo/test_parallel_verified4_q15fixed.log
+/root/oss/velox/_build/relwithdebinfo/build_q15_parallel_fix.log
+/root/oss/velox/_build/relwithdebinfo/build_parallel_verified4_q15fixed.log
+```
+
+The benchmark binary has ELF build ID
+`2b9867a800cbee9fc7a11633244f2fc84c6c16e3`. The q15-fix build log records
+linking `velox_tpch_benchmark`; the final build log records
+`ninja: no work to do`, proving that the tested binary was up to date. The run
+log records completion of Direct, CBI, and FileCache and the final
+`TPCH A/B complete` marker.
+
+### Addendum gates
+
+| Gate | Result |
+|---|---|
+| CSV shape | 66 rows per backend; 22 queries × 3 rounds |
+| Parallel correctness | 198/198 rows have `result_match=1` |
+| Errors | 0/198 rows have a nonempty error |
+| q15 fix | 9/9 backend-round rows return exactly one result row |
+| Direct metrics | all application-cache metrics are zero |
+| CBI metrics | all 66 rows have positive hit rate, cache reads, and eviction count |
+| FileCache population | round 1 has positive cache reads for 22/22 queries and positive predownload for q01–q05 |
+| FileCache warm gate | 44/44 round-2/3 rows have 100% hits, positive cache reads, zero predownload, and zero eviction |
+| Cleanup | sentinel-authenticated FileCache child removed; cache root is empty |
+| Integrity | Velox worktree clean at `7c52b47ecb` |
+
+`result_hash` remains diagnostic only: parallel floating-point aggregation
+changes exact hashes across rounds and backends. `result_match` is the binding
+order-independent epsilon correctness gate.
+
+q11 returns zero rows in the accepted one-driver baseline and all nine
+four-driver backend-round cells. The addendum proves parallel/backend
+equivalence, not an independent SQL-oracle result; Review 5 should retain this
+distinction when making any broader semantic-correctness claim.
+
+### Performance verdict
+
+```text
+short_verdict: local-only evidence
+confidence: medium for direction, low for exact magnitude
+```
+
+Warm round-2/3 per-query medians produce:
+
+| Comparison | Runtime-weighted ratio | FileCache overhead | Slower queries |
+|---|---:|---:|---:|
+| FileCache / Direct | 1.062 | 6.2% | 21/22 |
+| FileCache / CBI | 1.116 | 11.6% | 21/22 |
+
+The direction is consistent: FileCache is slower than each baseline on 21 of
+22 queries. The exact magnitude is soft because there are only two warm
+samples per query on an unisolated local WSL2 host, and long-running q04, q09,
+q17, and q21 dominate the runtime-weighted result.
+
+The accepted one-driver result remains a separate concurrency mode:
+
+| Mode | FileCache / Direct | FileCache / CBI |
+|---|---:|---:|
+| one driver | 1.025 | 1.081 |
+| four drivers | 1.062 | 1.116 |
+
+The valid four-driver numbers supersede only the previously rejected
+four-driver measurements. They do not replace the accepted one-driver
+baseline.
+
+### Acceptance
+
+The q15 mutation/focused proof and this full run close the parallel TPCH
+addendum. There is no remaining Task 018 blocker. Execution may proceed to
+Review 5; Task 017B remains unauthorized until Review 5 is accepted and its
+stale implementation plan is rewritten and independently reviewed.
