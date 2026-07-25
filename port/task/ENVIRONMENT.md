@@ -13,6 +13,7 @@ infer a profile from hostname.
 | `<velox_repo>` | `/home/chang/OpenSource/velox` | `/root/oss/velox` |
 | `<gluten_repo>` | `/home/chang/SourceCode/gluten1` | `/root/oss/gluten` |
 | `<velox_build_dir>` | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13` | `/root/oss/velox/_build/debug` |
+| `<velox_perf_build_dir>` | Not used | `/root/oss/velox/_build/relwithdebinfo-vcpkg-arrow` |
 | `<cmake>` | `/usr/bin/cmake` | `/usr/bin/cmake` |
 | `<ninja>` | `/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja` | `/usr/local/bin/ninja` |
 | `<velox_env>` | Not required by the existing profile | `/root/oss/velox-helper/env.sh` |
@@ -52,6 +53,11 @@ For FileCache port Worker/Controller acceptance executions, source
 instead of using `build.sh` as evidence. Do not pass `-j`; redirect each
 configure/build/test command to a unique log under `<velox_build_dir>` and
 report the log path in the handoff.
+
+Performance investigation tasks use `<velox_perf_build_dir>` instead. It is the
+accepted Task-018R RelWithDebInfo build against vcpkg system `Arrow`. Every
+Task-018S build/test/query log must remain under that directory; result CSVs
+and manifests remain under `<velox_repo>/tmp`.
 
 Effective `root-oss` configuration:
 

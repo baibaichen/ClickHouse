@@ -121,13 +121,17 @@ environment_profile: root-oss
       receipt expected at port/task/result/017b-filecache-logging-exception-stack-result.md
 - TPCH BufferedInput performance investigation:
     design: port/design/filecache-tpch-buffered-input-performance-investigation.md
-    status: awaiting written-spec review
+    design_status: approved
+    plan: port/task/018s-filecache-tpch-buffered-input-isolation-plan.md
+    plan_status: reviewed_executable
+    plan_review:
+      port/task/fullreview/root-oss/5/018s-implementation-plan-review.md
     primary baseline: FileCache vs Direct
     matrix: 1 driver then 4 drivers; Direct / FCBI passthrough / warm FileCache
     focused queries: q09, q20, q17, q21, q04
     execution_authorized: false
-- Immediate next action: user reviews the written performance-investigation
-  design. Do not dispatch Task 017B or run probes yet.
+- Immediate next action: ask for user implementation approval of Task 018S. Do
+  not dispatch Task 018S/017B or run probes before approval.
 - ClickHouse and Velox must be clean and pushed at the accepted heads before
   dispatching Task 017B. Gluten must be clean at local `c44409a7c3`; do not push
   it.
@@ -420,9 +424,8 @@ Continuous execution target:
   `c44409a7c`. Task 017B is authorized (`implementation_authorized: true`) but
   paused behind the TPCH BufferedInput performance investigation; no 017B
   implementation is written. Task 019 remains blocked on Task 017B acceptance.
-  Immediate next action: user review of
-  `port/design/filecache-tpch-buffered-input-performance-investigation.md`,
-  followed by a separate executable investigation plan.
+  Immediate next action: user implementation approval of the independently
+  reviewed executable Task-018S plan.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

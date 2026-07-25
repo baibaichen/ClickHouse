@@ -31,10 +31,11 @@ Non-blocking debt:    `R2-D4` and `R2-D6` remain pending; their six rows remain
                        UNPROVEN in the 215-row denominator by user decision.
                        These are non-blocking forward debt and do not gate 017B.
 Immediate next action:
-                       User review of
-                       port/design/filecache-tpch-buffered-input-performance-investigation.md,
-                       then write its implementation plan. Do not dispatch Task
-                       017B or run performance probes before that review.
+                       User implementation approval of the independently
+                       reviewed executable plan at
+                       port/task/018s-filecache-tpch-buffered-input-isolation-plan.md.
+                       Do not dispatch Task 018S/017B or run performance probes
+                       before that approval.
                        Task 019 remains blocked on Task 017B acceptance.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
@@ -146,6 +147,10 @@ worker_running
 worker_running
   -> waiting_for_pre_tpch_approval
   -> worker_running
+
+worker_running
+  -> waiting_for_four_driver_approval
+  -> worker_running
 ```
 
 Only the worker writes implementation changes and worker-attempt sections.
@@ -188,7 +193,8 @@ attempt.
    `worker_status: ready_for_controller` when complete,
    `worker_status: blocked` when unresolved, or
    `worker_status: waiting_for_pre_tpch_approval` at Task 018's mandatory
-   checkpoint, then stop immediately.
+   checkpoint, or `worker_status: waiting_for_four_driver_approval` at Task
+   018S's mandatory one-driver checkpoint, then stop immediately.
 
 The worker is responsible for correctness inside the assigned task. It is not
 responsible for approving the overall port architecture or earlier tasks.
@@ -205,7 +211,8 @@ controller feedback.
 ## Worker attempt 1
 
 ```text
-worker_status: ready_for_controller | blocked | waiting_for_pre_tpch_approval
+worker_status: ready_for_controller | blocked | waiting_for_pre_tpch_approval |
+  waiting_for_four_driver_approval
 environment_profile: <name>
 task: NNN
 ```
@@ -285,6 +292,25 @@ After approval, the Controller records it in the receipt and dispatches a fresh
 Task-018 Worker. The new Worker appends the next Worker-attempt section, executes
 018-C/018-H2 only, and then returns the complete task to the normal
 `ready_for_controller` acceptance path.
+
+## Task-018S one-driver checkpoint
+
+When the Task-018S Worker writes
+`worker_status: waiting_for_four_driver_approval`, the Controller:
+
+1. verifies all Task-018S implementation/build/test/review gates;
+2. recomputes the 75 one-driver focused samples from raw CSVs;
+3. verifies A/B/C path identity, correctness, warm-cache, order-block, and
+   instrumentation-on/off gates;
+4. appends a Controller checkpoint review to the receipt;
+5. stops without committing Task-018S implementation;
+6. asks the user to review the one-driver decomposition.
+
+After explicit user approval, the Controller records
+`four_driver_authorized: true` in the receipt and dispatches a fresh Task-018S
+Worker. The new Worker verifies the unchanged implementation diff, appends the
+next Worker-attempt section, runs the four-driver matrix, and returns the task
+to the normal `ready_for_controller` acceptance path.
 
 ## Blocked handoff
 

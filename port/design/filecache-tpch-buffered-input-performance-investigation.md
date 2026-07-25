@@ -124,6 +124,11 @@ cell C, and it must not be exposed as a production mode. The implementation
 plan must choose a benchmark-only injection boundary and remove it or keep it
 test-only after the investigation.
 
+Live-source refinement: cell B is selected by a process-scoped C++ RAII
+benchmark/test override installed by `AbBenchmarkMain`, not by a Hive session
+property. Hive has no user-configurable passthrough setting. The separate
+default-off metrics probe continues to use a connector session property.
+
 ## Focused Queries
 
 Use the same focused set in both driver phases:
@@ -169,8 +174,7 @@ driver counts, or query IDs in one comparison.
 
 ## First-Wave Instrumentation
 
-The Docker environment does not provide `perf`. The first wave uses
-low-perturbation query-level counters only:
+The Docker environment does not provide `perf`. The first wave uses low-perturbation query-level counters only:
 
 - wall time;
 - process user CPU and system CPU;
@@ -185,6 +189,14 @@ low-perturbation query-level counters only:
 
 Do not log per chunk. Collect counters locally and emit one delta per query.
 Do not add fine-grained lock timers in the first wave.
+
+Implementation refinement after live-source planning: existing TableScan
+`RuntimeMetric`s supply physical storage/local read operation counts, bytes,
+latencies, and min/max request sizes. The remaining enqueue/`Next`/seek facts
+use a default-off `IoStatistics` probe enabled only by a benchmark connector
+session property; its disabled branch performs no counter update. This avoids
+process-global benchmark flags in Hive code and keeps all A/B/C facts in the
+same per-query ledger.
 
 ## Validity Gates
 
