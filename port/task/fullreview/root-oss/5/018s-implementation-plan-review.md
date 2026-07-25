@@ -12,8 +12,8 @@ review_status: approved
 plan_status: reviewed_executable
 critical_findings: 0
 important_findings: 0
-implementation_authorized: false
-execution_authorized: false
+implementation_authorized: true
+execution_authorized: one_driver_only
 ```
 
 ## Review history
@@ -95,5 +95,6 @@ final unresolved findings:
 
 ## Decision
 
-The plan is complete and executable. Execution remains unauthorized until the
-user explicitly approves Task 018S implementation.
+The plan is complete and executable. The user authorized implementation and
+one-driver execution on 2026-07-25. Four-driver execution remains separately
+gated by the one-driver checkpoint.

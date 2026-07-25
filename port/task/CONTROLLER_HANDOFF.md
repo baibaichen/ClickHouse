@@ -129,9 +129,11 @@ environment_profile: root-oss
     primary baseline: FileCache vs Direct
     matrix: 1 driver then 4 drivers; Direct / FCBI passthrough / warm FileCache
     focused queries: q09, q20, q17, q21, q04
-    execution_authorized: false
-- Immediate next action: ask for user implementation approval of Task 018S. Do
-  not dispatch Task 018S/017B or run probes before approval.
+    implementation_authorized: true
+    one_driver_authorized: true
+    four_driver_authorized: false
+- Immediate next action: dispatch a fresh Task 018S Worker. It must stop after
+  the one-driver checkpoint; do not run four drivers or Task 017B.
 - ClickHouse and Velox must be clean and pushed at the accepted heads before
   dispatching Task 017B. Gluten must be clean at local `c44409a7c3`; do not push
   it.
@@ -424,8 +426,8 @@ Continuous execution target:
   `c44409a7c`. Task 017B is authorized (`implementation_authorized: true`) but
   paused behind the TPCH BufferedInput performance investigation; no 017B
   implementation is written. Task 019 remains blocked on Task 017B acceptance.
-  Immediate next action: user implementation approval of the independently
-  reviewed executable Task-018S plan.
+  Immediate next action: fresh Task-018S Worker through the mandatory
+  one-driver checkpoint only.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

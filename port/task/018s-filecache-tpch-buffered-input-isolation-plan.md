@@ -5,7 +5,7 @@
 > `superpowers:executing-plans` to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 >
-> - **Disposition:** reviewed_executable — awaiting implementation authorization
+> - **Disposition:** reviewed_executable — implementation_authorized
 > - **Task ID:** 018S
 > - **Binding design:**
 >   `port/design/filecache-tpch-buffered-input-performance-investigation.md`
@@ -21,8 +21,9 @@
 >   `port/task/result/018s-filecache-tpch-buffered-input-isolation-result.md`
 > - **Plan review:**
 >   `port/task/fullreview/root-oss/5/018s-implementation-plan-review.md`
-> - **Implementation status:** NOT AUTHORIZED until this plan is independently
->   reviewed and the user approves execution
+> - **Implementation status:** AUTHORIZED by user on 2026-07-25 through the
+>   mandatory one-driver checkpoint. Four-driver execution remains unauthorized
+>   until the checkpoint is accepted and the user explicitly approves it.
 
 **Goal:** Build and execute a reproducible one-driver-then-four-driver A/B/C
 matrix that separates the cost of replacing `DirectBufferedInput` from the

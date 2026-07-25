@@ -7,9 +7,8 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Task 018R is accepted. Task 017B implementation is authorized
-                       but paused for the approved TPCH BufferedInput performance
-                       investigation.
+Current state:        Task 018S implementation and one-driver execution are
+                       authorized. Task 017B remains authorized but paused.
                        ClickHouse Task-018R plan head: 6b9bce64041
                        (receipt accepted in the current acceptance commit).
                        Velox head: 0c5b5918eb (filecache; Task-018R reverse).
@@ -31,11 +30,12 @@ Non-blocking debt:    `R2-D4` and `R2-D6` remain pending; their six rows remain
                        UNPROVEN in the 215-row denominator by user decision.
                        These are non-blocking forward debt and do not gate 017B.
 Immediate next action:
-                       User implementation approval of the independently
-                       reviewed executable plan at
+                       Dispatch a fresh Task 018S Worker using
                        port/task/018s-filecache-tpch-buffered-input-isolation-plan.md.
-                       Do not dispatch Task 018S/017B or run performance probes
-                       before that approval.
+                       Worker implements/tests the harness, runs only the
+                       one-driver matrix, writes
+                       worker_status: waiting_for_four_driver_approval, and stops.
+                       Four-driver execution is not authorized.
                        Task 019 remains blocked on Task 017B acceptance.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no

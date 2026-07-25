@@ -5,8 +5,8 @@
 ```text
 decision_date: 2026-07-25
 decision: approved for written-spec review
-implementation_authorized: false
-execution_authorized: false
+implementation_authorized: true
+execution_authorized: one_driver_only
 task_017b_status: authorized_but_paused
 ```
 
