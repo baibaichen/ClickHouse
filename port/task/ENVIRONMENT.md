@@ -59,6 +59,12 @@ accepted Task-018R RelWithDebInfo build against vcpkg system `Arrow`. Every
 Task-018S build/test/query log must remain under that directory; result CSVs
 and manifests remain under `<velox_repo>/tmp`.
 
+Task 018S additionally uses `<velox_build_dir>` for the complete
+`velox_ch_filecache_buffered_input_test` behavior gate because its
+`TestValue`-injection tests are compiled out under RelWithDebInfo `NDEBUG`.
+RelWithDebInfo still owns all benchmark binaries, performance runs, and
+release-safe compile/test evidence.
+
 Effective `root-oss` configuration:
 
 ```text

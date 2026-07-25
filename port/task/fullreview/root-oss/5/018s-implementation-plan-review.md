@@ -98,3 +98,26 @@ final unresolved findings:
 The plan is complete and executable. The user authorized implementation and
 one-driver execution on 2026-07-25. Four-driver execution remains separately
 gated by the one-driver checkpoint.
+
+## Post-authorization environment amendment 1
+
+The first Worker correctly stopped on a pre-existing RelWithDebInfo RED
+baseline. `TestValue` injection is unavailable under `NDEBUG`, making five CH
+FCBI fault/race tests unsatisfiable in the performance build. Controller
+verification at the unchanged Velox HEAD passed the complete binary 39/39 in
+the existing Debug build.
+
+The plan now uses:
+
+```text
+Debug:
+  full velox_ch_filecache_buffered_input_test behavior gate (39/39)
+
+RelWithDebInfo:
+  performance binary and matrix
+  all other affected tests
+  velox_ch_filecache_buffered_input_test release-safe subset (34/34)
+```
+
+This amendment changes only test ownership by build configuration. It does not
+weaken behavior coverage or performance-build provenance.

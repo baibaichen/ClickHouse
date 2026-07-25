@@ -132,6 +132,8 @@ environment_profile: root-oss
     implementation_authorized: true
     one_driver_authorized: true
     four_driver_authorized: false
+    worker_attempt_1: blocked at pre-existing RelWithDebInfo TestValue baseline
+    blocker_status: resolved by dual Debug/RelWithDebInfo gate
 - Immediate next action: dispatch a fresh Task 018S Worker. It must stop after
   the one-driver checkpoint; do not run four drivers or Task 017B.
 - ClickHouse and Velox must be clean and pushed at the accepted heads before

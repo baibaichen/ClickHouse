@@ -93,10 +93,31 @@ No root-cause claim from A/B/C timing alone.
 No Ninja -j or nproc.
 All C++ changes use Allman-style braces.
 Worker never stages, commits, amends, rebases, pushes, or creates a PR.
-Every configure/build/test/query command writes a unique log under:
+Performance configure/build/test/query commands write unique logs under:
   <velox_perf_build_dir>
   (/root/oss/velox/_build/relwithdebinfo-vcpkg-arrow)
+
+TestValue-dependent behavioral build/test commands write unique logs under:
+  <velox_build_dir>
+  (/root/oss/velox/_build/debug)
 ```
+
+`TestValue::set` and `TestValue::adjust` are compiled out under `NDEBUG`.
+Therefore the five injection-dependent
+`velox_ch_filecache_buffered_input_test` cases are Debug-only behavioral gates:
+
+```text
+DiskFailurePropagatesWithoutSkip
+DiskFailureSkipContinuesAcrossSegments
+CancellationDeferredUntilAfterSegmentWriteCompletes
+CacheRenameOpenRaceRetries
+CancellationDuringSegmentWaitThrows
+```
+
+The full binary must pass in Debug. RelWithDebInfo must build the binary and run
+the other 34 release-safe cases with these five excluded. This is a
+build-configuration split, not a skipped-test success claim: Debug supplies the
+binding behavior evidence for all 39 cases.
 
 The one-driver matrix is a mandatory checkpoint. The first Worker writes
 `worker_status: waiting_for_four_driver_approval` and stops. Four-driver
@@ -1617,6 +1638,16 @@ bash -lc '
       velox_ch_filecache_buffered_input_test \
       velox_tpch_benchmark
 ' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_all.log 2>&1
+
+bash -lc '
+  set -euo pipefail
+  cd /root/oss/gluten
+  source dev/vcpkg/env.sh --build_tests=ON
+  source /root/oss/velox-helper/env.sh
+  exec /usr/bin/cmake --build \
+    /root/oss/velox/_build/debug \
+    --target velox_ch_filecache_buffered_input_test
+' > /root/oss/velox/_build/debug/build_018s_ch_fcbi_all.log 2>&1
 ```
 
 - [ ] **Step 2: Run focused C++ tests**
@@ -1635,11 +1666,25 @@ Run the four test binaries to unique logs:
   > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/test_018s_hive_fcbi_all.log 2>&1
 
 /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/velox/ch/Disks/IO/tests/velox_ch_filecache_buffered_input_test \
-  > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/test_018s_ch_fcbi_all.log 2>&1
+  --gtest_filter='-FileCacheBufferedInputTest.DiskFailurePropagatesWithoutSkip:FileCacheBufferedInputTest.DiskFailureSkipContinuesAcrossSegments:FileCacheBufferedInputTest.CancellationDeferredUntilAfterSegmentWriteCompletes:FileCacheBufferedInputTest.CacheRenameOpenRaceRetries:FileCacheBufferedInputTest.CancellationDuringSegmentWaitThrows' \
+  > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/test_018s_ch_fcbi_release_safe.log 2>&1
+
+/root/oss/velox/_build/debug/velox/ch/Disks/IO/tests/velox_ch_filecache_buffered_input_test \
+  > /root/oss/velox/_build/debug/test_018s_ch_fcbi_all.log 2>&1
 ```
 
-Expected: all registered tests in
-each binary pass; no skip/disabled result satisfies the gate.
+Expected:
+
+```text
+schema: all registered tests pass in RelWithDebInfo
+DirectBufferedInput: all selected tests pass in RelWithDebInfo
+Hive FCBI: all registered tests pass in RelWithDebInfo
+CH FCBI release-safe: 34/34 pass in RelWithDebInfo
+CH FCBI full behavior: 39/39 pass in Debug
+```
+
+The five named RelWithDebInfo exclusions cannot satisfy behavior evidence; only
+their Debug passes do.
 
 - [ ] **Step 3: Run q04 one-sample cell smoke**
 
