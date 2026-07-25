@@ -7,9 +7,13 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Review 5 is accepted. Task 017B implementation is authorized.
-                       ClickHouse head: 0d510c37d77 (ch-filecache, clean).
-                       Velox head: cda6c03703 (filecache, clean).
+Current state:        Task 018R is accepted. Task 017B implementation is authorized.
+                       ClickHouse Task-018R plan head: 6b9bce64041
+                       (receipt accepted in the current acceptance commit).
+                       Velox head: 0c5b5918eb (filecache; Task-018R reverse).
+                       Gluten head: c44409a7c3
+                       (local fix/vcpkg-arrow-squashed; vcpkg Arrow codec fix;
+                       do not push by user decision).
                        Verdict file:
                          port/task/fullreview/root-oss/5/003-018-whole-port-review.md
                        task_017b_authorized: true
@@ -17,7 +21,8 @@ Current state:        Review 5 is accepted. Task 017B implementation is authoriz
                        plan_review_receipt:
                          port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
 Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
-                       Review 5 [ACCEPTED] -> Task 017B -> Task 019
+                       Review 5 [ACCEPTED] -> Task 018R [ACCEPTED] ->
+                       Task 017B -> Task 019
                        Gluten/Spark integration.
 Non-blocking debt:    `R2-D4` and `R2-D6` remain pending; their six rows remain
                        UNPROVEN in the 215-row denominator by user decision.

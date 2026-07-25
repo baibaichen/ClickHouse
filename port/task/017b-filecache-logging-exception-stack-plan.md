@@ -5,10 +5,11 @@
 > - **Disposition:** reviewed_executable — implementation_authorized
 > - **Task ID:** 017B
 > - **Binding design:** `port/design/filecache-task-017b-logging-exception-stack.md`
-> - **Prerequisite:** Review 5 accepted, Task 018 four-driver addendum accepted [DONE]
+> - **Prerequisite:** Review 5 accepted, Task 018 four-driver addendum accepted
+>   [DONE], Task 018R vcpkg `Arrow` repair accepted [DONE]
 > - **Successor:** Task 019 implementation begins after 017B acceptance
 > - **Execution order:** 017A → 018 → Review 5 → **017B** → 019
-> - **Environment:** `root-oss` (`/root/oss/velox`, branch `filecache`, head `cda6c03703`)
+> - **Environment:** `root-oss` (`/root/oss/velox`, branch `filecache`, head `0c5b5918eb`)
 > - **Commit policy:** Worker never stages, commits, or pushes. Controller commits after independent review.
 > - **Implementation status:** AUTHORIZED (2026-07-24). Plan is reviewed and executable. Controller
 >   authorization recorded in `port/task/fullreview/root-oss/5/017b-implementation-plan-review.md`.
@@ -1456,7 +1457,8 @@ that no existing behavior is broken.
 
 #### 5.1 Complete `velox_ch_*` target list
 
-Discovered from CMake at head `cda6c03703`:
+Discovered from CMake at head `0c5b5918eb` (Task 018R changed only the four
+Arrow CMake files and did not change this target list):
 
 **Test targets (add_test):**
 | Target | Source |
@@ -1674,7 +1676,7 @@ Existing includes that remain: `<gtest/gtest.h>`, `"velox/ch/Common/logger_usefu
 
 ---
 
-## 8. VeloxException API Reference (from live source at `cda6c03703`)
+## 8. VeloxException API Reference (unchanged at live source `0c5b5918eb`)
 
 | Symbol | Location | Signature |
 |--------|----------|-----------|

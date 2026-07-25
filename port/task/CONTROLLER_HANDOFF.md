@@ -74,19 +74,29 @@ Then enumerate result receipts and determine the first task without an accepted
 Controller review. If Git state or receipts disagree with this snapshot, stop
 and resolve the discrepancy from repository evidence before editing.
 
-Current verified snapshot after Review 5 acceptance:
+Current verified snapshot after Task 018R acceptance:
 
 environment_profile: root-oss
 
 - ClickHouse branch: ch-filecache
-- ClickHouse accepted receipt HEAD:
-    31aa159dd61 (ch-filecache, clean, 0/0 vs baibaichen/ch-filecache at Review 5
-    acceptance; resolve with `git log -1 --oneline` if this handoff is updated by
-    a subsequent commit)
+- ClickHouse Task-018R plan HEAD:
+    6b9bce64041 (the Task-018R receipt and this handoff update are accepted in
+    the current acceptance commit)
 - Velox branch: filecache
 - Velox accepted implementation HEAD:
-    cda6c03703cf4ed0b1b515465915dbfd599bcb6c (Review-5 Task-014
-    truncation/rename corrective; clean, 0/0 vs baibaichen/filecache)
+    0c5b5918eb8374f39b09248be091da94bf4d72f0 (Task-018R exact reverse of
+    temporary Arrow bypass)
+- Gluten branch: fix/vcpkg-arrow-squashed
+- Gluten accepted dependency HEAD:
+    c44409a7c3d8fab17ac5369b7cad8b3c80f5a437 (vcpkg Arrow without unused
+    Brotli/BZ2 codecs; local only, do not push by user decision)
+- Task 018R status:
+    controller_status: accepted
+    receipt: port/task/result/018r-vcpkg-arrow-repair-result.md
+    acceptance_authority: user manual review
+    Velox build: system vcpkg Arrow, no arrow_ep, all five requested targets linked
+    Arrow bridge test: 74/74 passed
+    accepted deviations: Worker-created commits and Gluten codec port fix
 - Review 5 verdict: accepted
     review_scope:       Tasks 003-018
     verdict_file:       port/task/fullreview/root-oss/5/003-018-whole-port-review.md
@@ -108,7 +118,9 @@ environment_profile: root-oss
     plan_review_receipt: port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
     next action: dispatch fresh Task 017B Worker; result receipt expected at
       port/task/result/017b-filecache-logging-exception-stack-result.md
-- Both branches are clean and pushed at the accepted heads above.
+- ClickHouse and Velox must be clean and pushed at the accepted heads before
+  dispatching Task 017B. Gluten must be clean at local `c44409a7c3`; do not push
+  it.
 - Accepted tasks:
     Task 003
       Velox:      4bea8d15e
@@ -339,6 +351,11 @@ Historical accepted-task context (superseded by Review-5 items 19-22 above):
         No Task 017B implementation has been performed. ClickHouse head remains
         `0d510c37d77`; Velox head remains `cda6c03703`. Task 019 blocked on
         Task 017B acceptance.
+    25. Task 018R is accepted by user manual review on 2026-07-25. Velox
+        `0c5b5918eb` exactly reverses temporary commit `d52f069e9b`; Gluten
+        `c44409a7c` supplies vcpkg `Arrow`/`arrow_testing` without unused
+        Brotli/BZ2 codecs. All five requested Velox targets link from the fresh
+        RelWithDebInfo build and the Arrow bridge test passes 74/74.
 - Tasks 003-015, Task 017A, Task 018, and Review 5 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -385,7 +402,8 @@ Continuous execution target:
   true` on 2026-07-24. Review receipt at
   `port/task/fullreview/root-oss/5/017b-implementation-plan-review.md`.
 - Tasks 003-015, Task 017A, Task 018, and Review 5 are accepted. Task 016 is
-  deferred. Task 017B is authorized (`implementation_authorized: true`); no
+  deferred. Task 018R is accepted at Velox `0c5b5918eb` and Gluten
+  `c44409a7c`. Task 017B is authorized (`implementation_authorized: true`); no
   implementation written yet. Task 019 remains blocked on Task 017B acceptance.
   Immediate next action: dispatch a fresh Task 017B Worker following the reviewed
   plan at `port/task/017b-filecache-logging-exception-stack-plan.md`; result

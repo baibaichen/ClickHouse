@@ -84,6 +84,34 @@ selecting this profile does not authorize modifying the existing dirty Gluten
 worktree. Task 018 is Velox-only; Task 019 is the only remaining task that
 modifies Gluten.
 
+### Accepted Task 018R dependency baseline
+
+Task 018R updated the persistent `root-oss` dependency baseline:
+
+```text
+Velox:
+  branch: filecache
+  head:   0c5b5918eb8374f39b09248be091da94bf4d72f0
+
+Gluten:
+  branch: fix/vcpkg-arrow-squashed
+  head:   c44409a7c3d8fab17ac5369b7cad8b3c80f5a437
+  push:   prohibited by user decision
+
+Arrow:
+  source: vcpkg SYSTEM
+  triplet: x64-linux-avx
+  testing library: enabled
+  Brotli/BZ2: disabled
+```
+
+For an Arrow-enabled Velox configure, source
+`<gluten_repo>/dev/vcpkg/env.sh --build_tests=ON` and use
+`VELOX_DEPENDENCY_SOURCE=SYSTEM`, `Arrow_SOURCE=SYSTEM`,
+`simdjson_SOURCE=SYSTEM`, and `GLUTEN_VCPKG_PREFER_CONFIG=OFF`. Task 017B keeps
+the exact debug mono/non-mono flags in its reviewed plan; Task 019 starts from
+this accepted local Gluten branch and commit. Do not push the Gluten commit.
+
 ## Rules
 
 - Do not modify ClickHouse source files from Velox implementation tasks unless
