@@ -113,11 +113,21 @@ environment_profile: root-oss
     task_017b_authorized: true (Review 5 accepted)
     written_spec_review: approved (user, 2026-07-24)
     implementation_authorized: true (Controller, 2026-07-24)
+    dispatch_status: paused for TPCH BufferedInput performance investigation
     implementation_plan_status: reviewed_executable
     reviewed_plan: port/task/017b-filecache-logging-exception-stack-plan.md
     plan_review_receipt: port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
-    next action: dispatch fresh Task 017B Worker; result receipt expected at
-      port/task/result/017b-filecache-logging-exception-stack-result.md
+    next action after performance work: dispatch fresh Task 017B Worker; result
+      receipt expected at port/task/result/017b-filecache-logging-exception-stack-result.md
+- TPCH BufferedInput performance investigation:
+    design: port/design/filecache-tpch-buffered-input-performance-investigation.md
+    status: awaiting written-spec review
+    primary baseline: FileCache vs Direct
+    matrix: 1 driver then 4 drivers; Direct / FCBI passthrough / warm FileCache
+    focused queries: q09, q20, q17, q21, q04
+    execution_authorized: false
+- Immediate next action: user reviews the written performance-investigation
+  design. Do not dispatch Task 017B or run probes yet.
 - ClickHouse and Velox must be clean and pushed at the accepted heads before
   dispatching Task 017B. Gluten must be clean at local `c44409a7c3`; do not push
   it.
@@ -356,6 +366,10 @@ Historical accepted-task context (superseded by Review-5 items 19-22 above):
         `c44409a7c` supplies vcpkg `Arrow`/`arrow_testing` without unused
         Brotli/BZ2 codecs. All five requested Velox targets link from the fresh
         RelWithDebInfo build and the Arrow bridge test passes 74/74.
+    26. On 2026-07-25 the user moved the TPCH BufferedInput performance
+        investigation before Task 017B. The approved design isolates Direct,
+        FCBI passthrough, and warm FileCache at one driver and then four drivers.
+        Task 017B remains authorized but paused.
 - Tasks 003-015, Task 017A, Task 018, and Review 5 are accepted.
 - Persistent logs for corrective tasks belong under `<velox_build_dir>`.
 
@@ -403,12 +417,12 @@ Continuous execution target:
   `port/task/fullreview/root-oss/5/017b-implementation-plan-review.md`.
 - Tasks 003-015, Task 017A, Task 018, and Review 5 are accepted. Task 016 is
   deferred. Task 018R is accepted at Velox `0c5b5918eb` and Gluten
-  `c44409a7c`. Task 017B is authorized (`implementation_authorized: true`); no
-  implementation written yet. Task 019 remains blocked on Task 017B acceptance.
-  Immediate next action: dispatch a fresh Task 017B Worker following the reviewed
-  plan at `port/task/017b-filecache-logging-exception-stack-plan.md`; result
-  receipt expected at
-  `port/task/result/017b-filecache-logging-exception-stack-result.md`.
+  `c44409a7c`. Task 017B is authorized (`implementation_authorized: true`) but
+  paused behind the TPCH BufferedInput performance investigation; no 017B
+  implementation is written. Task 019 remains blocked on Task 017B acceptance.
+  Immediate next action: user review of
+  `port/design/filecache-tpch-buffered-input-performance-investigation.md`,
+  followed by a separate executable investigation plan.
 - For every task:
     a. Dispatch one fresh Worker for exactly that task.
     b. Worker implements, validates, launches one read-only self-review,

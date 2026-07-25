@@ -6,13 +6,17 @@
 > - **Task ID:** 017B
 > - **Binding design:** `port/design/filecache-task-017b-logging-exception-stack.md`
 > - **Prerequisite:** Review 5 accepted, Task 018 four-driver addendum accepted
->   [DONE], Task 018R vcpkg `Arrow` repair accepted [DONE]
+>   [DONE], Task 018R vcpkg `Arrow` repair accepted [DONE], TPCH
+>   `BufferedInput` performance investigation/corrective accepted [PENDING]
 > - **Successor:** Task 019 implementation begins after 017B acceptance
-> - **Execution order:** 017A → 018 → Review 5 → **017B** → 019
+> - **Execution order:** 017A → 018 → Review 5 → 018R → TPCH performance
+>   investigation → **017B** → 019
 > - **Environment:** `root-oss` (`/root/oss/velox`, branch `filecache`, head `0c5b5918eb`)
 > - **Commit policy:** Worker never stages, commits, or pushes. Controller commits after independent review.
-> - **Implementation status:** AUTHORIZED (2026-07-24). Plan is reviewed and executable. Controller
->   authorization recorded in `port/task/fullreview/root-oss/5/017b-implementation-plan-review.md`.
+> - **Implementation status:** AUTHORIZED BUT PAUSED. The plan was reviewed and
+>   authorized on 2026-07-24. On 2026-07-25 the user placed the TPCH
+>   `BufferedInput` performance investigation before implementation. Resume
+>   only after that investigation and any required corrective are accepted.
 > - **implementation_authorized:** true
 
 **Goal:** Replace the no-op `logger_useful.h` shim (Task 003) with real lazy

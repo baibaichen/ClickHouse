@@ -7,7 +7,9 @@ cross-task correctness, acceptance, and commits.
 ## Current execution boundary
 
 ```text
-Current state:        Task 018R is accepted. Task 017B implementation is authorized.
+Current state:        Task 018R is accepted. Task 017B implementation is authorized
+                       but paused for the approved TPCH BufferedInput performance
+                       investigation.
                        ClickHouse Task-018R plan head: 6b9bce64041
                        (receipt accepted in the current acceptance commit).
                        Velox head: 0c5b5918eb (filecache; Task-018R reverse).
@@ -22,18 +24,17 @@ Current state:        Task 018R is accepted. Task 017B implementation is authori
                          port/task/fullreview/root-oss/5/017b-implementation-plan-review.md
 Pipeline order:        Task 017A -> Task 018 -> four-driver addendum ->
                        Review 5 [ACCEPTED] -> Task 018R [ACCEPTED] ->
+                       TPCH BufferedInput performance investigation ->
                        Task 017B -> Task 019
                        Gluten/Spark integration.
 Non-blocking debt:    `R2-D4` and `R2-D6` remain pending; their six rows remain
                        UNPROVEN in the 215-row denominator by user decision.
                        These are non-blocking forward debt and do not gate 017B.
 Immediate next action:
-                       Dispatch a fresh Task 017B Worker to implement
-                       port/task/017b-filecache-logging-exception-stack-plan.md
-                       (reviewed_executable, all findings resolved).
-                       Worker must not commit; result receipt expected at
-                       port/task/result/017b-filecache-logging-exception-stack-result.md
-                       with worker_status: ready_for_controller.
+                       User review of
+                       port/design/filecache-tpch-buffered-input-performance-investigation.md,
+                       then write its implementation plan. Do not dispatch Task
+                       017B or run performance probes before that review.
                        Task 019 remains blocked on Task 017B acceptance.
 Task 015 is complete.
 Task 016's rewritten contract is deferred by user decision because Velox has no
@@ -54,7 +55,8 @@ Tasks 011-015 have been amended with dependency pre-checks, consumer-contract
   and explicit stop conditions.
 Deferred Velox work:  Task 016
 Planned Velox work:   `017a-filecache-statistics-cancellation-plan.md` [DONE],
-                      then Task 017B from the reviewed executable plan at
+                      TPCH BufferedInput performance investigation, then Task
+                      017B from the reviewed executable plan at
                       port/task/017b-filecache-logging-exception-stack-plan.md
 Planned Gluten work:  `019-filecache-gluten-integration-spark-e2e-plan.md`
 Deferred Gluten:      Task 019, blocked on Task 017B acceptance
