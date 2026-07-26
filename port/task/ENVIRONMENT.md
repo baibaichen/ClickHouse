@@ -131,6 +131,9 @@ this accepted local Gluten branch and commit. Do not push the Gluten commit.
 - Do not commit anything unless explicitly asked.
 - Do not delete or recreate `<velox_repo>`.
 - Do not use `-j` with Ninja; let Ninja decide parallelism.
+- Build exactly one Velox target per CMake/Ninja invocation. Multiple targets
+  in one invocation may enter large link steps concurrently. Wait for one
+  target to finish and write its unique log before starting the next target.
 - For long builds/tests, redirect output to a unique log under
   `<velox_build_dir>` and report the log path.
 - Benchmark binaries must be freshly built and run from a RelWithDebInfo or

@@ -91,6 +91,8 @@ No per-chunk logging.
 No fine-grained lock timers in this task.
 No root-cause claim from A/B/C timing alone.
 No Ninja -j or nproc.
+Exactly one Velox target per CMake/Ninja build invocation; wait for it to finish
+before starting the next target so large link steps cannot overlap.
 All C++ changes use Allman-style braces.
 Worker never stages, commits, amends, rebases, pushes, or creates a PR.
 Performance configure/build/test/query commands write unique logs under:
@@ -760,8 +762,18 @@ bash -lc '
   source /root/oss/velox-helper/env.sh
   exec /usr/bin/cmake --build \
     /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow \
-    --target velox_ab_benchmark_schema_test velox_dwio_common_test
-' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_task2_green.log 2>&1
+    --target velox_ab_benchmark_schema_test
+' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_task2_schema_green.log 2>&1
+
+bash -lc '
+  set -euo pipefail
+  cd /root/oss/gluten
+  source dev/vcpkg/env.sh --build_tests=ON
+  source /root/oss/velox-helper/env.sh
+  exec /usr/bin/cmake --build \
+    /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow \
+    --target velox_dwio_common_test
+' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_task2_direct_green.log 2>&1
 
 /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/velox/benchmarks/tests/velox_ab_benchmark_schema_test \
   --gtest_filter='BufferedInputProbeStatsTest.*' \
@@ -776,7 +788,8 @@ For mutation and restore, rebuild both targets and rerun the same filters.
 Final logs:
 
 ```text
-build_018s_task2_green.log
+build_018s_task2_schema_green.log
+build_018s_task2_direct_green.log
 test_018s_task2_green.log
 test_018s_task2_direct_green.log
 test_018s_task2_mutation.log
@@ -1619,25 +1632,59 @@ fixture must fail. Restore and rerun.
 
 - [ ] **Step 1: Build all affected targets**
 
+Run these six commands sequentially. Do not start the next command until the
+previous command exits `0`:
+
 ```bash
 bash -lc '
   set -euo pipefail
   cd /root/oss/gluten
   source dev/vcpkg/env.sh --build_tests=ON
   source /root/oss/velox-helper/env.sh
-  export VELOX_DEPENDENCY_SOURCE=SYSTEM
-  export Arrow_SOURCE=SYSTEM
-  export simdjson_SOURCE=SYSTEM
-  export GLUTEN_VCPKG_PREFER_CONFIG=OFF
   exec /usr/bin/cmake --build \
     /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow \
-    --target \
-      velox_ab_benchmark_schema_test \
-      velox_dwio_common_test \
-      velox_hive_filecache_buffered_input_test \
-      velox_ch_filecache_buffered_input_test \
-      velox_tpch_benchmark
-' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_all.log 2>&1
+    --target velox_ab_benchmark_schema_test
+' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_schema_all.log 2>&1
+
+bash -lc '
+  set -euo pipefail
+  cd /root/oss/gluten
+  source dev/vcpkg/env.sh --build_tests=ON
+  source /root/oss/velox-helper/env.sh
+  exec /usr/bin/cmake --build \
+    /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow \
+    --target velox_dwio_common_test
+' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_direct_all.log 2>&1
+
+bash -lc '
+  set -euo pipefail
+  cd /root/oss/gluten
+  source dev/vcpkg/env.sh --build_tests=ON
+  source /root/oss/velox-helper/env.sh
+  exec /usr/bin/cmake --build \
+    /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow \
+    --target velox_hive_filecache_buffered_input_test
+' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_hive_fcbi_all.log 2>&1
+
+bash -lc '
+  set -euo pipefail
+  cd /root/oss/gluten
+  source dev/vcpkg/env.sh --build_tests=ON
+  source /root/oss/velox-helper/env.sh
+  exec /usr/bin/cmake --build \
+    /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow \
+    --target velox_ch_filecache_buffered_input_test
+' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_ch_fcbi_all.log 2>&1
+
+bash -lc '
+  set -euo pipefail
+  cd /root/oss/gluten
+  source dev/vcpkg/env.sh --build_tests=ON
+  source /root/oss/velox-helper/env.sh
+  exec /usr/bin/cmake --build \
+    /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow \
+    --target velox_tpch_benchmark
+' > /root/oss/velox/_build/relwithdebinfo-vcpkg-arrow/build_018s_tpch_all.log 2>&1
 
 bash -lc '
   set -euo pipefail
