@@ -1,100 +1,96 @@
 # `FileCacheBufferedInput` Velox 接入设计
 
+## 0. 文档性质与实现基线
+
+本文是 **as-built 设计**，描述已经落地的实现，而不是待实施的方案。
+
+```text
+实现仓库：https://github.com/baibaichen/velox.git
+实现分支：filecache2
+实现参考：fc37a7eb  `FileCache`: integrate buffered input with Velox IO
+核心基线：5785a43a（CH `FileCache` port 的核心冻结点）
+```
+
+`fc37a7eb` 是压缩后的单一实现 commit，本文不再引用压缩前的中间 commit 区间。
+
+权威依据与验收记录：
+
+```text
+port/design/filecache-buffered-input-review-remediation.md   第 11、12 节
+port/task/result/020-filecache-core-baseline-io-uplift-result.md
+```
+
+本文以实现参考 commit 的实际代码为事实来源；remediation 第 12 节解释设计动机与验收边界，
+Task 020 result 记录验证证据。历史设计草图与代码不一致时，不把草图字段或接口视为当前合同。
+
+生产代码范围：
+
+```text
+velox/ch/Disks/IO/FileCacheBufferedInput.{h,cpp}
+velox/ch/Disks/IO/FileCacheCoalescedLoad.{h,cpp}
+velox/ch/Disks/IO/FileCacheInputStream.{h,cpp}   // 同时定义 FileCacheReadContext
+velox/ch/Disks/IO/FileCacheRequestContext.h
+velox/ch/Disks/IO/FileCacheBufferedInputBuilder.{h,cpp}
+velox/ch/IO/FileCacheLocalWriteFile.{h,cpp}
+velox/ch/IO/ReadBufferFromVeloxReadFile.{h,cpp}
+```
+
 ## 1. 目标
 
-让 `FileCacheBufferedInput` 在保留 ClickHouse `FileCache` 语义的前提下，更完整地接入
-Velox `BufferedInput` 体系：
+让 `FileCacheBufferedInput` 在保留 ClickHouse `FileCache` 语义的前提下，完整接入 Velox `BufferedInput` 体系：
 
-- 对齐 `ScanTracker`、read-planning chunk、coalesced load、异步 prefetch 和 demand load。
-- 保留磁盘优先、稳定 key/path、`FileSegment` 状态机、SLRU、`QueryLimit` 和跨重启恢复。
-- 支持两种独立 prefetch：
-  - 从 source 下载并填充持久 `FileSegment`。
-  - 对已缓存的本地 segment 文件调用 `posix_fadvise(POSIX_FADV_WILLNEED)`。
-- 对齐 `DirectBufferedInput` 的 whole-file 内存 `preload` 和 `isBuffered` 语义。
-- 保持当前 Parquet reader 源码不变，适配其现有 `clone` / `enqueue` / `load` /
-  `isBuffered` 调用流程。
+- 对齐 `ScanTracker`、read-planning chunk、coalesced load、异步 prefetch 与 demand load；
+- 保留磁盘优先、稳定 key/path、`FileSegment` 状态机、SLRU、`QueryLimit` 与跨重启恢复；
+- 对齐 `DirectBufferedInput` 的 whole-file 内存 `preload` 与 `isBuffered` 语义；
+- 保持 Parquet / DWRF reader 源码不变，适配其现有 `clone` / `enqueue` / `load` / `isBuffered` 调用流程；
+- CH `FileCache` 核心相对 `5785a43a` 保持零 diff（仅默认 writer 换成 typed writer）。
 
-本设计不把 `FileCache` 改造成 `AsyncDataCache`，也不让同一 read path 同时经过两套
-raw-byte cache。
+### 1.1 为什么 `FileCache` 不是 `AsyncDataCache`
 
-## 2. 已批准的范围
+`FileCache` 是持久磁盘 cache，条目是 `FileSegment`：有下载者仲裁、状态机、部分下载续传、跨进程重启复用。
+`AsyncDataCache` 是进程内 RAM/SSD cache，条目是 `CachePin` 引用的 entry，生命周期随进程结束。两者语义不同，所以本实现：
 
-### 2.1 当前阶段包含
+- 不把 `FileCache` 改造成 `AsyncDataCache`；
+- 不让同一 read path 同时经过两套 raw-byte cache（builder 里有互斥断言）；
+- 不提供 `CachePin` 兼容层，`hasCache` 恒为 false。
 
-- `FileCacheBufferedInput` request planning。
-- `FileCacheLoadGroup` 的共享加载状态、future、取消和 stream handoff。
-- `ScanTracker` 接入。
-- source read coalescing。
-- demand-triggered next-window prefetch。
-- 本地 cache-segment `fadvise`。
-- whole-file 同步内存 `preload`。
-- `ReadFile` 的通用 read-advice API 和 `LocalReadFile` 实现。
-- 现有 Parquet reader 零改动下的兼容。
+### 1.2 不在范围内
 
-### 2.2 当前阶段不包含
-
-- Parquet reader 迁移到 `dwio::common::LoadUnit` / `UnitLoader`。
-- DWRF `StripeMetadataCache` 对 `CacheInputStream` 假设的解除。
-- 把 `FileCacheInputStream` 伪装成 `CacheInputStream`。
-- `cacheRegion` / `findCachedRegion` 的 `CachePin` 兼容层。
-- 用 `AsyncDataCache` / `SsdCache` 保存 `FileCache` 数据。
+- Parquet reader 迁移到 `dwio::common::LoadUnit` / `UnitLoader`；
+- 解除 DWRF `StripeMetadataCache` 对 `CacheInputStream` 的假设；
+- 把 `FileCacheInputStream` 伪装成 `CacheInputStream`；
+- `cacheRegion` / `findCachedRegion` 的 `CachePin` 兼容层；
+- 用 `AsyncDataCache` / `SsdCache` 保存 `FileCache` 数据；
 - write-through cache 或 `cache_on_write_operations`。
 
-DWRF 在本阶段继续让 `FileCacheBufferedInput::shouldPrefetchStripes` 返回 false。解除
-`CacheInputStream` 假设后，再单独开启 DWRF stripe prefetch。这个限制只关闭DWRF的
-stripe-metadata prefetch；本设计对共享 `FileCacheBufferedInput` 的 `preload` 和
-`isBuffered` 修改仍会影响DWRF/Text等其他format调用方，必须按第20节验证。
-
-`cacheRegion` / `findCachedRegion` 继续遵循 `BufferedInput` 的现有合同：当
-`hasCache=false` 时，直接调用是caller contract violation并抛
-`VELOX_UNSUPPORTED`。不改为fail-soft：
-
-- `cacheRegion` 返回 `void`，静默no-op会让caller误以为raw bytes已经进入backing
-  cache；
-- `findCachedRegion` 返回 `nullopt` 会把“该实现没有 `CachePin` API”伪装成一次普通
-  cache miss；
-- 当前Velox生产源码没有这两个API的调用点，只有 `CachedBufferedInput` 实现和测试；
-- 未来caller必须先检查 `hasCache`，不能依赖subclass私自弱化基类合同。
-
-本阶段增加合同测试：`hasCache=false`，直接调用 `cacheRegion` /
-`findCachedRegion` 必须抛；所有新增真实调用点必须先由 `hasCache` gate保护。
-
-## 3. 现有实现差异
+## 2. 与其他 `BufferedInput` 实现的对比
 
 | 实现 | request planning | 数据落点 | stream 消费 | 跨 reader 复用 |
 |---|---|---|---|---|
 | `BufferedInput` | 排序、合并，同步 `vread` 或连续读 | 当前 input 的内存 buffer | `SeekableArrayInputStream` | 否 |
 | `DirectBufferedInput` | `ScanTracker`、概率分类、`coalesceIo`、可异步 | 当前 reader/stream 的临时 buffer | `DirectInputStream` 接管 buffer | 否 |
 | `CachedBufferedInput` | 同上，并按 density 切片，区分 RAM/SSD/source | `AsyncDataCache` entry | `CacheInputStream` 持有 `CachePin` | 当前进程内可以 |
-| 当前 `FileCacheBufferedInput` | `load` 是 no-op | demand read 时写 `FileSegment` | `FileCacheInputStream` 状态机 | 持久磁盘复用 |
+| `FileCacheBufferedInput` | `ScanTracker`、`loadQuantum` 切块、cache 状态分类、`coalesceIo` | 持久 `FileSegment` + per-request RAM buffer | `FileCacheInputStream`（CH 状态机 + RAM window） | 持久磁盘复用 |
 
-`DirectBufferedInput` 和 `CachedBufferedInput` 都使用 access pattern：
+复用的 policy：`enqueue` 记 `recordReference`；`load` 用 `adjustedReadPct` 区分 prefetch 与 demand；
+大请求按 `loadQuantum` 切块；dense/sequential 更积极 coalesce 与异步；sparse 保持 demand；
+stream 真正交付字节后 `recordRead`。不复用 `CachePin`、exclusive/shared entry 转换或 `SsdPin`。
 
-1. `enqueue` 通过 `ScanTracker::recordReference` 记录 stream 引用。
-2. `load` 使用 `adjustedReadPct` 区分 prefetch 和 demand。
-3. 大请求按 `loadQuantum` 切成 read-planning chunks。
-4. dense/sequential 请求允许更积极地 coalesce 和异步加载。
-5. sparse 请求避免大范围 over-read。
-6. stream 真正消费字节后，`recordRead` 更新历史。
+## 3. 三个容易混淆的 API
 
-`FileCacheBufferedInput` 应复用这套 policy，不复用 `CachePin`、exclusive/shared entry
-转换或 `SsdPin`。
+### 3.1 `load`
 
-## 4. 三个容易混淆的 API
+`load` 表示 request 集合已完整，可以建立优化后的读取计划。它可能启动 IO，但不保证同步完成：
 
-### 4.1 `load`
+- 普通 `BufferedInput` 在 `load` 内同步完成 IO；
+- `DirectBufferedInput` / `CachedBufferedInput` 有 executor 时提交 prefetch，无 executor 时由
+  首个 stream 触发；
+- `FileCacheBufferedInput` 与后者对齐：prefetch 组在有 executor 时立即提交，demand 组以及
+  无 executor 的 prefetch 组保持 `kPlanned`，由绑定 stream 的首次 `Next` 驱动。
 
-`load` 表示 request 集合已经完整，可以建立优化后的读取计划。它可能启动 IO，但不保证
-同步完成：
+只有 `stream::Next` 保证当前请求的字节在返回时可用。
 
-- 普通 `BufferedInput` 在 `load` 内同步完成 IO。
-- `DirectBufferedInput` / `CachedBufferedInput` 在有 executor 时提交 prefetch group；
-  无 executor 时由首个 stream 触发。
-- 新 `FileCacheBufferedInput` 与 `DirectBufferedInput` / `CachedBufferedInput` 对齐。
-
-`stream::Next` 才保证当前请求的字节在返回时可用。
-
-### 4.2 `loadCompleteFile`
+### 3.2 `loadCompleteFile`
 
 `loadCompleteFile` 不调用 `clone`，也不等价于 `preload`。它只是：
 
@@ -104,667 +100,651 @@ load(FILE)
 return stream
 ```
 
-不同 subclass 通过虚函数得到各自的 load 行为，但 `loadCompleteFile` 不把
-`preloaded` 设为 true。
+不同 subclass 通过虚函数得到各自的 load 行为，但 `loadCompleteFile` 不把 `preloaded` 置为
+true。
 
-### 4.3 `preload` 与 `isBuffered`
+### 3.3 `preload` 与 `isBuffered`
 
-`isBuffered` 必须与 `DirectBufferedInput` 对齐：
+`isBuffered` 与 `DirectBufferedInput` 对齐：
 
 ```text
 isBuffered(offset, length) == preloaded()
 ```
 
-它只表示 whole-file 数据已驻留在当前 input 持有的内存中，不表示：
+它只表示 whole-file 数据已驻留在当前 input 持有的内存中，不表示 request 已被规划、coalesced
+load 已完成、持久 `FileSegment` 已下载或 OS page cache 中可能存在数据。普通磁盘
+`FileSegment` 命中不会让 `isBuffered` 返回 true。
 
-- request 已被 planner 规划；
-- coalesced load 已完成；
-- `AsyncDataCache` 中存在普通 region entry；
-- 持久 `FileSegment` 已下载；
-- OS page cache 中可能存在数据。
+`shouldPreload` 恒返回 false：`preload` 只由显式调用方（DWRF）触发。
 
-普通磁盘 `FileSegment` 命中不能让 `isBuffered` 返回 true。
+## 4. 格式调用方合同
 
-`FileCacheBufferedInput::preload` 按 `DirectBufferedInput` / `CachedBufferedInput` 的同步
-合同实现：
+本实现不修改 Parquet / DWRF reader 源码。
 
-1. 只能调用一次。
-2. 必须发生在普通 `enqueue` 之前。
-3. 只接受 `fileSize <= ReaderOptions::filePreloadThreshold`；超出时fail fast，不能
-   通过一次无界whole-file allocation绕过preload admission。默认threshold为8 MiB，
-   由Hive `file-preload-threshold`配置。这是相对 `DirectBufferedInput::preload` 的
-   有意加强；正常DWRF caller已用同一threshold gate，本地直接调用也必须遵守。
-4. 整文件allocation计入caller的MemoryPool；allocation失败直接传播，不降级为隐藏的
-   untracked buffer。
-5. 返回时整文件已驻留 MemoryPool-backed buffer。
-6. `preloaded` 和 `isBuffered` 返回 true。
-7. 如果 source 数据尚未进入 `FileCache`，同一批字节也写入 `FileSegment`，避免第二次
-   source read。
+### 4.1 Parquet
 
-MemoryPool bytes和FileCache disk bytes属于两个不同资源预算，不是同一个counter的双计：
+metadata读取有两个分支：
 
-- preload buffer只计MemoryPool；
-- `FileSegment` fill只计FileCache容量和一次 `QueryLimit` download/write；
-- segment写入直接读取whole-file preload buffer的slice，不再分配第二份whole-file
-  staging buffer；
-- preload input析构后释放MemoryPool bytes，持久segment继续存在；
-- cache fill失败按第17.4节处理：skip开启时保留内存preload；严格模式清理未提交的
-  preload状态并抛出。
+- 当文件长度不超过 `max(filePreloadThreshold, footerSpeculativeIoSize)` 时，调用
+  `loadCompleteFile`，即 `enqueue` 整文件 → `load` → 返回 stream；
+- 更大的文件只用 `read` 读取文件尾部的 speculative footer 区间。
 
-当前 Parquet 小文件路径调用 `loadCompleteFile`，不是 `preload`，因此不会自动进入
-whole-file 内存 preload 状态。DWRF 显式调用 `preload` 时可获得该能力。
+两条路径都不会把 input 置为 whole-file `preloaded` 状态。
 
-## 5. 当前 Parquet reader 合同
-
-本阶段不修改 Parquet reader。
-
-### 5.1 Footer / small file
-
-```text
-loadCompleteFile
-  -> enqueue whole file
-  -> load
-  -> returned stream
-```
-
-### 5.2 Row group
-
-Parquet 对未 buffered 的 row group 使用：
+row group：
 
 ```text
 clone
-  -> enqueue selected column chunks
-  -> load once after all columns are registered
-  -> keep cloned input in ReaderBase::inputs_
-  -> PageReader later consumes the returned streams
+  -> enqueue 选中的 column chunk（sid 是栈上临时对象）
+  -> 所有列注册完成后调用一次 load
+  -> cloned input 保存在 ReaderBase::inputs_
+  -> PageReader 之后消费返回的 stream
 ```
 
-`FileCacheBufferedInput::isBuffered` 与 `DirectBufferedInput` 对齐后，普通持久磁盘命中
-返回 false。因此 Parquet 会继续走现有 `clone` / `enqueue` / `load` 流程：
+因为 `isBuffered` 只反映内存 preload，持久磁盘命中仍走上述完整流程；cache 命中的 chunk 被
+分类为 `kHit`，不进入 source group，由 stream 的状态机从本地 segment 文件读出。
 
-- cache miss 生成 download-prefetch plan；
-- cache hit 生成 local-advice plan；
-- 不需要修改 Parquet 源码；
-- 不需要让 `isBuffered` 产生副作用。
+`clone` 共享 immutable context（source `ReadFile`、`FileCachePtr`、`FileCacheKey` / origin、
+`FileCacheReadOptions` / `FileCacheRequestContext`、`QueryStatus`、`fileNum` / `groupId` lease、
+`ScanTracker`、`IoStatistics` / `IoStats`、executor、`ReaderOptions`），不共享 request 列表、
+plan、coalesced load、binding 和 preload buffer；`MetricsLog` 换成 `voidLog`。构造父input时
+传入的 `fileReadOps` 没有在 `clone` 中继续传递，因此clone使用空map；这是当前实现事实，不把
+它描述成共享context的一部分。
 
-`clone` 共享 immutable context：
+### 4.2 DWRF
 
-- source `ReadFile`；
-- `FileCachePtr`；
-- `FileCacheKey` / origin；
-- `FileCacheReadOptions` / request context；
-- file id / group id / `ScanTracker`；
-- metrics、executor 和 reader options。
+`shouldPrefetchStripes` 恒返回 false。`StripeMetadataCache` 的 stripe-metadata prefetch 会把
+input stream 硬转换成 `CacheInputStream`，而 `FileCacheInputStream` 不是它的子类，也不打算
+伪装成它。该限制只关闭 DWRF 的 stripe-metadata prefetch，不影响列数据读取路径。
 
-`clone` 不共享 request、load group、临时 buffer 或取消状态。
+DWRF 是 `preload` 的真实调用方（受 `ReaderOptions::filePreloadThreshold` gate）。
 
-## 6. Request 状态与 stream 生命周期
-
-每次 `enqueue`：
-
-1. 把 `StreamIdentifier` 立即复制成 tracking id，不保存 caller 的裸指针。
-2. 调用 `ScanTracker::recordReference`。
-3. 创建 `shared_ptr<FileCacheRequestState>` 并交给返回的
-   `FileCacheInputStream`。
-4. input request 列表只保存该 state 的 `weak_ptr`、region 和 tracking id。
-
-`load` 锁定仍然存活的 weak state。若 enqueue 返回的 stream 已在 `load` 前销毁，
-planner 跳过该 request，不产生 UAF 或无效 prefetch。
-
-每个存活 request 在 `load` 后关联一个 `FileCacheLoadGroup`。stream 首次读取时：
-
-- group 已加载：取得 demand handoff buffer 或读取持久 segment；
-- group 正在加载：等待同一个 future；
-- group 仍是 demand-planned：当前 stream 成为触发者；
-- group 失败：按第 11 节传播；
-- group 被取消：检查 query cancellation 或重新按 demand 路径建立状态。
-
-## 7. `ScanTracker` 与 read-planning chunks
-
-`readerOptions.loadQuantum` 是 Velox 的访问预测和临时 buffer 单位。默认值为 8 MiB。
-它不是 FileCache 的持久 segment size。
-
-对每个 region：
-
-1. 按 `loadQuantum` 切成 read-planning chunks。
-2. 使用 `adjustedReadPct` 和 read density 分类。
-3. empty tracking id和 `StreamIdentifier::sequentialFile` 按原生 policy 进入
-   prefetch 候选；不新增独立的 metadata tracking category。
-4. sparse 大 column 的 chunks 保持 demand，避免 over-read。
-5. stream 实际交付字节时调用 `ScanTracker::recordRead`。
-
-后台下载不能调用 `recordRead`，否则会把“下载了”错误地记成“消费了”。
-
-tracking identity与原生 `DirectBufferedInput` / `CachedBufferedInput` 完全一致：
+## 5. 组件与所有权
 
 ```text
-file lease   = FileHandle::uuid
-file id      = FileHandle::uuid.id()       // uint64_t
-group lease  = FileHandle::groupId
-group id     = FileHandle::groupId.id()    // uint64_t
-tracking id  = TrackingId(StreamIdentifier::getId())
-```
-
-`StringIdLease` 是可复制lease；`FileCacheBufferedInput` 和clone持有副本，保证传给
-`recordReference` / `recordRead` 的process-local `uint64_t` id在input生命周期内仍有
-有效mapping。它只服务 `ScanTracker`，不参与持久 `FileCacheKey`。
-
-## 8. FileCache 状态映射
-
-每个 read-planning chunk 查询 `FileCache`，再按实际 segment 状态拆成：
-
-```text
-已下载部分
-  -> local read-ahead range
-
-缺失、EMPTY 或可续传部分
-  -> cache-fill range
-
-由其他 downloader 写入的部分
-  -> join/wait range
-
-未被消费的 demand request
-  -> planned only
-```
-
-例如：
-
-```text
-Parquet region: [0, 20 MiB)
-loadQuantum:    8 MiB
-
-planning chunks:
-  [0, 8), [8, 16), [16, 20)
-
-FileCache state:
-  [0, 8)   downloaded -> local advice
-  [8, 16)  miss       -> source read + FileSegment write
-  [16, 20) downloaded -> local advice
-```
-
-cache hit 和 miss 在同一次 planning 中识别，但进入不同的执行 group。
-
-## 9. `loadQuantum` 与 FileSegment size
-
-默认值：
-
-```text
-ReaderOptions::loadQuantum           = 8 MiB
-FileCache maxFileSegmentSize         = 32 MiB
-FileCache boundaryAlignment          = 4 MiB
-```
-
-这些值不要求相等：
-
-- `loadQuantum` 控制访问概率、临时内存和 stream next-window。
-- `maxFileSegmentSize` 是持久 segment 的大小上限。
-- `boundaryAlignment` 控制持久 range 对齐。
-
-对新的 miss，planner 按 read-planning chunk 调用 `getOrSet`。实际 segment range仍由
-alignment、已有 metadata和 `maxFileSegmentSize` 决定，不保证 chunk与segment一一
-对应。相邻 chunk可能返回同一个已存在/新建 segment；一个 8 MiB chunk经4 MiB对齐后
-也可能扩张。
-
-对已有的大 segment：
-
-- 不重新切分或改名；
-- 写入必须从 `currentWriteOffset` 连续推进；
-- 若选中的 chunk 位于未下载 prefix 之后，physical cache-fill range 必须包含该 prefix；
-- alignment/prefix 扩张计入 physical over-read。
-
-访问 policy 始终使用原始 `loadQuantum`。coalescing 和内存预算使用扩张后的 physical
-bytes，避免配置差异绕过内存上限。
-
-## 10. Coalesced groups
-
-### 10.1 Source groups
-
-只包含 cache-fill ranges：
-
-1. 按 source offset 排序。
-2. 复用 `coalesceIo`、`moveCoalesced`、`maxCoalesceDistance` 和
-   `maxCoalesceBytes`。
-3. planning阶段只形成候选 group，不固定最终 source offset或buffer layout。
-4. group执行时，先逐segment重新读取状态并进行 downloader election：
-   - election成功：读取执行时的 `currentWriteOffset`；
-   - 已被其他downloader拥有：从source group移除并转为join/wait；
-   - 已在并发期间完成：转为local-advice/hit；
-   - 无法reserve：按现有bypass/throw合同处理。
-5. 对election成功的segment先按执行时range完成 `reserve`，再根据实际
-   `currentWriteOffset` 生成最终 positioned-read vectors。
-6. 对最终保留的ranges执行一次 positioned batch read / `preadv`。
-7. 直接从group buffer调用 `FileSegment::write`，随后 `complete` /
-   `completePartAndResetDownloader`；该路径不使用
-   `getRemoteFileReader` / `setRemoteFileReader` handoff。
-8. source IO或写入异常时，对所有已election/reserve的segment执行现有异常清理和
-   downloader释放协议，不能留下reserved bytes或lease。
-
-planner 不复用 `CachePin`-specific `CoalescedLoad` 数据结构，但应对齐其状态机和 future
-语义。
-
-downloader election、执行时cursor和reserve必须发生在source IO之前。否则另一query
-可能先取得downloader，导致本group读完source后无法写入，或partial segment的
-`currentWriteOffset` 已变化，使计划时buffer layout失效。
-
-### 10.2 Local-advice groups
-
-只包含 downloaded segment ranges：
-
-- 只能合并同一个 cache-segment 文件内的重复或相邻区间；
-- offset 转换为 segment-file-relative 坐标；
-- 不跨不同 segment 文件合并；
-- 不分配数据 buffer；
-- 不占 `QueryLimit` 下载额度。
-
-## 11. Static prefetch 与 demand prefetch
-
-### 11.1 Static prefetch
-
-`load` 完成 tracking 分类后：
-
-- 有 executor：提交高概率 source/local groups。
-- 无 executor：保留为 `Planned`，由首个 stream 触发。
-
-`load` 不等待异步 group 完成。
-
-### 11.2 Demand group
-
-未被预测为高概率的 group 不在 `load` 时产生 IO。第一次 `Next` 触发当前 chunk。
-
-与 `DirectBufferedInput` 对齐：
-
-- 多个相关demand requests若通过 `coalesceIo` 规则，可以在 `load` 时形成一个
-  demand coalesced group，由其中第一个stream触发；
-- 单个或无法coalesce的demand request只读取当前chunk；
-- demand group的physical bytes同样受 `maxCoalesceBytes` 约束；
-- dynamic next-window prefetch是新的单窗口任务，不无限扩张当前demand group。
-
-stream 消费达到当前 `loadQuantum` 的阈值后，对下一窗口动态 prefetch：
-
-- 下一窗口已缓存：local `fadvise`；
-- 下一窗口缺失：调度 cache-fill；
-- stream 不继续消费：不再向后预取。
-
-这对齐 `CacheInputStream` 的 `prefetchPct` 思路，避免仅 enqueue 但从未消费的 stream
-产生无效 IO。
-
-阈值来源必须明确，不在实现时临时选择：
-
-- 新增 `FileCacheReadOptions::nextWindowPrefetchPct`；
-- 默认值为200，与 `CacheInputStream::prefetchPct_` 一致；100或更大表示关闭dynamic
-  next-window prefetch，保持默认行为不变；
-- 取值0到99时，在当前quantum已交付bytes达到
-  `loadQuantum * nextWindowPrefetchPct / 100` 后调度下一quantum；
-- 首次启用和性能实验使用50，但生产默认是否从200改为50必须有benchmark和host配置
-  决定；
-- static `load` prefetch仍由 `ScanTracker` policy控制，不受该阈值影响。
-
-## 12. Demand buffer handoff
-
-cache miss 的当前 query 不能在下载后立即从本地文件重读同一批数据。
-
-错误实现：
-
-```text
-source -> temporary buffer -> FileSegment -> discard
-current stream -> local FileSegment read -> decoder
-```
-
-正确实现：
-
-```text
-demand-triggered source read
-  -> group-owned temporary buffer
-       -> write FileSegment
-       -> hand off matching slice to current stream
-  -> stream consumes and releases temporary buffer
-```
-
-后台提前完成的 prefetch group：
-
-```text
-source -> temporary buffer -> FileSegment -> release temporary buffer
-```
-
-因此：
-
-- demand cold path只有一次 source read，不增加本地重读；
-- future reader/query 从持久 `FileSegment` 读取；
-- 临时 buffer 不构成进程级 memory cache；
-- 临时内存受 `loadQuantum`、physical bytes和 `maxCoalesceBytes` 约束；
-- duplicate request各自获得安全的 slice/copy，不能重复 move 同一 buffer。
-
-## 13. 本地磁盘 read advice
-
-### 13.1 通用 `ReadFile` API
-
-Velox `ReadFile` 增加通用 read-advice API，支持：
-
-```text
-WILL_NEED
-```
-
-结果必须显式区分：
-
-- applied；
-- unsupported；
-- failed，并携带系统错误。
-
-默认 `ReadFile` 返回 unsupported。`LocalReadFile` 使用其私有 fd 调用
-`posix_fadvise(..., POSIX_FADV_WILLNEED)`。不支持该系统调用的平台保留默认
-unsupported，不引入无效fallback。
-
-`FileCache` 不强转 `LocalReadFile`，不读取私有 fd，也不为 advice 重复打开文件。
-
-这是本设计唯一有意修改Velox主干抽象的部分，文件范围限于：
-
-```text
-velox/common/file/File.h
-velox/common/file/LocalFile.h
-velox/common/file/LocalFile.cpp
-对应的 common/file tests
-```
-
-它属于通用、可上游化的 `ReadFile` 能力，不包含 `FileCache` 类型。实现提交和后续
-upstream sync必须显式登记该主干偏离。
-
-拒绝只在 `velox/ch` 中增加path-based advice helper：`LocalReadFile` 是 `final`，
-fd是private且没有native-handle API；helper只能为同一路径再open一个fd。这会绕开
-`OpenedFileCache`、增加open/rename race和额外系统调用，不满足本设计的句柄handoff
-合同。
-
-### 13.2 句柄获取和 handoff
-
-对immutable `DOWNLOADED` segment，本地 prefetch 的实际顺序：
-
-```text
-load group
-  -> OpenedFileCache::get(path)
-  -> ReadFile advice
-  -> group 保持 shared_ptr<ReadFile>
-  -> demand stream 接管或复用同一 handle
-  -> pread
-```
-
-`posix_fadvise` 必须在 open 后调用，但整个 `open + advice` 发生在 demand read 之前。
-
-当前 `FileCacheInputStream` 的 cache-file open 也应统一经过 Manager-owned
-`OpenedFileCache`，与 planner 共用句柄和 remove invalidation。
-
-仍在 `DOWNLOADING` 的segment不进入local-advice group，也不改用
-`OpenedFileCache`。它继续保留当前 `getPath` 重采样和rename-race retry路径：
-`<offset>` 可能在open期间被rename为 `<offset>_<size>`，不能把旧路径handle提前缓存。
-只有观察到terminal `DOWNLOADED` / immutable path后，planner和demand reader才复用
-`OpenedFileCache` handle。
-
-### 13.3 Advice 失败
-
-read advice 是性能提示：
-
-- unsupported 和 failed 都记录独立 metric/log；
-- 不让 query 失败；
-- 不把 advice bytes 记成实际 read bytes；
-- demand read仍通过正常 `pread` 保证正确性。
-
-## 14. Whole-file 内存 preload
-
-为对齐 `DirectBufferedInput`：
-
-- 抽取或复用其 MemoryPool-backed `PreloadData` 机制；
-- 小文件可使用 inline/tiny storage，大文件使用 MemoryPool allocation；
-- 同步读完整文件；
-- 若 FileCache 尚未命中，同一批数据写入 `FileSegment`；
-- 返回后 `preloaded=true`；
-- `enqueue` / `read` 直接返回内存 region view；
-- `clone` 不继承 active preload buffer，除非原生 `DirectBufferedInput` 的最终合同明确
-  要求共享；本设计默认 clone 是 clean input。
-
-磁盘 segment 或 demand handoff buffer都不能单独把 `preloaded` 设为 true。
-
-## 15. Builder 映射
-
-`FileCacheBufferedInputBuilder` 已拥有所需上游对象，不需要修改 builder 虚接口。
-
-必须传入：
-
-```text
-file lease                  <- FileHandle::uuid
-file id for tracking        <- FileHandle::uuid.id()
-file group                 <- FileHandle::groupId
-group id for tracking       <- FileHandle::groupId.id()
-scan tracker               <- Connector::getTracker(
-                                  ConnectorQueryCtx::scanId,
-                                  ReaderOptions::loadQuantum)
-query id                   <- ConnectorQueryCtx::queryId
-cancellation token         <- ConnectorQueryCtx::cancellationToken
-cacheable                  <- ReaderOptions::cacheable
-```
-
-持久 `FileCacheKey` 仍来自 path/etag，不得改用进程内 `FileHandle::uuid`。
-
-FileCache 与 `AsyncDataCache` 的 mutual-exclusion guard保持不变。
-
-## 16. `FileCacheBufferedInput` API 行为
-
-| API | 目标行为 |
-|---|---|
-| `enqueue` | 记录 tracking reference，创建 stream/request state，不做 IO |
-| `load` | 建立 groups；有 executor 时提交高概率 prefetch |
-| `read` | unplanned read仍走 FileCache 状态机 |
-| `clone` | 复制 immutable context，创建 clean planner |
-| `reset` | 取消未开始 group，释放 planner state，不删除持久 segment |
-| `preload` | 同步 whole-file 内存 preload，并可同时填 FileCache |
-| `preloaded` | 仅表示 whole-file 内存 preload完成 |
-| `isBuffered` | 与 `DirectBufferedInput` 对齐，等于 `preloaded` |
-| `executor` | 返回 caller-injected executor |
-| `hasCache` | false；不支持 `CachePin` region API |
-| `cacheRegion` | 继承基类fail-fast合同；`hasCache=false`时直接调用抛异常 |
-| `findCachedRegion` | 继承基类fail-fast合同；`hasCache=false`时直接调用抛异常 |
-| `shouldPrefetchStripes` | 本阶段 false |
-
-## 17. 并发、取消和错误传播
-
-### 17.1 Load group 状态
-
-```text
-Planned -> Loading -> Loaded
-                   -> Failed
-                   -> Cancelled
-```
-
-同一 group 的 stream共享完成状态和 waiters。
-
-### 17.2 Downloader 仲裁
-
-`FileSegment` downloader election是唯一下载仲裁。planner 不创建第二套 key/range 锁。
-不同 query/driver规划到同一 segment 时：
-
-- 一个 owner下载；
-- 其他 group join/wait；
-- owner结束、取消或异常时，必须通过现有 API 释放 lease。
-
-### 17.3 Cancellation
-
-builder 传入真实 cancellation token。安全检查点：
-
-- downloader 获取前；
-- wait 内；
-- reserve 前；
-- group 之间；
-- source IO 前后。
-
-不能在持有未释放 downloader lease 的位置直接抛异常。
-
-### 17.4 错误
-
-- source read失败：group 保存异常；消费该 group 的 stream观察到异常。
-- reserve/cache write失败：遵循现有 `skipCacheOnDiskFailure` 合同。
-- 同步 `preload` 的 source read失败：直接抛出。
-- 同步 `preload` 的 cache write失败：
-  - skip关闭：抛出；
-  - skip开启：保留有效内存 preload，记录 cache fill失败。
-- advice失败：只影响性能，按第 13.3 节处理。
-
-## 18. Metrics
-
-现有实际 IO 统计保持：
-
-- source bytes；
-- local cache read bytes；
-- cache write bytes；
-- raw bytes；
-- storage/local latency。
-
-新增或补充：
-
-- download-prefetch planned/completed/cancelled/wasted bytes；
-- local-advice planned/applied/unsupported/failed bytes；
-- coalesced group数量、gap over-read、alignment/prefix over-read；
-- group wait latency；
-- demand handoff bytes；
-- downloader join次数。
-
-规则：
-
-- prefetch 下载不能调用 `ScanTracker::recordRead`。
-- demand handoff不能再记一次 local read。
-- advice bytes不是实际 read bytes。
-- 同一 source read不能在 planner和 stream重复记账。
-
-## 19. 实现阶段
-
-### 阶段 A：合同对齐
-
-- builder 传入 file/group/tracker/cancellation/cacheable。
-- `isBuffered` 与 `DirectBufferedInput` 对齐。
-- `clone` / `reset` / request state生命周期。
-- whole-file 同步内存 `preload`。
-
-### 阶段 B：Planning policy
-
-- `ScanTracker`。
-- read-planning chunks。
-- prefetch/demand分类。
-- `coalesceIo` / `moveCoalesced`。
-- `FileCacheLoadGroup` 状态机。
-
-### 阶段 C：Download prefetch
-
-- segment状态映射。
-- downloader join/election。
-- source `preadv`。
-- `reserve` / `write` / `complete`。
-- demand buffer handoff。
-- dynamic next-window download。
-
-### 阶段 D：Local read advice
-
-- `ReadFile` advice API。
-- `LocalReadFile` `posix_fadvise`。
-- `OpenedFileCache` 统一 immutable `DOWNLOADED` cache-file open。
-- static和 dynamic next-window local advice。
-
-### 阶段 E：格式和性能验证
-
-- Parquet current-interface E2E。
-- DWRF保持关闭并运行回归。
-- Direct / Cached / FileCache 三路径 benchmark。
-
-## 20. 验证计划
-
-### 20.1 Contract tests
-
-- `preload` 同步完成、只能一次、必须早于普通 `enqueue`。
-- `preload` 超过 `filePreloadThreshold` fail fast。
-- preload allocation完整计入MemoryPool，cache fill不分配第二份whole-file buffer。
-- preload fill只计一次FileCache容量和 `QueryLimit` write。
-- `preloaded` / `isBuffered` 与 `DirectBufferedInput` oracle一致。
-- 持久 segment命中但无 whole-file内存 preload时，`isBuffered=false`。
-- `clone` 不携带 active request/group/buffer。
-- `reset` 不删除持久 segment。
-- `hasCache=false`时直接调用 `cacheRegion` / `findCachedRegion` 抛异常；真实caller由
-  `hasCache` gate保护。
-
-### 20.2 Planning tests
-
-- `recordReference` / `recordRead` 时机。
-- dense / sparse / empty-id / sequential分类。
-- `loadQuantum` 切片。
-- duplicate和overlap去重。
-- `maxCoalesceDistance` / `maxCoalesceBytes`。
-- alignment/prefix over-read。
-
-### 20.3 Download tests
-
-- demand miss只产生一次 source read。
-- demand buffer直接交 stream，不发生本地重读。
-- background prefetch完成后，后续 stream不回源。
-- 一个 group跨多个 segment。
-- 一个已有大 segment覆盖多个 planning chunks。
-- 并发同 segment只有一个 downloader。
-- partial download续传。
-
-### 20.4 Local-advice tests
-
-- warm segment在 static prefetch group调用 advice。
-- 未消费 demand group不 open、不 advice。
-- dynamic threshold默认200时不预取；配置50时消费一半quantum后只预取下一窗口。
-- offset转换为 segment-file-relative。
-- 不跨 segment文件合并。
-- unsupported/failed不会让 query失败，且 metric可见。
-- rename/remove后不复用失效 handle。
-
-### 20.5 Lifecycle tests
-
-- enqueue返回的 stream在 `load` 前销毁。
-- input在 async group完成前 reset/shutdown。
-- cancellation不泄漏 downloader、future、buffer或handle。
-- source read、reserve、write、advice各失败点。
-
-### 20.6 Format tests
-
-- 不修改 Parquet reader源码。
-- 实现开始前重新核对当前Velox版本仍满足：
-  `ReaderBase::inputs_`持有clone，`StructColumnReader::loadRowGroup`执行
-  `clone/enqueue/load`，`PageReader`随后接管enqueue返回的stream；若源码漂移则停止并
-  修订本设计。
-- Parquet footer `loadCompleteFile`。
-- Parquet row-group `clone` / `enqueue` / `load`。
-- cold miss、warm disk hit、whole-file内存 preload。
-- projection/filter导致的 sparse column请求。
-- DWRF现有路径保持 `shouldPrefetchStripes=false` 并通过回归。
-- DWRF small-file显式 `preload` 验证内存驻留、FileSegment fill和内存上限。
-- DWRF stripe在磁盘FileCache hit但未memory preload时，`isBuffered=false` 后仍正确走
-  clone/load路径。
-- Text `loadCompleteFile` 在新planner下保持内容和生命周期正确。
-
-### 20.7 Benchmark
-
-比较：
-
-```text
-DirectBufferedInput
-CachedBufferedInput
 FileCacheBufferedInput
+  持有：source ReadFile / FileCachePtr / key / origin / cacheOptions /
+        requestContext / QueryStatus / fileNum,groupId lease / ScanTracker /
+        IoStatistics / IoStats / executor / ReaderOptions
+  产出：requests_ -> plan_ -> sourceGroups_ -> coalescedLoads_ + streamToCoalescedLoads_
+  缓存：shared_ptr<const FileCacheReadContext> readContext_
+  可选：preloadData_（whole-file RAM）
+
+FileCacheReadContext（immutable）
+  被 FileCacheBufferedInput、FileCacheInputStream、FileCacheCoalescedLoad 共享
+
+FileCacheCoalescedLoad : cache::CoalescedLoad
+  持有：Context{readContext, queryContextHolder} + vector<FileCacheLoadRequest>
+  执行：internal FileCacheInputStream；产出 per-request RAM buffer
+
+FileCacheInputStream
+  业务角色：bufferedInput_ != nullptr，有 trackingId
+  内部角色：bufferedInput_ == nullptr，trackingId 为空
+  共用：CH FileSegment 状态机 / downloader 仲裁 / reserve+write / errno 处理
 ```
 
-场景：
+### 5.1 `FileCacheBufferedInput`
 
-- cold sequential；
-- cold sparse projection；
-- warm FileCache + cold OS page cache；
-- warm FileCache + warm OS page cache；
-- demand first-read；
-- background prefetch；
-- concurrent readers共享同一 segment。
+职责：收集 request、持有 `ScanTracker` 引用、切块与分类、分组、构建 coalesced load 与
+stream binding、提供 whole-file preload buffer。它本身不驱动 `FileSegment` 状态机。
 
-重点指标：
+`Request` 只保存 region 值、`TrackingId` 值、稳定的 `requestIndex` 和业务 stream 指针。stream
+指针**只**作为 `streamToCoalescedLoads_` 的稳定 map key，从不解引用；`StreamIdentifier` 在
+`enqueue` 返回后即失效，因此立即按值复制成 `TrackingId`，不保存裸指针。
 
-- source read次数和bytes；
-- local read次数和bytes；
-- coalesced group数；
-- over-read；
-- first-byte latency；
-- scan throughput；
-- peak temporary memory；
-- prefetch waste ratio。
+`readContext_` 在构造函数体内由 `makeReadContext` 构建**一次**，此后 `enqueue` / `read` /
+`load` / `makePreloadedStream` 复用同一实例，而不是每次分配等价对象。
+
+### 5.2 `FileCacheReadContext`
+
+不可变的 per-file 生命周期载体，成员为：
+
+```text
+cache, ioStatistics, ioStats, source, pool,
+key, origin, cacheOptions, requestContext, queryStatus,
+tracker, fileNum, groupId, fileSize
+```
+
+成员声明顺序是**载荷性**的：`source`（内部持有 `IoStats` / `IoStatistics` 裸指针，由
+`BufferedInput` 构造的 `ReadFileInputStream` 带上真实 `FileIoContext`）声明在
+`ioStats` / `ioStatistics` **之后**，因此先析构；`cache` 声明最先、析构最后。这保证
+`ReadFileInputStream` 析构时其引用的统计对象仍然存活。
+
+因为 context 由 `shared_ptr<const>` 共享且自持 `cache` / `source` / `pool` / 统计对象，内部
+stream 与运行中的 load 可以合法地比创建它们的 `FileCacheBufferedInput` 活得更久。
+
+### 5.3 `FileCacheCoalescedLoad`
+
+继承 `cache::CoalescedLoad`，复用其 `kPlanned / kLoading / kCancelled / kLoaded` 状态机、
+`loadOrFuture` 与 `cancel`，但：
+
+- `loadData` 返回空 `vector<CachePin>`：不产生任何 `AsyncDataCache` entry；
+- `isSsdLoad` 返回 false；
+- `size` 返回各 request region 长度之和；
+- 交付通道是 `getData(requestIndices)` 返回的 `FileCachePreparedBuffer`（`BufferPtr` + 绝对
+  region），而不是 `CachePin`。这是相对 `DirectCoalescedLoad::getData` 的**有意偏离**（见
+  remediation 12.4.2 与 task 020）。
+
+`FileCacheLoadRequest` 是coalesced load对象的私有模型：`{requestIndex, region, trackingId, buffers,
+ready, consumed}`。`requestIndex` 在同一次 `load` 规划轮次内标识业务请求，不是单个load对象内的
+0..N-1计数；不同轮次可重新从0开始。`region` 对应本组中的一个 `PlanChunk`，恒被组bounding range覆盖；
+一个业务请求跨多个chunk时会产生多个相同 `requestIndex` 的load request。`PlanChunk` 不出现在公开签名。
+
+`loadData` 流程：
+
+1. `FileCacheQueryIdScope` 固定 `<queryId>:<os-tid>` 调用者身份，使 executor 线程上的
+   `reserve` 能找到 per-query download 账户（`Context::queryContextHolder` 负责让账户在
+   map 中存活）；
+2. 用 `getFileSegmentsForRead` 取组 bounding range `[groupOffset, groupOffset+groupLength)`
+   的 holder，钉住组内 `FileSegment` 元数据（含 EMPTY 空洞段），并用 `SCOPE_EXIT` 在成功与
+   异常路径上释放——释放发生在所有内部 stream 取到各自精确 holder **之后**；
+3. 对每个 request：若其 region 与已材料化的 request 完全相同（offset 与 length 均相等），
+   则**不**二次读 source 也**不**读本地 segment，而是从已材料化的 buffer 复制到新分配的
+   独立 buffer；否则用 `FileCacheInputStream::createCoalescedInternal` 创建内部 stream，循环
+   `Next` + `takeLastOutputBuffer` 直到读完；
+4. 在 `requestMutex_` 保护下**一次性**把所有 request 置为 `ready` 并接管 buffer——中途抛异常
+   则根本到不了这里，因此不会发布"部分成功"形状的 payload（已写入的 `FileSegment` 字节由
+   状态机保留）；
+5. 仅当 `prefetch` 为 true 时，把请求 region 的**区间并集**长度计入
+   `IoStatistics::prefetch`（重复/重叠 region 只计一次）。
+
+`getData(requestIndices)` 在 `requestMutex_` 下执行 all-or-nothing 检查：任一 index 未找到、
+未 `ready` 或已 `consumed`，则返回 `std::nullopt`（调用方回落到普通 demand 路径）；否则移出
+所有匹配 request 的 buffer 所有权并置 `consumed = true`。因此同一 request 的 payload 只能被
+消费一次。
+
+### 5.4 `FileCacheInputStream` 的双角色
+
+同一个类承担两种角色，共用 CH `FileSegment` 状态机、downloader 仲裁、predownload、
+`reserve`+`write`、bypass 与 errno 处理：
+
+| | 业务角色 | 内部角色 |
+|---|---|---|
+| 构造 | 公开构造函数 | `createCoalescedInternal` |
+| `bufferedInput_` | 指向所属 input | `nullptr` |
+| `trackingId_` | 来自 `StreamIdentifier`（`read` 路径为空） | 恒为空 |
+| per-stream QueryLimit lease | 构造时取得 `queryContextHolder_`，持有到stream析构 | 同样取得并持有 |
+| 首次 `Next` | 触发/等待 coalesced load 并安装 RAM window | 不查 binding |
+| RAM 交付 | `serveCoalescedWindow` / `servePreloadWindow` | `takeLastOutputBuffer` 移出 owned buffer |
+| 生命周期 | 不得超出所属 input | 可以超出（靠 shared context） |
+| `ScanTracker` | 交付时 `recordRead`（`trackingId` 为空时不记） | 永不 `recordRead` |
+
+`bufferedInput_` 只用于 binding 查找、`preloaded` 判定、`preloadedData` 取片和
+`recordReadBytes`；一切 cache / source / pool / options 访问都走 `context_`。
+每个stream构造时还会按 `requestContext.queryId` 和 `cacheOptions` 取得自己的
+`queryContextHolder_`；它晚于 `readInfo_` / reader状态释放，确保stream直接reserve时账户存活。
+load级holder则保证尚未建立业务stream demand读时，executor上的prefetch账户仍存活。
+
+### 5.5 CH `FileCache` 核心边界
+
+相对 `5785a43a` 的生产 diff 白名单：
+
+```text
+FileCache.h                 零 diff
+FileCache.cpp               零 diff
+FileSegment.h               零 diff
+FileCacheErrnoException.h   零 diff
+FileSegment.cpp             仅两处：
+                              #include "velox/ch/IO/FileCacheLocalWriteFile.h"
+                              默认 writer factory：LocalWriteFile -> FileCacheLocalWriteFile
+```
+
+基线的 `FileSegment::WriteFileFactory`、`setWriteFileFactoryForTesting`、`createWriteFile`、
+`writeFileFactoryStorage` 全部保留；生产代码不调用 `setWriteFileFactoryForTesting`，它仅作为
+基线 test seam 存在。所有 IO 集成逻辑留在 `velox/ch/Disks/IO` 与 `velox/ch/IO`。
+
+## 6. 数据流
+
+### 6.1 `enqueue`
+
+```text
+1. sid != nullptr -> trackingId = TrackingId(sid->getId())（按值复制）
+2. tracker_ 存在 -> recordReference(trackingId, region.length, fileNum, groupId)
+   （不受 preloaded 快返回影响）
+3. preloaded()  -> 直接返回 makePreloadedStream(offset, length, trackingId)，
+                   不入队、不触碰 FileSegment 状态机
+4. 否则 requests_.push_back({region, trackingId})，requestIndex = 原下标
+5. 创建业务 FileCacheInputStream（this, readContext_, region, STREAM, trackingId）
+6. 把 stream.get() 记为该 request 的稳定 map key
+```
+
+### 6.2 `load`
+
+```text
+A. 切块：对每个 request，按 readerOptions_.loadQuantum() 从 region.offset 切到 region 末尾，
+   chunkLen = min(loadQuantum, regionEnd - off)；每个 PlanChunk 记录
+   {offset, length, trackingId, state, prefetch, requestIndex}。
+B. 状态分类：state = classifyChunk(offset, length)，只用只读的 FileCache::get（见第 7 节）。
+C. prefetch 判定：classifyPrefetch(trackingId) —— 空 trackingId 或
+   StreamIdentifier::sequentialFile 的 id 恒为 prefetch；否则有 tracker 时按
+   adjustedReadPct(trackingData) 与 FLAGS_cache_prefetch_min_pct 比较；无 tracker 时保守判为
+   demand。判定按 request 粒度做一次，同一 request 的所有 chunk 共享结果。
+D. 分组：只有 kMiss 的 chunk 参与 coalesce；kHit 由本地读服务，kDownloading 走等待路径，都不
+   进 source group。prefetch 与 demand 分成两桶，各自按 offset 排序后调用 coalesceIo：
+     maxDistance     = readerOptions_.maxCoalesceDistance()
+     maxCoalesceBytes= prefetch ? readerOptions_.maxCoalesceBytes() : loadQuantum
+     单个 demand chunk 不成组（chunk 数 < 2 且非 prefetch 时直接返回），单个 prefetch chunk 可成组。
+   每个 CoalescedGroup 记录 bounding {offset,length}、精确 ranges 列表和 memberChunks
+   （coalesceIo 选中的离散 plan_ 下标集合，而非连续区间）。
+E. 建 load 与 binding：对每个 group，按 memberChunks -> plan_[idx].requestIndex -> requests_[k]
+   为每个member chunk生成 FileCacheLoadRequest（键为稳定 requestIndex，region为该chunk），
+   并把 (coalesced load对象, 去重后的 requestIndices) 记入
+   streamToCoalescedLoads_[stream]。一个 stream 可能跨多个 group，因此 map value 是
+   vector<LoadBinding>。Context 里带上 cache_->getQueryContextHolder(queryId, cacheOptions)。
+F. 提交：group.prefetch && executor_ != nullptr -> executor_->add([load]{ load->loadOrFuture(nullptr); })
+   立即执行；其余（demand 组、以及 executor 为空时的 prefetch 组）保持 kPlanned。
+G. requests_.clear()：planner 不再持有 request 列表。
+```
+
+`load` 全程不为 `kHit` / `kDownloading` chunk 发起 IO，`FileSegmentsHolder` 仍由 `Next` 惰性
+获取，保持 CH 的按需下载语义。
+
+### 6.3 业务 stream 的首次 `Next`
+
+```text
+Next
+ ├ 已发布 window 还有剩余  -> 直接补发（并重新记 recordRead，见第 8 节）
+ ├ position_ >= region 长度 -> false
+ ├ bufferedInput_->preloaded() -> servePreloadWindow（零拷贝 RAM 切片）
+ ├ triggerCoalescedLoadIfNeeded（一次性）
+ │    bindings = bufferedInput_->coalescedLoads(this)   // move + erase
+ │    对每个 binding：
+ │      loadOrFuture(&wait) 返回 false -> wait.wait()   // 别的线程在跑，等它
+ │                         返回 true  -> load 已终态：本线程可能已在 loadOrFuture 内
+ │                                       同步执行 loadData(prefetch=false)，或此前已
+ │                                       kLoaded / kCancelled
+ │      getData(requestIndices) 有值 -> 收集 buffer
+ │    非空则 installCoalescedBuffers（按绝对 offset 排序）
+ ├ serveCoalescedWindow：当前绝对位置落在某个 RAM window 内 -> 发布并返回
+ └ 否则 queryStatus_.throwIfKilled -> initializeIfNeeded -> FileSegment 状态机（普通 demand）
+```
+
+要点：
+
+- 无 executor 时，planned prefetch load 在首次 `Next` 上同步执行，整组一次读完，而不是退化成
+  单段 demand 读；
+- load 因异常进入 `kCancelled` 时，`loadOrFuture` 立即返回 true，`getData` 返回
+  `std::nullopt`，stream 静默回落到普通 demand 路径重新读；
+- demand 组在业务线程同步执行；由首次 `Next` 懒执行的 load（含 executor 为空时的 prefetch 组）
+  传入的 `wait` 非空，因而 `loadData` 的 `prefetch` 参数为 false，不计 `IoStatistics::prefetch`；
+- 由业务线程同步驱动的 load 若抛异常，异常从首次 `Next` 传播给调用方（未被吞掉）。
+
+## 7. `FileSegment` 状态分类（`classifyChunk`）
+
+只用 `FileCache::get`，**绝不**用 `getOrSet`：`get` 不创建 metadata、不选举 downloader、不预留
+空间，对持久状态无副作用（内部的 access-time 提升是 `get` 自身固有行为）。
+
+- holder 为空或无段覆盖 -> `kMiss`；
+- 一个 chunk 可能跨**多个**更小的 `FileSegment`，因此遍历每个重叠段，只看它与 chunk 的交集
+  子区间，并用 `covered` 追踪**几何覆盖**推进；
+- 段间空洞（`segStart > covered`）或末段之后的尾部空洞（`covered < chunkEnd`）-> `kMiss`。
+
+逐状态规则：
+
+```text
+DOWNLOADED                              整个子区间常驻      -> 推进 covered
+DOWNLOADING                             有下载者在产出字节  -> 几何上已覆盖，推进 covered，
+                                                              标记 anyDownloading
+PARTIALLY_DOWNLOADED
+  getCurrentWriteOffset >= 子区间末尾    已写前缀足够        -> 推进 covered
+  否则                                   前缀不足、可续传    -> kMiss（可被 load 续填）
+PARTIALLY_DOWNLOADED_NO_CONTINUATION
+  getCurrentWriteOffset >= 子区间末尾    已写前缀足够        -> 推进 covered
+  否则                                   尾部只能 bypass 读  -> 推进 covered 并标记
+                                                              anyDownloading（不是可填 miss）
+EMPTY / DETACHED                        可填的缺失          -> kMiss
+```
+
+聚合：任一可填缺失 -> `kMiss`；否则 `anyDownloading` -> `kDownloading`；否则 `kHit`。混合
+chunk 被判为 `kMiss` 是可接受的：load 执行时内部 stream 会跳过已下载段，只填空缺。
+
+## 8. 已发布 window 与 `BackUp` 语义
+
+`Next` 发布的 window 由一组统一的元数据描述：`outputBufferStart_`（region 相对起点）、
+`outputBufferSize_`、`offsetInOutputBuffer_`，基址由 `currentWindowBase` 给出。window 有三种：
+
+| window 类型 | 基址 | 所有权 |
+|---|---|---|
+| 普通读输出 | `outputBuffer_->as<char>()` | 本 stream 拥有（pool-backed） |
+| preload 切片 | `preloadWindow_` | 非拥有，属于 input 的 `preloadData_` |
+| coalesced 切片 | `preloadWindow_`（指向 window 内偏移） | 非拥有，属于 `coalescedWindows_` 里的 `BufferPtr` |
+
+三者共用同一套元数据与基址抽象，因此 `BackUp`、`SkipInt64` 快路径、pending-window 补发在三种
+window 上行为一致。
+
+- **首次交付**：普通读window记裁剪后的 `deliveredBytes`；preload / coalesced window记整窗一次；
+  `trackingId` 为空的业务stream（`read` 路径）不记；
+- **replay**：`BackUp(count)` 只回退 `position_` 与 `offsetInOutputBuffer_`，不动 `FileCache`
+  状态；随后的 `Next` 走 pending-window 补发分支，把再次交付的字节**再记一次**
+  `recordRead`，与 `DirectInputStream::Next` 每次交付都记账一致；buffer 内 `seekToPosition`
+  落回同一 window 时同理；
+- **`SkipInt64`**：窗口内快路径只推进游标，**不**记 `recordRead`；窗口外慢路径调用
+  `invalidateAndReposition`（释放 downloader、丢弃 holder/state/window，保留
+  `queryContextHolder_`），由下一次真实 `Next` 重新推导段与 reader；
+- **`takeLastOutputBuffer`**：只允许移出 owned buffer，`preloadWindow_ != nullptr` 时断言失败；
+  移出后清空 window 元数据，且按契约调用方不得再 `BackUp`。内部 stream 用它把读入 buffer
+  零拷贝交给 load。
+
+这套语义是 frozen 回归 `UncompressedDwrfReadFullyBacksUpCoalescedWindow` 的直接来源：
+`readFully` 会在 RAM window 内 `BackUp`，若 coalesced 切片不发布 window 元数据就会抛
+"BackUp beyond output buffer"，或读到上一块 owned buffer 的陈旧字节。
+
+## 9. Whole-file 内存 `preload`
+
+`preload` 是同步的，调用方合同要求它早于任何 `enqueue` / `read`。运行时只强制"调用一次"和
+"当前没有待规划request"；`load` 会清空 `requests_`，`read` 从不写入它，因此更早的调用不可检测：
+
+```text
+1. VELOX_CHECK(!preloadData_)        重复调用是调用方错误
+2. VELOX_CHECK(requests_.empty())    当前没有待规划 request（不是完整调用历史）
+3. VELOX_CHECK_LE(fileSize_, readerOptions_.filePreloadThreshold())
+   超阈值 fail-fast，不允许用一次无界 whole-file allocation 绕过 preload 准入
+4. 读入本地 PreloadData（成功后才提交）：
+     fileSize_ <= DirectBufferedInput::kTinySize -> std::string tinyData 一次读完
+     否则 -> memoryPool()->allocateNonContiguous，逐 run pread，run 之间按累计长度推进 offset
+   全程只有一次 whole-file source 读，没有第二份 staging buffer
+5. 源读成功即刻记账（在 fill 之前）：
+     IoStatistics::read += fileSize_
+     IoStatistics::queryThreadIoLatencyUs / storageReadLatencyUs += 源读耗时
+     ProfileEvents::CachedReadBufferReadFromSourceBytes += fileSize_
+6. fillFileSegmentsFromPreload(localData)
+7. preloadData_ = std::move(localData)  —— 此时 preloaded() 才为 true
+```
+
+`fillFileSegmentsFromPreload` 是**尽力而为**的持久化，用的就是刚才驻留在 RAM 的字节：
+
+```text
+QueryContextHolder（per-query download 限额）+ FileCacheQueryIdScope（稳定 caller id）
+getOrSet(key, 0, fileSize_, fileSize_, Regular, segmentsBatchSize, origin, alignment)
+逐段：
+  state 非 EMPTY 且非 PARTIALLY_DOWNLOADED     -> 跳过
+  getOrSetDownloader() != getCallerId()         -> 别人在写，跳过（不持有 lease）
+  SCOPE_EXIT { resetRemoteFileReader(); completePartAndResetDownloader(); }
+  循环 writeOffset -> segEnd：
+    residentAt(writeOffset) 给出常驻块指针与连续可用长度（tinyData 或某个 allocation run）
+    chunkSize = min(段剩余, 连续可用, ReadBufferFromVeloxReadFile::kDefaultBufferSize)
+    reserveAndWriteSegmentChunk(seg, src, chunkSize, writeOffset,
+                                reserveSpaceWaitLockTimeoutMs, reserveHint=段剩余, skip)
+    返回 false -> break（放弃这一段，RAM preload 不受影响）
+```
+
+失败语义（以代码为准，不做过度承诺）：
+
+- **可 bypass 的失败被吞掉**：`reserve` 失败，或 `skipCacheOnDiskFailure=true` 下的物理写失败，
+  以及 `ENOSPC` / `EDQUOT`（无论 skip 设置）——`reserveAndWriteSegmentChunk` 返回 false，
+  循环 `break`，RAM preload 依旧提交，`preloaded` 为 true；
+- **只有严格失败才抛**：`skipCacheOnDiskFailure=false` 下的非空间类物理写失败，或任何非 errno
+  的逻辑异常（如 `getOrSet` 失败）会向上传播，从 `preload` 抛出，`preloadData_` 因此**不**提交，
+  `preloaded` 保持 false；已选举的段在栈展开时由 `SCOPE_EXIT` 释放 lease；
+- `fileSize == 0` 或 `getOrSet` 返回空 holder 时直接结束fill，不视为错误。
+
+内存与磁盘是两个独立预算，不是同一 counter 的双计：preload buffer 只计 `MemoryPool`；
+`FileSegment` fill 只计 `FileCache` 容量与一次 `QueryLimit` download/write；input 析构释放
+`MemoryPool` 字节，持久 segment 继续存在。
+
+`preloadedData(offset, length)` 返回**零拷贝、非拥有**的连续切片，长度受 preload 存储的 run
+边界限制（可能短于 `length`），调用方循环推进。`servePreloadWindow` 直接发布该切片，永不回落
+到 `FileSegment` 磁盘读。`addressInPreloadData` 是测试可观测点，用于证明确实是零拷贝而不是
+per-stream 拷贝。
+
+## 10. 持久化写入与错误行为
+
+### 10.1 段查找的模式分派
+
+`getFileSegmentsForRead` 是 IO 层唯一的模式策略实现，`FileCacheInputStream::nextFileSegmentsBatch`
+与 `FileCacheCoalescedLoad::loadData` 共用它：
+
+```text
+tempCacheOnly               -> getDownloadedContiguousOrEmpty；空批次是硬错误
+                               （对齐 CH throwTemporaryDataNotInCache）
+readIfExistsOtherwiseBypass -> get（只读探测，不建 metadata）
+其他                        -> getOrSet（按 boundaryAlignment 对齐，建 metadata）
+```
+
+### 10.2 下载者仲裁与写入
+
+`FileSegment` 的 downloader election 是唯一仲裁机制，IO 层不引入第二套 key/range 锁，也没有
+`DownloaderLease` 之类的新核心抽象——选举与释放一律用现有 `getOrSetDownloader` /
+`completePartAndResetDownloader` 加 `SCOPE_EXIT`。同一段被多方规划时，一个 owner 下载，其他
+读者走 CACHED reader 读已写前缀并在前缀耗尽时重新 prepare（`cachedPrefixEndAbsolute`）。
+
+写入统一走：
+
+```text
+reserveAndWriteSegmentChunk
+  -> FileSegment::reserve(size, timeout, reason, nullptr, reserveHint)
+     失败直接返回 false（bypass）
+  -> VELOX_CHECK_EQ(getCurrentWriteOffset(), offset)
+  -> writeSegmentChunk -> FileSegment::write
+       成功 -> ProfileEvents::CachedReadBufferCacheWriteBytes += size
+```
+
+`reserveHint` 是"到本次读 horizon 末尾还剩多少字节"，避免预留量超过实际会消费的量：demand 路径
+用 `readInfo_.readUntilPosition - offset`，preload fill 用段内剩余。
+
+### 10.3 typed errno 与 skip 策略
+
+`FileCacheLocalWriteFile`（`velox/ch/IO`）是 typed errno 的 producer：`open` / `lseek` / `write` /
+`fsync` / `close` 失败先保存 `errno` 再抛 `FileCacheErrnoException`；正向 short write 继续续写；
+`EINTR` 重试；`close` 无论成败都清 fd，析构不重试；对已关闭 writer 调用 `append` / `flush` 是
+调用序错误，抛普通 `VeloxRuntimeError` 而非 errno 异常，因此逻辑 bug 不会被误判成可 bypass 的
+磁盘故障。它是基线默认 factory 唯一被批准的行为替换。
+
+consumer 侧 `classifyCacheWriteError(errno, skipOnDiskFailure)`：
+
+```text
+ENOSPC / EDQUOT          -> Bypass（无视 skip 设置；对齐 CH writeCache 记录空间不足后 bypass）
+其他 errno, skip=true    -> Bypass
+其他 errno, skip=false   -> Rethrow（对齐 CH CACHE_CANNOT_WRITE_TO_CACHE_DISK）
+非 FileCacheErrnoException -> 不捕获，自然传播
+```
+
+物理写失败时 `FileSegment::write` 已经把段调整为 `PARTIALLY_DOWNLOADED_NO_CONTINUATION` 并完成
+downloaded/physical size 对账；bypass 后 demand 路径把 `readType` 改成
+`REMOTE_FS_READ_BYPASS_CACHE`，数据照常返回给调用方。
+
+### 10.4 失败与取消的可见性
+
+- prefetch load 内部读失败：异常使 `loadOrFuture` 把状态置为 `kCancelled` 并在 executor 线程
+  终止该任务；不发布任何部分 payload；业务 stream 首次 `Next` 拿到 `nullopt` 后走普通 demand
+  路径重新读，数据正确，不残留 downloader / waiter；
+- demand load 在业务线程同步执行，异常直接传播给调用方；
+- 单 stream 读写异常路径：`Next` 的 catch 中先按 CH 顺序释放 downloader 再重抛，不把已取消的
+  reader 交还给 `FileSegment`。
+
+## 11. 生命周期与取消
+
+```text
+~FileCacheBufferedInput  -> 对 coalescedLoads_ 逐个 cancel
+reset                    -> BufferedInput::reset + 逐个 cancel + 清 coalescedLoads_ /
+                            streamToCoalescedLoads_ / requests_ / plan_ / sourceGroups_
+```
+
+`cancel` 调用 `setEndState(kCancelled)`，会无条件改状态并唤醒waiter；destructor与 `reset` 对全部
+coalesced load对象调用它。已运行的 `loadData` 不会被强制终止：它靠共享context与executor捕获的
+`shared_ptr<load>` 自然完成，并可能随后置为 `kLoaded`。持久 `FileSegment` 不因取消而删除。
+
+`QueryStatus::throwIfKilled` 有四个安全点：
+
+1. `initializeIfNeeded` 内部、首次 `getOrSet` / `get` 之前；
+2. `nextFileSegmentsBatch` 的cache查找之前；
+3. `Next` 外层迭代边界、开始或推进segment之前；
+4. `FileSegment::wait` 返回之后、重新解释段状态之前。
+
+这些位置都不跨越downloader持有期；第四处保证等待其他downloader期间发生的取消在唤醒后立即
+可见。
+
+生产代码**不**包含任何测试专用hook：`FileSegment::wait` 的 `TestValue` 挂钩已回退，
+`FileCacheInputStream` 也未补替代hook。并发时序只用测试侧的 `folly::Baton`、测试
+`ReadFile` 与专用executor建立；没有测试注册 `CoalescedLoad::loadOrFuture` 的 `TestValue`，
+也不使用sleep或概率性时序断言。无法证明的更细内部瞬间改为验证可观察并发合同。
+
+## 12. `ScanTracker` 与统计口径
+
+tracking identity 与原生实现完全一致：
+
+```text
+file lease  = FileHandle::uuid            file id  = uuid.id()
+group lease = FileHandle::groupId         group id = groupId.id()
+tracking id = TrackingId(StreamIdentifier::getId())
+```
+
+`StringIdLease` 是可复制 lease，input 与其 clone 各持副本，保证进程内 `uint64_t` id 在生命周期
+内有效映射。它只服务 `ScanTracker`，不参与持久 `FileCacheKey`。
+
+- `recordReference`：有 `tracker_` 时在 `enqueue` 里调用，**包括** `preloaded` 快返回之前；
+- `recordRead`：只在业务交付时调用——demand 路径记**裁剪后**的 `deliveredBytes`，coalesced /
+  preload window 记整窗一次，pending-window 补发（`BackUp` / 窗口内 seek 后的 replay）再记一次；
+- 内部 stream 的 `trackingId` 为空、`bufferedInput_` 为空，因此后台下载**永不**记 `recordRead`，
+  不会把"下载了"记成"消费了"；`read` 创建的无 sid 业务 stream 同样不记。
+
+物理 IO 归因（按实际物理字节，而非裁剪后的交付字节）：
+
+```text
+本地 cache 命中（ReadType::CACHED）
+  ProfileEvents::CachedReadBufferReadFromCacheBytes += actualBytes
+  IoStatistics::ssdRead += actualBytes
+  IoStatistics::incRawBytesRead(actualBytes)   // 本地 reader 不自动记账
+
+source 读（任一 remote ReadType）
+  ProfileEvents::CachedReadBufferReadFromSourceBytes += actualBytes
+  IoStatistics::read += actualBytes
+  IoStatistics::queryThreadIoLatencyUs / storageReadLatencyUs += 本次物理读耗时
+  raw bytes 与 totalScanTimeNs 由 ReadFileInputStream::read 记，不重复计
+  whole-file preload 例外：它直接读入 PreloadData，按第 9 节步骤 5 单独记账
+
+cache 写
+  ProfileEvents::CachedReadBufferCacheWriteBytes += 实际写入段的字节
+
+prefetch
+  IoStatistics::prefetch += 该 load 请求 region 的区间并集长度
+  （仅当 loadData 的 prefetch 参数为 true，即由 executor 提交的后台执行）
+```
+
+`ssdRead` 因此成为"RAM 交付 vs 本地磁盘读"的判别器：coalesced RAM 命中不增加 `ssdRead`，本地
+段读会增加。
+
+## 13. `FileCacheBufferedInput` API 行为
+
+| API | 实际行为 |
+|---|---|
+| `enqueue` | 记 `recordReference`、复制 tracking id、建 request 与业务 stream；不做 IO；`preloaded` 时直接返回 RAM stream |
+| `load` | 切块、分类、分组、建 `FileCacheCoalescedLoad` 与binding；prefetch组在有executor时立即提交，其余保持 `kPlanned`；清空 `requests_` |
+| `read` | 未规划读仍走 `FileCache` 状态机（空 tracking id）；`preloaded` 时走 RAM |
+| `clone` | 复制 immutable context，产生干净 planner；不共享 request / plan / load / binding / preload buffer |
+| `reset` | 对全部coalesced load对象调用 `cancel`，再清空load、binding与planner状态；不删除持久 `FileSegment` |
+| `preload` | 同步 whole-file 内存 preload（受 `filePreloadThreshold` gate），并尽力回填 `FileSegment` |
+| `preloaded` | 仅表示 whole-file 内存 preload 已提交 |
+| `isBuffered` | 等于 `preloaded`，与 `DirectBufferedInput` 对齐 |
+| `shouldPreload` | 恒 false |
+| `shouldPrefetchStripes` | 恒 false（阻止 DWRF 把 stream 硬转成 `CacheInputStream`） |
+| `executor` | 返回注入的executor，不返回 `FileCacheManager` 拥有的线程池 |
+| `hasCache` | false；不支持 `CachePin` region API |
+| `cacheRegion` / `findCachedRegion` | **不 override**，沿用 `BufferedInput` 基类的 `VELOX_UNSUPPORTED` |
+
+关于 region API：保持基类 fail-fast 合同而不是 fail-soft，因为 `cacheRegion` 返回 `void`，静默
+no-op 会让调用方误以为字节已进入 backing cache；`findCachedRegion` 返回 `nullopt` 会把"该实现
+没有 `CachePin` API"伪装成一次普通 cache miss。调用方必须先检查 `hasCache`。
+
+## 14. Builder 映射
+
+`FileCacheBufferedInputBuilder::create` 不需要修改 builder 虚接口，映射为：
+
+```text
+source ReadFile   <- FileHandle::file
+file lease        <- FileHandle::uuid           file id  <- uuid.id()
+group lease       <- FileHandle::groupId        group id <- groupId.id()
+ScanTracker       <- Connector::getTracker(ConnectorQueryCtx::scanId,
+                                           ReaderOptions::loadQuantum)
+FileCacheKey      <- FileCacheKey::fromPath(file->getName())
+origin            <- FileCachePtr::getCommonOrigin
+queryId           <- ConnectorQueryCtx::queryId
+userId            <- FileCacheManager::commonUserId
+cancellation      <- QueryStatus{ConnectorQueryCtx::cancellationToken}
+cacheable         <- FileCacheRequestContext 默认值 true（builder 当前未读取 ReaderOptions::cacheable）
+```
+
+持久 `FileCacheKey` 来自 path，不使用进程内 `FileHandle::uuid`。`create` 开头断言
+`connectorQueryCtx->cache() == nullptr`，即 `AsyncDataCache` 与 `FileCache` 互斥；
+`registerFileCacheBufferedInputBuilder` 在安装时用 `hasDefault` 做 fail-fast 校验。
+
+## 15. 验证
+
+承载性证据（不是全部用例，而是关键判别器）：
+
+**三个冻结的 parity 回归**（测试体、fixture、输入、对照实现和断言均不得修改）：
+
+```text
+FileCacheFormatE2ETest.UncompressedDwrfReadFullyBacksUpCoalescedWindow
+  动态生成 > 1 MiB 的未压缩 DWRF，强制业务读经由 coalesced RAM window；
+  BackUp 不得抛异常，行数完整。
+FileCacheBufferedInputTest.PreloadedStreamTracksReferenceAndReadLikeDirect
+  与 DirectBufferedInput 同输入对照：referencedBytes = 64，readBytes = 64。
+FileCacheBufferedInputTest.BackedUpBytesAreRecordedAgainLikeDirect
+  Next(64) -> BackUp(16) -> Next(16)：referencedBytes = 64，readBytes = 80。
+```
+
+**T1–T5 证据用例**（均在 `velox_ch_filecache_connector_test`）：
+
+```text
+T1 PrefetchServesBusinessFromRamNotLocalDisk
+   业务 Next 期间 source 读计数与 IoStatistics::ssdRead 增量均为 0。
+   ssdRead 是唯一能区分 RAM 交付与本地磁盘命中的判别器（禁用 serveCoalescedWindow 时为
+   131072 vs 0）。
+T2 PrefetchFailureFallsBackToDemandPath
+   三个相邻 64 KiB 请求同组：第一次源读成功并落盘请求 A，第二次源读在材料化请求 B 时失败。
+   断言 load = kCancelled、getData({A}) = nullopt、A 落盘 64 KiB、B 落盘 0、
+   A 走 64 KiB 本地 ssdRead、B 重走 source；C 只用于取得共享 binding，失败后未材料化。
+   使用测试本地 GatedFailReadFile，无生产 hook。
+T3 GetDataIsConsumedOnce
+   第二次 getData 返回 nullopt，且不产生额外 source / 本地读。
+T4 NullExecutorPlannedLoadTriggersOnFirstNext
+   null executor 下 load 不做 IO；仅调用一次 Next 后断言 128 KiB 整组已下载完成
+   （若退化成单段 64 KiB demand 读则失败）。
+T5a ClassifyPartiallyDownloadedInsufficientPrefixIsMiss
+T5b ClassifyPartiallyDownloadedNoContinuationInsufficientPrefixIsDownloading
+   通过真实 FileSegment API（setDownloadFinishedWithoutContinuation）构造状态并先断言状态。
+```
+
+**格式 E2E**：`FileCacheFormatE2ETest.ColdScanFillsCacheWarmScanServesFromCache`（DWRF 两 stripe，
+warm 扫描 source 读为 0）与 `ParquetColdScanFillsCacheWarmScanServesFromCache`（真实
+`ParquetReader`，断言连接器确实选中了 `FileCacheBufferedInput`，覆盖 row-group clone / enqueue /
+load / `PageReader` 路径）。
+
+**生命周期与取消**：`FileCacheCancellationTest` 的 `ResetCancelsPlannedCoalescedLoad`、
+`PlainDestructorCancelsPlannedCoalescedLoad`、`RunningCoalescedLoadCompletesAfterDestruction`
+（用 Baton 把 load 停在首次源读中，销毁 input 后释放，断言两段都完成下载）。
+
+**QueryLimit**：`velox_ch_filecache_connector_test` 的 `PrefetchWarmHonoursPerQueryDownloadLimit`
+把限额设为小于单段的4096字节，断言downloaded bytes不超限；用单线程executor的 `join` 取代sleep。
+
+**最终 gate（全绿，0 失败 0 跳过）**：
+
+```text
+velox_ch_filecache_connector_test:       57
+velox_ch_filecache_buffered_input_test:  38
+velox_ch_filecache_e2e_test:             21
+velox_ch_cancellation_test:               9
+velox_ch_filecache_hit_metrics_test:      7
+velox_ch_filecache_core_scc_test:        49
+velox_ch_filecache_manager_test:         20
+velox_ch_filecache_format_e2e_test:       3
+velox_ch_io_test:                        33
+total:                                  237
+```
+
+核心边界 gate：`FileCache.{h,cpp}` / `FileSegment.h` / `FileCacheErrnoException.h` 相对
+`5785a43a` 零 diff，`FileSegment.cpp` 仅两处获批改动，且不残留 `submitWarm`、
+`inflightWarmForTest`、warm 相关成员、`FileSegment::wait` hook、`DownloaderLease`，生产不调用
+`setWriteFileFactoryForTesting`。
+
+## 16. 后续工作（不属于当前实现）
+
+以下两项在当前实现中**不存在**，也不构成承诺；它们需要独立设计与证据，不得据本文推断接口：
+
+1. **本地 `FileSegment` 读建议（`posix_fadvise(POSIX_FADV_WILLNEED)`）**：对已缓存的本地段文件
+   下发读建议。需要先确定 `ReadFile` 层是否引入通用 read-advice 能力、句柄获取与移交方式、
+   建议失败的处理，以及如何度量收益（advice 字节不是实际读字节）。当前实现没有任何
+   read-advice API、local-advice 分组或相关统计。
+2. **动态 next-window prefetch**：由 demand 消费进度触发下一窗口的预取。需定义触发条件、内存
+   预算及与历史的关系。当前prefetch只在一次 `load` 内分类分组，之后不动态扩展窗口。
