@@ -10,9 +10,10 @@ infer a profile from hostname.
 | Key | `home-chang` | `root-oss` |
 |---|---|---|
 | `<clickhouse_repo>` | `/home/chang/SourceCode/ClickHouse` | `/root/oss/clickhouse` |
-| `<velox_repo>` | `/home/chang/OpenSource/velox` | `/root/oss/velox` |
+| `<velox_repo>` | `/home/chang/OpenSource/velox2` | `/root/oss/velox` |
+| `<velox_gluten_repo>` | Set to a dedicated `filecache2-gluten` worktree | Set per task |
 | `<gluten_repo>` | `/home/chang/SourceCode/gluten1` | `/root/oss/gluten` |
-| `<velox_build_dir>` | `/home/chang/OpenSource/velox/cmake-build-debug-gcc13` | `/root/oss/velox/_build/debug` |
+| `<velox_build_dir>` | `/home/chang/OpenSource/velox2/cmake-build-debug-gcc13` | `/root/oss/velox/_build/debug` |
 | `<cmake>` | `/usr/bin/cmake` | `/usr/bin/cmake` |
 | `<ninja>` | `/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja` | `/usr/local/bin/ninja` |
 | `<velox_env>` | Not required by the existing profile | `/root/oss/velox-helper/env.sh` |
@@ -29,18 +30,18 @@ Keep the existing configure command:
   -DCMAKE_MAKE_PROGRAM=/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja \
   -DVELOX_ENABLE_BENCHMARKS=ON \
   -G Ninja \
-  -S /home/chang/OpenSource/velox \
-  -B /home/chang/OpenSource/velox/cmake-build-debug-gcc13
+  -S /home/chang/OpenSource/velox2 \
+  -B /home/chang/OpenSource/velox2/cmake-build-debug-gcc13
 ```
 
 ### Gluten integration build (`home-chang`, Task 018+)
 
-The Velox port has two branches in `<velox_repo>`:
+The Velox port uses two separate worktrees:
 
-- `filecache2` — the clean mainline (upstream base + FileCache port + GCC/`-Werror`
+- `<velox_repo>` checks out `filecache2` — the clean mainline (upstream base + FileCache port + GCC/`-Werror`
   portability fixes). This is the audited/PR line. It does NOT carry the IBM/OAP
   compatibility shims.
-- `filecache2-gluten` — the branch used to BUILD Gluten. It carries `filecache2`
+- `<velox_gluten_repo>` checks out `filecache2-gluten` — the branch used to BUILD Gluten. It carries `filecache2`
   plus the `[!TMP]` IBM/OAP shims (HashTable serde, Parquet subfield, private
   static dependency prefix) and the extra upstream `-Werror` backports Gluten's
   toolchain needs. Do Gluten development here.
@@ -51,16 +52,17 @@ an IBM/OAP shim (i.e. a real FileCache or portability fix) MUST be copied back t
 gluten-only.
 
 Gluten is built against our Velox fork (not the vendored IBM velox) via the
-official `dev/builddeps-veloxbe.sh` with `--velox_home` pointing at `<velox_repo>`.
+official `dev/builddeps-veloxbe.sh` with `--velox_home` pointing at `<velox_gluten_repo>`.
 Because `VELOX_HOME` points at an existing tree, the script skips fetching upstream
 velox. Build (Velox then Gluten C++ in one invocation):
 
 ```bash
-cd /home/chang/SourceCode/gluten2   # gluten1's worktree; keep filecache2-gluten checked out in <velox_repo>
-INSTALL_PREFIX=/home/chang/OpenSource/velox/_build/deps-install \
+cd /home/chang/SourceCode/gluten2   # gluten1's worktree
+: "${VELOX_GLUTEN_REPO:?set VELOX_GLUTEN_REPO to <velox_gluten_repo>}"
+INSTALL_PREFIX="$VELOX_GLUTEN_REPO/_build/deps-install" \
 VELOX_GFLAGS_TYPE=static \
 ./dev/builddeps-veloxbe.sh \
-  --velox_home=/home/chang/OpenSource/velox \
+  --velox_home="$VELOX_GLUTEN_REPO" \
   --build_type=Release --build_arrow=OFF \
   build_velox build_gluten_cpp
 ```
@@ -84,7 +86,8 @@ metrics stay zero). Rebuild it directly, bypassing `builddeps-veloxbe.sh` (which
 re-configures and hits the gflags pitfall):
 
 ```bash
-cd /home/chang/OpenSource/velox   # MUST be on filecache2-gluten (see below)
+: "${VELOX_GLUTEN_REPO:?set VELOX_GLUTEN_REPO to <velox_gluten_repo>}"
+cd "$VELOX_GLUTEN_REPO"   # MUST be on filecache2-gluten (see below)
 VELOX_GFLAGS_TYPE=static /path/to/ninja -C _build/release velox
 ```
 
@@ -156,7 +159,7 @@ worktree. Tasks 018-019 are still the only tasks that modify Gluten.
 - Do not modify ClickHouse source files from Velox implementation tasks unless
   the task explicitly says so.
 - Do not commit anything unless explicitly asked.
-- Do not delete or recreate `<velox_repo>`.
+- Do not delete or recreate `<velox_repo>` or `<velox_gluten_repo>`.
 - Do not use `-j` with Ninja; let Ninja decide parallelism.
 - For long builds/tests, redirect output to a unique log under
   `<velox_build_dir>` and report the log path.

@@ -12,12 +12,12 @@
 
 ## 全局执行纪律(每个 commit 都适用)
 
-- **仓库**:`/home/chang/OpenSource/velox`,分支 `filecache2`。gluten 本轮全程搁置,最后一次性 cherry-pick 到 `filecache2-gluten`。
+- **仓库**:`/home/chang/OpenSource/velox2`,分支 `filecache2`。gluten 本轮全程搁置,最后一次性 cherry-pick 到 `filecache2-gluten`。
 - **build 目录**:`cmake-build-debug-gcc13`。
 - **ninja**:`/home/chang/.local/share/JetBrains/Toolbox/apps/clion/bin/ninja/linux/x64/ninja`(**不加 `-j`,不用 `nproc`**)。
 - **跑测试前** export:
   ```bash
-  export LD_LIBRARY_PATH="/home/chang/OpenSource/velox/cmake-build-debug-gcc13/icu-bld/lib:/home/chang/OpenSource/velox/cmake-build-debug-gcc13/icu-bld/stubdata:$LD_LIBRARY_PATH"
+  export LD_LIBRARY_PATH="/home/chang/OpenSource/velox2/cmake-build-debug-gcc13/icu-bld/lib:/home/chang/OpenSource/velox2/cmake-build-debug-gcc13/icu-bld/stubdata:$LD_LIBRARY_PATH"
   ```
 - **8 gate**:`velox_ch_filecache_connector_test`、`velox_ch_filecache_buffered_input_test`、`velox_ch_filecache_e2e_test`、`velox_ch_cancellation_test`、`velox_ch_filecache_hit_metrics_test`、`velox_ch_filecache_core_scc_test`、`velox_ch_filecache_manager_test`、`velox_ch_filecache_format_e2e_test`(可能需 `chmod +x`)。
 - **构建/测试输出**一律重定向到 build 目录的唯一日志文件,用 subagent 分析日志只回摘要。
@@ -138,7 +138,7 @@ segment.write(
 - [ ] **Step 6: 分别运行三个 binary,验证迁移后覆盖不减少**
 
 ```bash
-export LD_LIBRARY_PATH="/home/chang/OpenSource/velox/cmake-build-debug-gcc13/icu-bld/lib:/home/chang/OpenSource/velox/cmake-build-debug-gcc13/icu-bld/stubdata:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="/home/chang/OpenSource/velox2/cmake-build-debug-gcc13/icu-bld/lib:/home/chang/OpenSource/velox2/cmake-build-debug-gcc13/icu-bld/stubdata:$LD_LIBRARY_PATH"
 cmake-build-debug-gcc13/velox/ch/IO/tests/velox_ch_io_test \
   > cmake-build-debug-gcc13/test_r1_io.log 2>&1
 cmake-build-debug-gcc13/velox/ch/Disks/IO/tests/velox_ch_filecache_buffered_input_test \

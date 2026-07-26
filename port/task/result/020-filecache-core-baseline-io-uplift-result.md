@@ -5,11 +5,11 @@
 ```text
 task: 020
 review_status: approved
-reviewed_repository: /home/chang/OpenSource/velox
+reviewed_repository: https://github.com/baibaichen/velox.git
 reviewed_branch: filecache2
-reviewed_range: 5785a43a..ac552c6a6
-implementation_head: ac552c6a6
-pre_squash_final_head: 72d737fd1
+reviewed_range: 5785a43a..fc37a7eb
+implementation_head: fc37a7eb
+pre_squash_final_head: c27364763
 pre_squash_production_remediation_head: 228d9661c
 pre_squash_review_evidence_head: 093d3ddaf
 pre_squash_initial_review_result_commit: ddf00a44c29
@@ -489,8 +489,8 @@ M3 and T1-T5 remain unclosed.
 
 All eight remediation items (R1-R8) were addressed. The following are the
 pre-squash audit commits, preserved by backup branch
-`backup/filecache2-pre-squash-72d737fd1`; the reviewed final implementation is
-the single Velox commit `ac552c6a6`:
+`backup/filecache2-pre-squash-fc37a7eb`; the reviewed final implementation is
+the single Velox commit `fc37a7eb`:
 
 ```text
 228d9661c  Rem-R1: ScanTracker + coalesced-window BackUp parity with Direct
